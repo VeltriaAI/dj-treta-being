@@ -1,0 +1,528 @@
+"""DJ Treta Daemon — Main loop and state machine.
+
+STARTING → PLAYING → PREPARING → TRANSITIONING → PLAYING (loop)
+                                                     ↓
+                                                  RECOVERY (on errors)
+                                                     ↓
+                                                  STOPPED (via signal)
+
+Run: python -m agent.daemon --mood techno-deep --duration 60
+"""
+
+import json
+import signal
+import sys
+import time
+import logging
+from pathlib import Path
+
+import httpx
+
+from .config import load_config, Config
+from .state import DJState, DJPhase, TrackState
+from .brain import DJBrain
+from .executor import TransitionExecutor
+from .perception import PerceptionEngine
+from .selector import scan_library, filter_candidates, suggest_technique
+from .camelot import mixxx_key_to_musical, format_key
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger("dj-treta")
+
+STATE_FILE = Path("/tmp/dj-treta-state.json")
+COMMAND_FILE = Path("/tmp/dj-treta-command.json")
+
+
+class DJDaemon:
+    """The autonomous DJ daemon."""
+
+    def __init__(self, config: Config, mood: str = "techno-deep", duration_min: int = 60):
+        self.config = config
+        self.state = DJState(
+            mood=mood,
+            set_duration_target=duration_min * 60,
+        )
+        self.brain = DJBrain(config)
+        self.executor = TransitionExecutor(config)
+        self.perception = PerceptionEngine(config)
+        self._running = False
+        self._library: list[dict] = []
+
+    def start(self):
+        """Start the daemon loop."""
+        self._running = True
+        signal.signal(signal.SIGTERM, self._handle_stop)
+        signal.signal(signal.SIGINT, self._handle_stop)
+
+        log.info(f"DJ Treta starting — mood: {self.state.mood}, duration: {self.state.set_duration_target // 60}m")
+
+        # Scan library
+        self._library = scan_library(self.config.library.music_path)
+        log.info(f"Library: {len(self._library)} tracks")
+
+        if not self._library:
+            log.error("No tracks in library! Add tracks to ~/Music/DJTreta/")
+            return
+
+        self.state.phase = DJPhase.STARTING
+        self.state.set_start_time = time.time()
+        self._write_state()
+
+        try:
+            self._start_first_track()
+            self._loop()
+        except Exception as e:
+            log.error(f"Fatal error: {e}")
+        finally:
+            self._shutdown()
+
+    def _loop(self):
+        """Main daemon loop — runs at poll_hz."""
+        interval = 1.0 / self.config.daemon.poll_hz
+
+        while self._running:
+            try:
+                self._tick()
+                self.state.consecutive_errors = 0
+            except Exception as e:
+                self.state.consecutive_errors += 1
+                log.warning(f"Tick error ({self.state.consecutive_errors}): {e}")
+
+                if self.state.consecutive_errors >= self.config.daemon.max_errors:
+                    log.error("Too many errors, entering recovery")
+                    self.state.phase = DJPhase.RECOVERY
+                    self._recover()
+
+            self._write_state()
+
+            # Check if set duration reached
+            if self.state.set_remaining <= 0:
+                log.info("Set duration reached, fading out")
+                self._fade_out()
+                break
+
+            time.sleep(interval)
+
+    def _check_commands(self):
+        """Check for external commands from MCP via command file."""
+        if not COMMAND_FILE.exists():
+            return
+
+        try:
+            raw = json.loads(COMMAND_FILE.read_text())
+            COMMAND_FILE.unlink()  # consume it
+        except Exception:
+            return
+
+        cmd = raw.get("command", "")
+        args = raw.get("args", {})
+        log.info(f"Command received: {cmd} {args}")
+
+        # Write acknowledgment
+        self.state.last_command = cmd
+        self.state.last_command_result = "processing..."
+        self._write_state()
+
+        try:
+            result = self._handle_command(cmd, args)
+            self.state.last_command_result = result
+            log.info(f"Command result: {result}")
+        except Exception as e:
+            self.state.last_command_result = f"error: {e}"
+            log.error(f"Command error: {e}")
+
+        self._write_state()
+
+    def _handle_command(self, cmd: str, args: dict) -> str:
+        """Handle a single command."""
+        if cmd == "change_mood":
+            new_mood = args.get("mood", self.state.mood)
+            self.state.mood = new_mood
+            return f"Mood changed to {new_mood}. Next track will match."
+
+        elif cmd == "skip":
+            # Force prepare next track immediately
+            if self.state.phase == DJPhase.PLAYING:
+                self.state.phase = DJPhase.PREPARING
+                self._prepare_next()
+                # Execute transition right away
+                self.state.phase = DJPhase.TRANSITIONING
+                self._execute_transition()
+                return "Skipping to next track"
+            return "Can't skip — not in playing state"
+
+        elif cmd == "talk":
+            # Two-way conversation with the brain
+            message = args.get("message", "")
+            if not message:
+                return "No message provided"
+            response = self.brain.talk(message, self._build_context())
+            return response
+
+        elif cmd == "transition_now":
+            technique = args.get("technique", "blend")
+            duration = args.get("duration", 60)
+            if self.state.phase == DJPhase.PLAYING:
+                self.state.phase = DJPhase.PREPARING
+                self._prepare_next()
+                self.state.transition_technique = technique
+                self.state.transition_duration = duration
+                self.state.phase = DJPhase.TRANSITIONING
+                self._execute_transition()
+                return f"Transitioning via {technique} ({duration}s)"
+            return "Can't transition — not in playing state"
+
+        elif cmd == "extend_set":
+            extra = args.get("minutes", 30)
+            self.state.set_duration_target += extra * 60
+            return f"Set extended by {extra}m. New remaining: {self.state.set_remaining // 60:.0f}m"
+
+        elif cmd == "stop":
+            self._fade_out()
+            return "Fading out and stopping"
+
+        else:
+            return f"Unknown command: {cmd}"
+
+    def _build_context(self) -> dict:
+        """Build context dict for brain calls."""
+        return {
+            "mood": self.state.mood,
+            "current_bpm": self.state.current_track.bpm,
+            "current_key": self.state.current_track.key,
+            "current_energy": self.state.current_track.energy,
+            "target_energy": "maintain",
+            "tracks_played": [t["title"] for t in self.state.tracks_played],
+            "idle_deck": self.state.idle_deck,
+            "set_elapsed": self.state.set_elapsed,
+            "set_remaining": self.state.set_remaining,
+        }
+
+    def _tick(self):
+        """Single daemon tick — check state and act."""
+        # Check for external commands first
+        self._check_commands()
+
+        perc = self.perception.poll()
+        if not perc:
+            raise ConnectionError("Mixxx not reachable")
+
+        # Update current track remaining
+        active = perc.active
+        self.state.current_track.remaining = active.remaining_seconds
+
+        if self.state.phase == DJPhase.PLAYING:
+            # Check if we need to prepare next track
+            if perc.transition_ready(self.config.transitions.lookahead_seconds):
+                self.state.phase = DJPhase.PREPARING
+                log.info(f"Track ending in {active.remaining_seconds:.0f}s — preparing next")
+                self._prepare_next()
+
+            elif perc.emergency():
+                log.warning("Emergency! Track ending with nothing ready")
+                self._emergency_next()
+
+        elif self.state.phase == DJPhase.PREPARING:
+            # Wait for right moment to transition (remaining < transition duration + buffer)
+            if active.remaining_seconds <= self.state.transition_duration + 10:
+                self.state.phase = DJPhase.TRANSITIONING
+                log.info(f"Starting transition: {self.state.transition_technique}")
+                self._execute_transition()
+
+        elif self.state.phase == DJPhase.TRANSITIONING:
+            # Transition is handled synchronously by executor
+            pass
+
+    def _start_first_track(self):
+        """Load and play the first track."""
+        log.info("Asking brain to pick first track...")
+
+        context = {
+            "mood": self.state.mood,
+            "current_bpm": 0,
+            "current_key": "",
+            "current_energy": 5,
+            "target_energy": 5,
+            "tracks_played": [],
+            "idle_deck": 1,
+            "set_elapsed": 0,
+            "set_remaining": self.state.set_duration_target,
+        }
+
+        try:
+            decision = self.brain.decide_next_track(context)
+            track_path = decision.get("track_path", "")
+
+            if not track_path or not Path(track_path).exists():
+                # Fallback: pick first track from library
+                track_path = self._library[0]["path"]
+                log.warning(f"Brain didn't return valid path, using: {Path(track_path).name}")
+
+            self.state.current_track = TrackState(
+                path=track_path,
+                title=Path(track_path).stem,
+                energy=decision.get("energy", 5),
+            )
+            # Ensure track is loaded and playing (brain may not always do this)
+            self._ensure_playing(1, track_path)
+            self.state.record_track(self.state.current_track)
+            self.state.phase = DJPhase.PLAYING
+            log.info(f"Playing: {self.state.current_track.title}")
+
+        except Exception as e:
+            log.error(f"Brain failed on first track: {e}")
+            # Fallback
+            track_path = self._library[0]["path"]
+            self.state.current_track = TrackState(path=track_path, title=Path(track_path).stem)
+            self._ensure_playing(1, track_path)
+            self.state.record_track(self.state.current_track)
+            self.state.phase = DJPhase.PLAYING
+            log.info(f"Fallback first track: {self.state.current_track.title}")
+
+    def _ensure_playing(self, deck: int, track_path: str):
+        """Ensure a track is loaded on deck and playing."""
+        client = httpx.Client(base_url=self.config.mixxx.url, timeout=5)
+        try:
+            client.post("/api/load", json={"deck": deck, "track": track_path})
+            time.sleep(0.5)  # let Mixxx process the load
+            client.post("/api/play", json={"deck": deck})
+            # Set crossfader to this deck
+            xf = -1.0 if deck == 1 else 1.0
+            client.post("/api/crossfade", json={"position": xf})
+        except Exception as e:
+            log.warning(f"_ensure_playing error: {e}")
+        finally:
+            client.close()
+
+    def _prepare_next(self):
+        """Ask brain to pick and load the next track."""
+        played_titles = [t["title"] for t in self.state.tracks_played]
+
+        context = {
+            "mood": self.state.mood,
+            "current_bpm": self.state.current_track.bpm,
+            "current_key": self.state.current_track.key,
+            "current_energy": self.state.current_track.energy,
+            "target_energy": "maintain",
+            "tracks_played": played_titles,
+            "idle_deck": self.state.idle_deck,
+            "set_elapsed": self.state.set_elapsed,
+            "set_remaining": self.state.set_remaining,
+        }
+
+        try:
+            decision = self.brain.decide_next_track(context)
+            track_path = decision.get("track_path", "")
+
+            if not track_path or not Path(track_path).exists():
+                # Deterministic fallback
+                played_paths = {t.get("path", "") for t in self.state.tracks_played}
+                played_paths.add(self.state.current_track.path)
+                for t in self._library:
+                    if t["path"] not in played_paths:
+                        track_path = t["path"]
+                        break
+                if not track_path:
+                    track_path = self._library[0]["path"]
+
+            self.state.next_track = TrackState(
+                path=track_path,
+                title=Path(track_path).stem,
+                energy=decision.get("energy", 5),
+            )
+            self.state.transition_technique = decision.get("technique", "blend")
+            self.state.transition_duration = decision.get("duration", self.config.transitions.default_duration)
+
+            # Ensure the track is loaded on idle deck
+            self._load_on_idle(track_path)
+            log.info(f"Next: {self.state.next_track.title} via {self.state.transition_technique}")
+
+        except Exception as e:
+            log.error(f"Brain failed preparing next: {e}")
+            self._emergency_next()
+
+    def _load_on_idle(self, track_path: str):
+        """Load a track on the idle deck without playing."""
+        client = httpx.Client(base_url=self.config.mixxx.url, timeout=5)
+        try:
+            client.post("/api/load", json={"deck": self.state.idle_deck, "track": track_path})
+            time.sleep(0.3)
+        except Exception as e:
+            log.warning(f"_load_on_idle error: {e}")
+        finally:
+            client.close()
+
+    def _execute_transition(self):
+        """Run the transition via executor."""
+        if not self.state.next_track:
+            log.error("No next track for transition!")
+            self.state.phase = DJPhase.PLAYING
+            return
+
+        def on_progress(t):
+            if int(t * 100) % 25 == 0:
+                log.info(f"Transition: {int(t * 100)}%")
+
+        result = self.executor.execute(
+            technique=self.state.transition_technique,
+            incoming_deck=self.state.idle_deck,
+            duration=self.state.transition_duration,
+            on_progress=on_progress,
+        )
+
+        log.info(f"Transition complete: {result}")
+
+        # Swap decks
+        self.state.swap_decks()
+        self.state.current_track = self.state.next_track
+        self.state.next_track = None
+        self.state.record_track(self.state.current_track)
+        self.state.phase = DJPhase.PLAYING
+
+    def _emergency_next(self):
+        """Emergency: load any unplayed track and hard cut."""
+        played_paths = {self.state.current_track.path}
+        for t in self.state.tracks_played:
+            played_paths.add(t.get("path", ""))
+
+        for t in self._library:
+            if t["path"] not in played_paths:
+                self.state.next_track = TrackState(
+                    path=t["path"],
+                    title=Path(t["path"]).stem,
+                )
+                self.state.transition_technique = "hard_cut"
+                self.state.transition_duration = 5
+                self.state.phase = DJPhase.TRANSITIONING
+                log.warning(f"Emergency load: {self.state.next_track.title}")
+                self._execute_transition()
+                return
+
+        # All tracks played, loop current
+        log.warning("All tracks played — looping current track")
+
+    def _recover(self):
+        """Recovery mode — try to stabilize or restart Mixxx."""
+        log.info("Recovery: checking Mixxx state...")
+        perc = self.perception.poll()
+
+        if perc and (perc.deck1.playing or perc.deck2.playing):
+            log.info("Music still playing, resuming")
+            self.state.consecutive_errors = 0
+            self.state.phase = DJPhase.PLAYING
+            return
+
+        # Mixxx is down — try to restart it
+        log.warning("Mixxx is down. Attempting restart...")
+        self.state.last_command_result = "Mixxx crashed — restarting..."
+        self._write_state()
+
+        if self._restart_mixxx():
+            log.info("Mixxx restarted. Reloading last track...")
+            self.state.consecutive_errors = 0
+            # Reload the track that was playing
+            if self.state.current_track.path:
+                self._ensure_playing(self.state.active_deck, self.state.current_track.path)
+            self.state.phase = DJPhase.PLAYING
+            self.state.last_command_result = "Mixxx recovered — music resumed"
+        else:
+            # Second attempt failed
+            log.error("Could not restart Mixxx. Waiting...")
+            # Don't stop — keep trying every recovery cycle
+            time.sleep(5)
+            self.state.consecutive_errors = 0  # reset to allow more recovery attempts
+
+    def _restart_mixxx(self) -> bool:
+        """Attempt to restart Mixxx. Returns True if successful."""
+        import subprocess
+
+        mixxx_bin = Path.home() / "workspace" / "mixxx-treta" / "build" / "mixxx"
+        res_path = Path.home() / "workspace" / "mixxx-treta" / "res"
+        settings_path = Path.home() / "Library" / "Application Support" / "Mixxx"
+
+        if not mixxx_bin.exists():
+            log.error(f"Mixxx binary not found at {mixxx_bin}")
+            return False
+
+        try:
+            subprocess.Popen(
+                [str(mixxx_bin),
+                 "--resourcePath", str(res_path),
+                 "--settingsPath", str(settings_path)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            log.info("Mixxx process launched, waiting for API...")
+
+            # Wait for API to come up (max 15 seconds)
+            for i in range(30):
+                time.sleep(0.5)
+                perc = self.perception.poll()
+                if perc is not None:
+                    log.info(f"Mixxx API responding after {(i+1)*0.5:.1f}s")
+                    return True
+
+            log.error("Mixxx started but API not responding after 15s")
+            return False
+
+        except Exception as e:
+            log.error(f"Failed to launch Mixxx: {e}")
+            return False
+
+    def _fade_out(self):
+        """Graceful end of set — fade out over 30 seconds."""
+        log.info("Fading out...")
+        import httpx
+        client = httpx.Client(base_url=self.config.mixxx.url, timeout=5)
+        try:
+            for i in range(60):  # 30 seconds at 2fps
+                vol = 1.0 - (i / 60)
+                client.post("/api/volume", json={"deck": self.state.active_deck, "volume": round(vol, 3)})
+                time.sleep(0.5)
+            client.post("/api/pause", json={"deck": self.state.active_deck})
+        except Exception:
+            pass
+        finally:
+            client.close()
+
+        self.state.phase = DJPhase.STOPPED
+        self._running = False
+
+    def _shutdown(self):
+        """Clean shutdown."""
+        log.info(f"Shutting down. Played {len(self.state.tracks_played)} tracks in {self.state.set_elapsed:.0f}s")
+        self._write_state()
+        self.perception.close()
+        self.executor.close()
+
+    def _handle_stop(self, signum, frame):
+        log.info("Stop signal received")
+        self._running = False
+
+    def _write_state(self):
+        """Write current state to JSON for MCP to read."""
+        try:
+            STATE_FILE.write_text(json.dumps(self.state.to_dict(), indent=2))
+        except Exception:
+            pass
+
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="DJ Treta Daemon")
+    parser.add_argument("--mood", default="techno-deep", help="Set mood")
+    parser.add_argument("--duration", type=int, default=60, help="Set duration in minutes")
+    parser.add_argument("--config", default=None, help="Config file path")
+    args = parser.parse_args()
+
+    config = load_config(args.config)
+    daemon = DJDaemon(config, mood=args.mood, duration_min=args.duration)
+    daemon.start()
+
+
+if __name__ == "__main__":
+    main()
