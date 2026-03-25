@@ -131,8 +131,10 @@ def set_crossfader(position: float) -> dict:
     """Set crossfader position between decks.
 
     Args:
-        position: Position from -1.0 (full deck 1) through 0.0 (center) to 1.0 (full deck 2).
+        position: 0.0 = full Deck 1, 0.5 = center, 1.0 = full Deck 2.
     """
+    # Clamp to valid range
+    position = max(0.0, min(1.0, position))
     return _mixxx_post("/api/crossfade", {"position": position})
 
 
