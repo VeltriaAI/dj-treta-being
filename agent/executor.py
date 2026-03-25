@@ -235,12 +235,11 @@ class TransitionExecutor:
                 self._post("/api/volume", {"deck": in_deck, "volume": 1.0})
 
             # Check crossfader is on the right side
-            expected_side = 1.0 if in_deck == 2 else -1.0
-            # If crossfader is more than 60% away from incoming, fix it
+            # API: 0.0=deck1, 1.0=deck2. Status returns Mixxx raw: -1 to +1.
             if in_deck == 2 and crossfader < -0.2:
                 self._post("/api/crossfade", {"position": 1.0})
             elif in_deck == 1 and crossfader > 0.2:
-                self._post("/api/crossfade", {"position": -1.0})
+                self._post("/api/crossfade", {"position": 0.0})
 
             # Silence outgoing
             self._post("/api/volume", {"deck": out_deck, "volume": 0.0})

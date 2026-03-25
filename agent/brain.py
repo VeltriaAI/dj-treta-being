@@ -28,6 +28,9 @@ from .tools import (
     set_sync,
     get_live_data,
     get_track_info,
+    # Transitions
+    do_transition,
+    do_bass_swap,
     # Music discovery
     search_music,
     download_track,
@@ -108,6 +111,8 @@ DJ_TOOLS = [
     get_dj_status, get_deck_info, load_track, play_deck, pause_deck,
     set_volume, set_crossfader, set_eq, set_filter, set_sync,
     get_live_data, get_track_info,
+    # Transitions — she mixes
+    do_transition, do_bass_swap,
     # Music discovery — her ears to the world
     search_music, download_track,
     # Library — her collection
@@ -214,13 +219,14 @@ If you want to adjust something, use the appropriate tool (set_eq, set_filter, e
             return None
         return {"action": result_str}
 
-    # Action keywords that need the full agent (tool calls)
-    _ACTION_WORDS = {
-        "play", "load", "skip", "transition", "mix", "blend", "swap",
-        "download", "search", "find", "get", "change", "switch", "go",
-        "darker", "lighter", "harder", "softer", "build", "drop", "cut",
-        "bass", "eq", "filter", "volume", "crossfade", "sync",
-    }
+    # Action keywords that need the full agent (tool calls) — word boundary matching
+    import re as _re
+    _ACTION_PATTERN = _re.compile(
+        r'\b(play|load|skip|transition|mix|blend|swap|download|search|find'
+        r'|change|switch|darker|lighter|harder|softer|build|drop|cut'
+        r'|bass|eq|filter|volume|crossfade|sync)\b',
+        _re.IGNORECASE,
+    )
 
     def talk(self, message: str, context: dict) -> str:
         """Talk to the brain. Full two-way conversation.
@@ -247,8 +253,7 @@ If you want to adjust something, use the appropriate tool (set_eq, set_filter, e
         )
 
         # Decide: does this need tools or just conversation?
-        msg_lower = message.lower()
-        needs_action = any(word in msg_lower for word in self._ACTION_WORDS)
+        needs_action = bool(self._ACTION_PATTERN.search(message))
 
         if needs_action:
             # Full agent with tools

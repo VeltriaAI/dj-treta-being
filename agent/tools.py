@@ -162,6 +162,98 @@ def get_track_info(deck: int) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# TRANSITIONS — Brain-controlled mixing
+# ═══════════════════════════════════════════════════════════════════════
+
+@tool
+def do_transition(to_deck: int, duration: int = 60) -> str:
+    """Execute a smooth crossfade transition to a deck.
+    Uses Mixxx's C++ engine (20fps S-curve). After transition completes,
+    the outgoing deck is paused and EQ/volume reset.
+
+    IMPORTANT: The incoming deck must have a track loaded before calling this.
+    Enable sync first with set_sync.
+
+    Args:
+        to_deck: Deck to transition TO (1 or 2).
+        duration: Transition duration in seconds (10-120).
+    """
+    import time as _time
+
+    duration = max(10, min(120, duration))
+    out_deck = 1 if to_deck == 2 else 2
+
+    # Pre-flight: ensure incoming is playing + synced
+    _mixxx_post("/api/sync", {"deck": to_deck})
+    _mixxx_post("/api/play", {"deck": to_deck})
+    _time.sleep(0.3)
+
+    # Use Mixxx's server-side transition (C++, 20fps, non-blocking)
+    _mixxx_post("/api/transition", {"deck": to_deck, "duration": duration})
+
+    # Wait for it to complete
+    _time.sleep(duration + 2)
+
+    # Post-flight cleanup
+    _mixxx_post("/api/pause", {"deck": out_deck})
+    _mixxx_post("/api/volume", {"deck": out_deck, "volume": 1.0})
+    for band in ["hi", "mid", "lo"]:
+        _mixxx_post("/api/eq", {"deck": out_deck, band: 1.0})
+    _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5})
+    _mixxx_post("/api/filter", {"deck": to_deck, "value": 0.5})
+
+    return f"Transitioned to Deck {to_deck} over {duration}s. Deck {out_deck} paused and cleaned up."
+
+
+@tool
+def do_bass_swap(to_deck: int, duration: int = 60) -> str:
+    """Execute a bass-swap transition (techno style).
+    Phase 1: Bring incoming with bass cut. Phase 2: Swap bass. Phase 3: Fade out old.
+
+    Args:
+        to_deck: Deck to transition TO (1 or 2).
+        duration: Total transition duration in seconds (20-120).
+    """
+    import time as _time
+
+    duration = max(20, min(120, duration))
+    out_deck = 1 if to_deck == 2 else 2
+    fps = 10
+    total = int(duration * fps)
+
+    # Sync + play incoming with bass killed
+    _mixxx_post("/api/sync", {"deck": to_deck})
+    _mixxx_post("/api/eq", {"deck": to_deck, "lo": 0.0})
+    _mixxx_post("/api/play", {"deck": to_deck})
+
+    for i in range(total + 1):
+        t = i / total
+        if t <= 0.4:
+            # Phase 1: bring in incoming volume
+            blend = t / 0.4
+            _mixxx_post("/api/volume", {"deck": to_deck, "volume": round(blend, 2)})
+        elif t <= 0.6:
+            # Phase 2: bass swap
+            swap_t = (t - 0.4) / 0.2
+            _mixxx_post("/api/eq", {"deck": out_deck, "lo": round(1.0 - swap_t, 2)})
+            _mixxx_post("/api/eq", {"deck": to_deck, "lo": round(swap_t, 2)})
+        else:
+            # Phase 3: fade out old
+            fade = 1.0 - ((t - 0.6) / 0.4)
+            _mixxx_post("/api/volume", {"deck": out_deck, "volume": round(fade, 2)})
+        _time.sleep(1.0 / fps)
+
+    # Cleanup
+    _mixxx_post("/api/pause", {"deck": out_deck})
+    _mixxx_post("/api/volume", {"deck": out_deck, "volume": 1.0})
+    for band in ["hi", "mid", "lo"]:
+        _mixxx_post("/api/eq", {"deck": out_deck, band: 1.0})
+        _mixxx_post("/api/eq", {"deck": to_deck, band: 1.0})
+
+    return f"Bass-swapped to Deck {to_deck} over {duration}s. Deck {out_deck} paused."
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # MUSIC DISCOVERY — Search & Download
 # ═══════════════════════════════════════════════════════════════════════
 

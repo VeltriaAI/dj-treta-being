@@ -50,6 +50,7 @@ class DJDaemon:
         self.executor = TransitionExecutor(config)
         self.perception = PerceptionEngine(config)
         self._running = False
+        self._preparing = False  # flag to prevent duplicate brain calls
         self._library: list[dict] = []
 
     def start(self):
@@ -71,6 +72,9 @@ class DJDaemon:
         self.state.phase = DJPhase.STARTING
         self.state.set_start_time = time.time()
         self._write_state()
+
+        # Clean Mixxx state from previous sessions
+        self._clean_mixxx()
 
         try:
             self._start_first_track()
@@ -145,15 +149,9 @@ class DJDaemon:
             return f"Mood changed to {new_mood}. Next track will match."
 
         elif cmd == "skip":
-            # Force prepare next track immediately
-            if self.state.phase == DJPhase.PLAYING:
-                self.state.phase = DJPhase.PREPARING
-                self._prepare_next()
-                # Execute transition right away
-                self.state.phase = DJPhase.TRANSITIONING
-                self._execute_transition()
-                return "Skipping to next track"
-            return "Can't skip — not in playing state"
+            # Fast skip — no brain call, just emergency load + hard cut
+            self._emergency_next()
+            return "Skipped to next track"
 
         elif cmd == "talk":
             # Two-way conversation with the brain
@@ -164,17 +162,9 @@ class DJDaemon:
             return response
 
         elif cmd == "transition_now":
-            technique = args.get("technique", "blend")
-            duration = args.get("duration", 60)
-            if self.state.phase == DJPhase.PLAYING:
-                self.state.phase = DJPhase.PREPARING
-                self._prepare_next()
-                self.state.transition_technique = technique
-                self.state.transition_duration = duration
-                self.state.phase = DJPhase.TRANSITIONING
-                self._execute_transition()
-                return f"Transitioning via {technique} ({duration}s)"
-            return "Can't transition — not in playing state"
+            # Ask brain to handle the full transition
+            self._prepare_and_transition()
+            return "Transition complete"
 
         elif cmd == "extend_set":
             extra = args.get("minutes", 30)
@@ -211,7 +201,11 @@ class DJDaemon:
     TRANSITION_BUFFER = 15          # start transition when remaining < duration + buffer
 
     def _tick(self):
-        """Single daemon tick — check state and act."""
+        """Single daemon tick — monitor and act.
+
+        Simplified: no PREPARING/TRANSITIONING phases. Brain handles everything.
+        Daemon just monitors remaining time and calls brain when it's time to transition.
+        """
         # Check for external commands first
         self._check_commands()
 
@@ -223,54 +217,34 @@ class DJDaemon:
         active = perc.active
         self.state.current_track.remaining = active.remaining_seconds
 
-        # Safety: if active deck stopped playing unexpectedly, fix crossfader
-        if self.state.phase in (DJPhase.PLAYING, DJPhase.PREPARING):
+        # Safety: if crossfader points at empty deck, fix it
+        if self.state.phase == DJPhase.PLAYING:
             self._ensure_crossfader_on_active(perc)
 
         if self.state.phase == DJPhase.PLAYING:
             remaining = active.remaining_seconds
 
             if remaining <= 0 or not active.playing:
-                # Track ended with nothing ready — emergency
                 log.warning("Track ended unexpectedly!")
                 self._emergency_next()
 
             elif remaining <= self.MIN_REMAINING_TO_PREPARE:
-                # Too late to ask brain — emergency load
                 log.warning(f"Only {remaining:.0f}s left, too late for brain — emergency")
                 self._emergency_next()
 
-            elif perc.transition_ready(self.config.transitions.lookahead_seconds):
-                self.state.phase = DJPhase.PREPARING
-                log.info(f"Track ending in {remaining:.0f}s — preparing next")
-                self._prepare_next()
-
-        elif self.state.phase == DJPhase.PREPARING:
-            remaining = active.remaining_seconds
-
-            if remaining <= 0 or not active.playing:
-                # Track ended while preparing — emergency swap to idle deck if loaded
-                log.warning("Track ended during preparation!")
-                if self.state.next_track:
-                    self.state.transition_technique = "hard_cut"
-                    self.state.transition_duration = 5
-                    self.state.phase = DJPhase.TRANSITIONING
-                    self._execute_transition()
-                else:
-                    self._emergency_next()
-
-            elif remaining <= self.state.transition_duration + self.TRANSITION_BUFFER:
-                # Time to transition
-                self.state.phase = DJPhase.TRANSITIONING
-                log.info(f"Starting transition: {self.state.transition_technique}")
-                self._execute_transition()
-
-        elif self.state.phase == DJPhase.TRANSITIONING:
-            # Transition is handled synchronously by executor
-            pass
+            elif remaining <= self.config.transitions.lookahead_seconds:
+                if not self._preparing:
+                    # Ask brain to pick next track AND handle the transition
+                    self._preparing = True
+                    log.info(f"Track ending in {remaining:.0f}s — asking brain to prepare and transition")
+                    self._prepare_and_transition()
 
     def _ensure_crossfader_on_active(self, perc):
-        """Safety: if crossfader is pointing at an empty/silent deck, fix it."""
+        """Safety: if crossfader is pointing at an empty/silent deck, fix it.
+
+        Note: perc.crossfader is Mixxx raw (-1 to +1).
+        /api/crossfade expects 0-1 (0=deck1, 1=deck2).
+        """
         active_deck = self.state.active_deck
         idle_deck = self.state.idle_deck
 
@@ -279,24 +253,40 @@ class DJDaemon:
 
         if active_playing and not idle_playing:
             # Active deck has audio, idle doesn't — crossfader must be on active
-            expected_xf = -1.0 if active_deck == 1 else 1.0
-            current_xf = perc.crossfader
-            # If crossfader is more than 60% toward idle deck, force it back
+            current_xf = perc.crossfader  # Mixxx raw: -1 (deck1) to +1 (deck2)
             if active_deck == 1 and current_xf > 0.2:
                 log.warning(f"Crossfader at {current_xf:.2f} but Deck 2 empty — fixing to Deck 1")
-                self._set_crossfader(-1.0)
+                self._set_crossfader(0.0)  # API: 0.0 = deck1
             elif active_deck == 2 and current_xf < -0.2:
                 log.warning(f"Crossfader at {current_xf:.2f} but Deck 1 empty — fixing to Deck 2")
-                self._set_crossfader(1.0)
+                self._set_crossfader(1.0)  # API: 1.0 = deck2
 
     def _set_crossfader(self, position: float):
-        """Set crossfader position safely."""
+        """Set crossfader position safely. API expects 0.0 (deck1) to 1.0 (deck2)."""
         try:
             client = httpx.Client(base_url=self.config.mixxx.url, timeout=2)
             client.post("/api/crossfade", json={"position": position})
             client.close()
         except Exception:
             pass
+
+    def _clean_mixxx(self):
+        """Reset Mixxx to clean state — eject old tracks, reset mixer."""
+        log.info("Cleaning Mixxx state...")
+        try:
+            client = httpx.Client(base_url=self.config.mixxx.url, timeout=5)
+            for deck in [1, 2]:
+                client.post("/api/pause", json={"deck": deck})
+                client.post("/api/eject", json={"deck": deck})
+                client.post("/api/volume", json={"deck": deck, "level": 1.0})
+                for band in ["hi", "mid", "lo"]:
+                    client.post("/api/eq", json={"deck": deck, band: 1.0})
+                client.post("/api/filter", json={"deck": deck, "value": 0.5})
+            client.post("/api/crossfade", json={"position": 0.5})  # center
+            client.close()
+            log.info("Mixxx cleaned — both decks ejected, mixer reset")
+        except Exception as e:
+            log.warning(f"Could not clean Mixxx (may not be running yet): {e}")
 
     def _start_first_track(self):
         """Load and play the first track."""
@@ -351,73 +341,97 @@ class DJDaemon:
             client.post("/api/load", json={"deck": deck, "track": track_path})
             time.sleep(0.5)  # let Mixxx process the load
             client.post("/api/play", json={"deck": deck})
-            # Set crossfader to this deck
-            xf = -1.0 if deck == 1 else 1.0
+            # Set crossfader to this deck (API: 0.0=deck1, 1.0=deck2)
+            xf = 0.0 if deck == 1 else 1.0
             client.post("/api/crossfade", json={"position": xf})
         except Exception as e:
             log.warning(f"_ensure_playing error: {e}")
         finally:
             client.close()
 
-    def _prepare_next(self):
-        """Ask brain to pick and load the next track."""
-        played_titles = [t["title"] for t in self.state.tracks_played]
-
-        # Read actual BPM/key from Mixxx for better brain decisions
+    def _prepare_and_transition(self):
+        """Ask brain to pick next track, load it, and transition — brain does everything."""
         self._enrich_current_track()
 
-        context = {
-            "mood": self.state.mood,
-            "current_bpm": self.state.current_track.bpm,
-            "current_key": self.state.current_track.key,
-            "current_energy": self.state.current_track.energy,
-            "current_remaining": self.state.current_track.remaining,
-            "target_energy": "maintain",
-            "tracks_played": played_titles,
-            "idle_deck": self.state.idle_deck,
-            "set_elapsed": self.state.set_elapsed,
-            "set_remaining": self.state.set_remaining,
-        }
+        context = self._build_context()
+        remaining = self.state.current_track.remaining
+        max_duration = max(30, int(remaining - self.TRANSITION_BUFFER))
+        idle_deck = self.state.idle_deck
+
+        prompt = f"""Time to transition. Pick the next track, load it on deck {idle_deck},
+enable sync, and execute the transition.
+
+Current state:
+- Mood: {context.get('mood')}
+- Current BPM: {context.get('current_bpm')}
+- Current key: {context.get('current_key')}
+- Current energy: {context.get('current_energy')}
+- Remaining on current track: {remaining:.0f}s
+- Tracks played: {context.get('tracks_played')}
+- Idle deck: {idle_deck}
+
+Steps:
+1. Use list_library_tracks to find tracks (pick from {context.get('mood')} genre or compatible)
+2. Use load_track to load onto deck {idle_deck}
+3. Use set_sync on deck {idle_deck}
+4. Use do_transition or do_bass_swap (deck={idle_deck}, duration=30-{max_duration}s)
+
+Do NOT pick a track already played. Consider BPM (±6) and key compatibility."""
 
         try:
-            decision = self.brain.decide_next_track(context)
-            track_path = decision.get("track_path", "")
+            log.info("Brain is selecting and transitioning...")
+            result = str(self.brain.agent.run(prompt))
+            log.info(f"Brain transition result: {result[:200]}")
 
-            if not track_path or not Path(track_path).exists():
-                # Deterministic fallback
-                played_paths = {t.get("path", "") for t in self.state.tracks_played}
-                played_paths.add(self.state.current_track.path)
-                for t in self._library:
-                    if t["path"] not in played_paths:
-                        track_path = t["path"]
-                        break
-                if not track_path:
-                    track_path = self._library[0]["path"]
+            # After brain finishes, update state
+            # Check which deck is now active (the one that's playing and has crossfader)
+            perc = self.perception.poll()
+            if perc:
+                if perc.deck1.playing and not perc.deck2.playing:
+                    new_active = 1
+                elif perc.deck2.playing and not perc.deck1.playing:
+                    new_active = 2
+                elif idle_deck == 1:
+                    new_active = 1
+                else:
+                    new_active = 2
 
-            self.state.next_track = TrackState(
-                path=track_path,
-                title=Path(track_path).stem,
-                energy=decision.get("energy", 5),
-            )
-            self.state.transition_technique = decision.get("technique", "blend")
-            raw_duration = decision.get("duration", self.config.transitions.default_duration)
+                # Update deck tracking
+                self.state.active_deck = new_active
+                self.state.idle_deck = 1 if new_active == 2 else 2
 
-            # Clamp duration: min 10s, max 120s, and must fit within remaining time
-            max_for_track = max(self.MIN_TRANSITION_DURATION, int(self.state.current_track.remaining - self.TRANSITION_BUFFER))
-            self.state.transition_duration = max(
-                self.MIN_TRANSITION_DURATION,
-                min(self.MAX_TRANSITION_DURATION, min(raw_duration, max_for_track))
-            )
-            if raw_duration != self.state.transition_duration:
-                log.warning(f"Brain wanted {raw_duration}s transition, clamped to {self.state.transition_duration}s")
+                # Read new track info
+                status = httpx.get(f"{self.config.mixxx.url}/api/status", timeout=3).json()
+                deck_info = status.get(f"deck{new_active}", {})
+                self.state.current_track = TrackState(
+                    bpm=deck_info.get("bpm", 0),
+                    duration=deck_info.get("duration", 0),
+                    remaining=deck_info.get("remaining_seconds", 0),
+                )
+                # Try to get title from track_info
+                try:
+                    tinfo = httpx.get(f"{self.config.mixxx.url}/api/deck/{new_active}/track_info", timeout=3).json()
+                    self.state.current_track.title = tinfo.get("title", "") or tinfo.get("artist", "") or f"Deck {new_active}"
+                    self.state.current_track.artist = tinfo.get("artist", "")
+                except Exception:
+                    self.state.current_track.title = f"Deck {new_active} track"
 
-            # Load track on idle deck + enable sync
-            self._load_and_sync(track_path)
-            log.info(f"Next: {self.state.next_track.title} via {self.state.transition_technique} ({self.state.transition_duration}s)")
+                key_num = deck_info.get("key", 0)
+                if key_num > 0:
+                    musical = mixxx_key_to_musical(key_num)
+                    if musical:
+                        camelot = mixxx_key_to_camelot(key_num)
+                        self.state.current_track.key = f"{musical} ({camelot})" if camelot else musical
+
+                self.state.record_track(self.state.current_track)
+                log.info(f"Now playing: {self.state.current_track.title} on Deck {new_active}")
 
         except Exception as e:
-            log.error(f"Brain failed preparing next: {e}")
+            log.error(f"Brain transition failed: {e}")
             self._emergency_next()
+        finally:
+            self._preparing = False
+            self.state.next_track = None
 
     def _enrich_current_track(self):
         """Read BPM/key from Mixxx for the current track."""
@@ -468,55 +482,44 @@ class DJDaemon:
         finally:
             client.close()
 
-    def _execute_transition(self):
-        """Run the transition via executor."""
-        if not self.state.next_track:
-            log.error("No next track for transition!")
-            self.state.phase = DJPhase.PLAYING
-            return
-
-        def on_progress(t):
-            if int(t * 100) % 25 == 0:
-                log.info(f"Transition: {int(t * 100)}%")
-
-        result = self.executor.execute(
-            technique=self.state.transition_technique,
-            incoming_deck=self.state.idle_deck,
-            duration=self.state.transition_duration,
-            on_progress=on_progress,
-        )
-
-        log.info(f"Transition complete: {result}")
-
-        # Swap decks
-        self.state.swap_decks()
-        self.state.current_track = self.state.next_track
-        self.state.next_track = None
-        self.state.record_track(self.state.current_track)
-        self.state.phase = DJPhase.PLAYING
-
     def _emergency_next(self):
-        """Emergency: load any unplayed track, sync, and hard cut."""
+        """Emergency: load any unplayed track, sync, and hard cut. No brain involved."""
         played_paths = {self.state.current_track.path}
         for t in self.state.tracks_played:
             played_paths.add(t.get("path", ""))
 
+        idle = self.state.idle_deck
         for t in self._library:
             if t["path"] not in played_paths:
-                self.state.next_track = TrackState(
+                log.warning(f"Emergency: loading {Path(t['path']).stem} on Deck {idle}")
+                try:
+                    client = httpx.Client(base_url=self.config.mixxx.url, timeout=5)
+                    client.post("/api/load", json={"deck": idle, "track": t["path"]})
+                    time.sleep(1.0)
+                    client.post("/api/sync", json={"deck": idle})
+                    client.post("/api/play", json={"deck": idle})
+                    time.sleep(0.3)
+                    # Hard cut: crossfader to new deck, silence old
+                    xf = 0.0 if idle == 1 else 1.0
+                    client.post("/api/crossfade", json={"position": xf})
+                    old_deck = 1 if idle == 2 else 2
+                    client.post("/api/pause", json={"deck": old_deck})
+                    client.close()
+                except Exception as e:
+                    log.error(f"Emergency load failed: {e}")
+                    return
+
+                # Update state
+                self.state.swap_decks()
+                self.state.current_track = TrackState(
                     path=t["path"],
                     title=Path(t["path"]).stem,
                 )
-                self.state.transition_technique = "hard_cut"
-                self.state.transition_duration = 5
-                # Load and sync before transitioning
-                self._load_and_sync(t["path"])
-                self.state.phase = DJPhase.TRANSITIONING
-                log.warning(f"Emergency load + sync: {self.state.next_track.title}")
-                self._execute_transition()
+                self.state.record_track(self.state.current_track)
+                self._preparing = False
+                log.info(f"Emergency: now playing {self.state.current_track.title}")
                 return
 
-        # All tracks played, loop current
         log.warning("All tracks played — looping current track")
 
     def _recover(self):

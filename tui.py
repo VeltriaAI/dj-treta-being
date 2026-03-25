@@ -256,8 +256,9 @@ class DJTretaApp(App):
         self.set_interval(2.0, self.refresh_status)
         # Show initial status
         self.refresh_status()
-        # Track daemon log position
+        # Track daemon log position + file modification time
         self._log_pos = 0
+        self._log_mtime = 0.0
         self.set_interval(3.0, self.poll_daemon_log)
 
     def refresh_status(self) -> None:
@@ -298,6 +299,17 @@ class DJTretaApp(App):
         if not DAEMON_LOG.exists():
             return
         try:
+            # Detect daemon restart (file recreated = mtime jump backwards or file smaller)
+            mtime = DAEMON_LOG.stat().st_mtime
+            size = DAEMON_LOG.stat().st_size
+            if mtime != self._log_mtime and self._log_mtime > 0:
+                # Check if file was recreated (new daemon)
+                content_check = DAEMON_LOG.read_text()
+                if len(content_check.split("\n")) < self._log_pos:
+                    self._log_pos = 0
+                    self.log_widget.write("[yellow]— New daemon session —[/yellow]")
+            self._log_mtime = mtime
+
             content = DAEMON_LOG.read_text()
             lines = content.split("\n")
             new_lines = lines[self._log_pos:]
