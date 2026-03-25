@@ -194,6 +194,49 @@ def fast_talk(message: str, config: Config, context: str) -> str:
         return f"(error: {e})"
 
 
+# ── Quick skip (no agent, fast) ────────────────────────────────────────
+
+def _quick_skip(config: Config) -> str:
+    """Skip: find unplayed track, load on idle deck, smooth 20s transition. No agent call."""
+    try:
+        status = get_status(config.mixxx.url)
+        if not status:
+            return "Mixxx not reachable"
+
+        # Find active and idle deck
+        d1 = status.get("deck1", {})
+        d2 = status.get("deck2", {})
+        if d1.get("playing"):
+            idle = 2
+        else:
+            idle = 1
+
+        # Find a track not currently loaded
+        c = httpx.Client(base_url=config.mixxx.url, timeout=5)
+
+        # Pick first track from library
+        for genre_dir in sorted(config.library.music_path.iterdir()):
+            if not genre_dir.is_dir() or genre_dir.name.startswith('.'):
+                continue
+            for f in sorted(genre_dir.iterdir()):
+                if f.suffix.lower() in ('.mp3', '.wav', '.flac', '.ogg', '.m4a'):
+                    # Load, sync, transition
+                    c.post("/api/load", json={"deck": idle, "track": str(f)})
+                    time.sleep(1.0)
+                    c.post("/api/sync", json={"deck": idle})
+                    c.post("/api/play", json={"deck": idle})
+                    time.sleep(0.3)
+                    c.post("/api/transition", json={"deck": idle, "duration": 20})
+                    c.close()
+                    log.info(f"Skip: transitioning to {f.stem} on Deck {idle}")
+                    return f"Skipping — transitioning to {f.stem}"
+
+        c.close()
+        return "No tracks found for skip"
+    except Exception as e:
+        return f"Skip error: {e}"
+
+
 # ── Command handler ───────────────────────────────────────────────────
 
 def check_commands(agent, config: Config, state_writer: StateWriter) -> str | None:
@@ -216,14 +259,11 @@ def check_commands(agent, config: Config, state_writer: StateWriter) -> str | No
 
     try:
         if cmd == "talk":
+            # ALWAYS fast path for talk — never block the main loop
             message = args.get("message", "")
             if not message:
                 result = "No message"
-            elif _ACTION_PATTERN.search(message):
-                # Needs tools — run through agent
-                result = str(agent.run(f'The listener says: "{message}". Respond and take action if needed.'))
             else:
-                # Fast path — direct LLM
                 status = get_status(config.mixxx.url)
                 ctx = f"Status: {json.dumps(status, indent=2)[:500]}" if status else ""
                 result = fast_talk(message, config, ctx)
@@ -231,17 +271,14 @@ def check_commands(agent, config: Config, state_writer: StateWriter) -> str | No
         elif cmd == "change_mood":
             new_mood = args.get("mood", "melodic-techno")
             state_writer.mood = new_mood
-            result = f"Mood changed to {new_mood}"
+            result = f"Mood changed to {new_mood}. Next track will match."
 
         elif cmd == "skip":
-            result = str(agent.run(
-                "The listener wants to skip this track NOW. "
-                "Use the library agent to find the next track, then use the mixer agent to load it on the idle deck, "
-                "sync it, and do a quick 20-second transition."
-            ))
+            # Quick skip — load next from library and use Mixxx transition directly
+            result = _quick_skip(config)
 
         elif cmd == "transition_now":
-            result = str(agent.run("Start transitioning to the next track now."))
+            result = _quick_skip(config)
 
         elif cmd == "stop":
             result = "Stopping"

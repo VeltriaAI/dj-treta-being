@@ -60,14 +60,39 @@ def get_deck_info(deck: int) -> dict:
 
 
 @tool
-def load_track(deck: int, track_path: str) -> dict:
-    """Load a track file onto a deck. Track path must be absolute.
+def load_track(deck: int, track_path: str) -> str:
+    """Load a track onto a deck. Accepts full path OR partial name (will search library).
 
     Args:
         deck: The deck number to load onto, either 1 or 2.
-        track_path: Absolute file path to the audio track.
+        track_path: Full file path OR partial track name to search for.
     """
-    return _mixxx_post("/api/load", {"deck": deck, "track": track_path})
+    path = Path(track_path)
+
+    # If not a valid absolute path, search the library
+    if not path.is_absolute() or not path.exists():
+        query = track_path.lower()
+        found = None
+        for genre_dir in sorted(_MUSIC_DIR.iterdir()):
+            if not genre_dir.is_dir() or genre_dir.name.startswith('.'):
+                continue
+            for f in sorted(genre_dir.iterdir()):
+                if f.suffix.lower() in ('.mp3', '.wav', '.flac', '.ogg', '.m4a'):
+                    if query in f.stem.lower() or query in f.name.lower():
+                        found = str(f)
+                        break
+            if found:
+                break
+
+        if not found:
+            return f"ERROR: Track not found in library: '{track_path}'. Use list_library_tracks to see available tracks."
+
+        track_path = found
+
+    result = _mixxx_post("/api/load", {"deck": deck, "track": track_path})
+    if result and result.get("ok"):
+        return f"Loaded on Deck {deck}: {Path(track_path).stem}"
+    return f"ERROR: Mixxx rejected load: {result}"
 
 
 @tool
@@ -183,10 +208,24 @@ def do_transition(to_deck: int, duration: int = 60) -> str:
     duration = max(10, min(120, duration))
     out_deck = 1 if to_deck == 2 else 2
 
-    # Pre-flight: ensure incoming is playing + synced
+    # Pre-flight: ABORT if incoming deck has no track loaded
+    status = _mixxx_get("/api/status")
+    if status:
+        deck_state = status.get(f"deck{to_deck}", {})
+        if not deck_state.get("track_loaded", False):
+            return f"ABORTED: Deck {to_deck} has no track loaded! Load a track first with load_track."
+
+    # Ensure incoming is playing + synced
     _mixxx_post("/api/sync", {"deck": to_deck})
     _mixxx_post("/api/play", {"deck": to_deck})
     _time.sleep(0.3)
+
+    # Verify it actually started playing
+    status2 = _mixxx_get("/api/status")
+    if status2:
+        deck_state2 = status2.get(f"deck{to_deck}", {})
+        if not deck_state2.get("playing", False):
+            return f"ABORTED: Deck {to_deck} failed to start playing. Track may not be loaded correctly."
 
     # Use Mixxx's server-side transition (C++, 20fps, non-blocking)
     _mixxx_post("/api/transition", {"deck": to_deck, "duration": duration})
