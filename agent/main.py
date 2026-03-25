@@ -312,9 +312,14 @@ def run():
     try:
         result = agent.run(
             f"You're starting a {mood} DJ set for {args.duration} minutes. "
-            f"Mixxx is running, both decks are empty. {n_tracks} tracks available in genres: {', '.join(genres)}. "
-            f"Use the library agent to find a great opening track for {mood} mood, "
-            f"then use the mixer agent to load it on deck 1 and start playing. Go."
+            f"Mixxx is running on port 7778, both decks are empty. {n_tracks} tracks available in genres: {', '.join(genres)}. "
+            f"Music dir: {config.library.music_path}\n\n"
+            f"Steps:\n"
+            f"1. Use library agent to list tracks and find a great opener for {mood}\n"
+            f"2. IMPORTANT: Get the FULL FILE PATH from the library agent result\n"
+            f"3. Tell mixer agent: 'Load [FULL PATH] on deck 1, play it, and set crossfader to 0.0 (deck 1)'\n"
+            f"4. Confirm it's playing with get_dj_status\n\n"
+            f"Go."
         )
         log.info(f"First track: {str(result)[:200]}")
     except Exception as e:

@@ -63,11 +63,18 @@ RULES:
 - Use do_transition (smooth S-curve) or do_bass_swap (EQ swap) for transitions
 - Always set_sync on the incoming deck before transitioning
 
+CRITICAL — FILE PATHS:
+- load_track REQUIRES the FULL ABSOLUTE file path from list_library_tracks
+- When delegating to mixer, ALWAYS include the full path, e.g.:
+  "Load /Users/manish.pratap/Music/DJTreta/melodic-techno/adriatique - Adriatique - Soul Valley (Original Mix).mp3 on deck 2"
+- NEVER pass just a track name — it will fail silently
+
 WORKFLOW for each transition cycle:
 1. Check get_dj_status to see remaining time on active deck
-2. When ~2 minutes remain, use library agent to find next track
-3. Use mixer agent to load, sync, and transition
-4. Confirm the new track is playing
+2. When ~2 minutes remain, use library agent to find next track (get the FULL PATH)
+3. Use mixer agent with the FULL FILE PATH to load, sync, and transition
+4. Tell mixer to set_crossfader to the new deck (0.0=deck1, 1.0=deck2)
+5. Confirm the new track is playing
 
 CONVERSATION:
 You talk to Treta (Claude) and to Manish. Be brief, direct, warm."""
@@ -94,10 +101,11 @@ def create_dj_agent(config: Config) -> ToolCallingAgent:
             get_dj_status, get_deck_info, load_track, play_deck, pause_deck,
             set_volume, set_crossfader, set_eq, set_filter, set_sync,
             get_live_data, get_track_info, do_transition, do_bass_swap,
+            list_library_tracks,  # needs this to look up full file paths
         ],
         model=model,
         name="mixer",
-        description="Controls Mixxx DJ decks — load tracks, play, pause, EQ, filter, sync, volume, crossfade, and execute transitions (smooth blend or bass swap). Use for ALL audio operations.",
+        description="Controls Mixxx DJ decks — load tracks, play, pause, EQ, filter, sync, volume, crossfade, and execute transitions (smooth blend or bass swap). IMPORTANT: load_track requires the FULL ABSOLUTE file path (e.g. /Users/.../Music/DJTreta/genre/file.mp3). Use list_library_tracks to find paths.",
         max_steps=10,
     )
 
