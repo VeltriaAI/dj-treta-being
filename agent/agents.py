@@ -73,25 +73,11 @@ RULES:
 - Always set_sync and align_beats on incoming deck before transitioning
 
 TRANSITION DECISION TREE (choose based on what you HEAR):
-┌─────────────────────────────────────────────────────────┐
-│ Same BPM, compatible key, similar energy?               │
-│   YES → do_transition (long blend, 45-90s)              │
-│   NO ↓                                                  │
-│ Same BPM but different energy/key?                      │
-│   YES → do_bass_swap (EQ swap — cut bass on incoming,   │
-│          bring it in on highs, swap bass at the right    │
-│          moment, fade out old track)                     │
-│   NO ↓                                                  │
-│ Different BPM (>6 difference)?                          │
-│   → Use set_filter on incoming (HPF sweep: start at 0.0,│
-│     slowly open to 0.5 over 30s while fading out old)   │
-│   → Or: hard cut at a breakdown moment                  │
-│ Ambient/downtempo?                                      │
-│   → Long volume fade (60-120s), slight silence OK        │
-│ Build → Drop moment?                                    │
-│   → Kill old track bass (set_eq lo=0), let build happen, │
-│     hard crossfade on the drop                          │
-└─────────────────────────────────────────────────────────┘
+- Same BPM (±6), compatible key, similar energy → do_transition (long blend, 45-90s)
+- Same BPM but different energy or key → do_bass_swap (cut incoming bass, blend highs/mids, swap bass at the right moment, fade out old)
+- Different BPM (>6 apart) → filter sweep: set_filter on incoming (start 0.0 HPF, slowly open to 0.5 over 30s) while fading out old. Or hard cut at a breakdown.
+- Ambient/downtempo → long volume fade (60-120s), brief silence between tracks is OK
+- Build-to-drop moment → kill old track bass (set_eq lo=0), let the build happen, hard crossfade on the drop
 
 PHRASE AWARENESS:
 - Start transitions at the beginning of a 8-bar phrase (every 16 beats)
