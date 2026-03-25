@@ -46,6 +46,10 @@ CAMELOT_MAP = {
     "F#m": "11A", "Gm": "6A", "G#m": "1A", "Am": "8A", "Bbm": "3A", "Bm": "10A",
 }
 
+# Track info cache (to avoid spamming /api/deck/N/track_info every 2s)
+_track_cache: dict[int, dict] = {}
+_track_cache_path: dict[int, str] = {}
+
 
 # ── Helpers ───────────────────────────────────────────────────────────
 
@@ -79,6 +83,42 @@ def fmt_key(k: int) -> str:
     cam = CAMELOT_MAP.get(name, "")
     return f"{name} ({cam})" if cam else name or "—"
 
+def get_track_name(deck: int, file_path: str = "") -> str:
+    """Get track name — cached, only fetches when track changes."""
+    global _track_cache, _track_cache_path
+
+    if file_path and file_path == _track_cache_path.get(deck, ""):
+        cached = _track_cache.get(deck, {})
+        title = cached.get("title", "")
+        artist = cached.get("artist", "")
+        if title:
+            # Clean up "uploader - title" format from yt-dlp filenames
+            if " - " in title and not artist:
+                parts = title.split(" - ", 1)
+                if len(parts) == 2:
+                    artist = parts[0].strip()
+                    title = parts[1].strip()
+            if artist and artist.lower() not in title.lower():
+                return f"{artist} — {title}"
+            return title
+        return ""
+
+    # Fetch fresh
+    info = mixxx_get(f"/api/deck/{deck}/track_info")
+    if info and not info.get("error"):
+        _track_cache[deck] = info
+        _track_cache_path[deck] = file_path or info.get("file_path", "")
+        return get_track_name(deck, _track_cache_path[deck])
+
+    # Fallback: extract from file path
+    if file_path:
+        name = Path(file_path).stem
+        _track_cache_path[deck] = file_path
+        _track_cache[deck] = {"title": name}
+        return name
+
+    return ""
+
 def send_command(command: str, args: dict = {}) -> str:
     COMMAND_FILE.write_text(json.dumps({"command": command, "args": args}))
     for _ in range(120):
@@ -94,7 +134,7 @@ def send_command(command: str, args: dict = {}) -> str:
 # ── Widgets ───────────────────────────────────────────────────────────
 
 class DeckWidget(Static):
-    """Single deck display."""
+    """Single deck display with track name, waveform progress, BPM, key."""
 
     def __init__(self, deck_num: int, **kwargs):
         super().__init__(**kwargs)
@@ -102,7 +142,11 @@ class DeckWidget(Static):
 
     def update_deck(self, deck: dict, is_active: bool):
         if not deck.get("track_loaded"):
-            self.update(f"[dim]Deck {self.deck_num} — empty[/dim]")
+            color = "cyan" if self.deck_num == 1 else "magenta"
+            self.update(
+                f"[bold {color}]DECK {self.deck_num}[/bold {color}]\n"
+                f"[dim]  No track loaded[/dim]\n\n\n\n"
+            )
             return
 
         playing = deck.get("playing", False)
@@ -112,23 +156,60 @@ class DeckWidget(Static):
         dur = deck.get("duration", 0)
         remaining = deck.get("remaining_seconds", 0)
         synced = deck.get("sync_enabled", False)
+        vol = deck.get("volume", 1.0)
+        file_path = deck.get("file_path", "")
 
-        # Progress bar
+        # Get track name
+        track_name = get_track_name(self.deck_num, file_path)
+        if not track_name:
+            # Try from daemon state
+            state = read_state()
+            if state:
+                ct = state.get("current_track", {})
+                if ct.get("title"):
+                    track_name = ct["title"]
+
+        # Truncate long names
+        max_name_len = 44
+        if len(track_name) > max_name_len:
+            track_name = track_name[:max_name_len - 1] + "…"
+
+        # Progress bar — waveform style
         pct = pos / dur if dur > 0 else 0
-        w = 28
+        w = 40
         filled = int(pct * w)
-        bar = "━" * filled + "●" + "─" * max(0, w - filled - 1)
+        # Use block characters for a waveform feel
+        bar = "█" * filled + "▓" + "░" * max(0, w - filled - 1)
 
         icon = "▶" if playing else "⏸"
-        sync_tag = " [green]SYNC[/green]" if synced else ""
-        active_tag = " [bold yellow]★[/bold yellow]" if is_active else ""
         color = "cyan" if self.deck_num == 1 else "magenta"
+        dim_color = "bright_cyan" if self.deck_num == 1 else "bright_magenta"
+
+        # Active deck indicator
+        active_str = f" [bold yellow]★ ACTIVE[/bold yellow]" if is_active else ""
+
+        # Tags
+        tags = []
+        if synced:
+            tags.append("[green]SYNC[/green]")
+        if vol < 0.9:
+            tags.append(f"[yellow]VOL {vol:.0%}[/yellow]")
+        tags_str = "  ".join(tags)
+
+        # Volume meter (simple)
+        eq_hi = deck.get("eq_hi", 1.0)
+        eq_mid = deck.get("eq_mid", 1.0)
+        eq_lo = deck.get("eq_lo", 1.0)
+        eq_str = ""
+        if eq_hi != 1.0 or eq_mid != 1.0 or eq_lo != 1.0:
+            eq_str = f"  [dim]EQ H:{eq_hi:.1f} M:{eq_mid:.1f} L:{eq_lo:.1f}[/dim]"
 
         self.update(
-            f"[bold {color}]Deck {self.deck_num}{active_tag}[/bold {color}]\n"
-            f"  {icon} {fmt_time(pos)} [{bar}] {fmt_time(dur)}\n"
-            f"  BPM [bold]{bpm:.0f}[/bold]  Key [bold]{key}[/bold]{sync_tag}\n"
-            f"  Remaining [bold]{fmt_time(remaining)}[/bold]"
+            f"[bold {color}]DECK {self.deck_num}[/bold {color}]{active_str}\n"
+            f"  [bold]{track_name}[/bold]\n"
+            f"  {icon} {fmt_time(pos)} [{dim_color}]{bar}[/{dim_color}] {fmt_time(dur)}\n"
+            f"  [bold]{bpm:.0f}[/bold] BPM  [bold]{key}[/bold]  {tags_str}\n"
+            f"  Remaining [bold]{fmt_time(remaining)}[/bold]{eq_str}"
         )
 
 
@@ -136,19 +217,20 @@ class CrossfaderWidget(Static):
     """Crossfader visualization."""
 
     def update_xf(self, xf: float):
-        w = 40
+        w = 50
         pos = int((xf + 1) / 2 * w)
         pos = max(0, min(w, pos))
-        bar = "─" * pos + "◆" + "─" * (w - pos)
-        self.update(f"  [dim]D1[/dim] [{bar}] [dim]D2[/dim]")
+        left = "─" * pos
+        right = "─" * (w - pos)
+        self.update(f"  [cyan]D1[/cyan] {left}[bold yellow]◆[/bold yellow]{right} [magenta]D2[/magenta]")
 
 
 class BrainWidget(Static):
-    """Brain status."""
+    """Brain status bar."""
 
     def update_brain(self, state: dict | None):
         if not state:
-            self.update("[dim]Brain offline — type /start to launch[/dim]")
+            self.update("[dim]Brain offline — /start to launch[/dim]")
             return
 
         phase = state.get("phase", "?")
@@ -163,13 +245,23 @@ class BrainWidget(Static):
         }
         pc = colors.get(phase, "white")
 
-        parts = [
-            f"[{pc}]● {phase.upper()}[/{pc}]  Mood: [bold]{mood}[/bold]  Tracks: {played}  Set: {fmt_time(elapsed)} / {fmt_time(elapsed + remaining)}"
-        ]
+        # Main line
+        line1 = (
+            f"[{pc}]● {phase.upper()}[/{pc}]  "
+            f"Mood: [bold]{mood}[/bold]  "
+            f"Tracks: [bold]{played}[/bold]  "
+            f"Set: {fmt_time(elapsed)} / {fmt_time(elapsed + remaining)}"
+        )
+
+        # Second line — now playing from brain state + next track
+        parts = [line1]
+        ct = state.get("current_track", {})
+        if ct.get("title"):
+            parts.append(f"  Now: [italic]{ct['title']}[/italic]")
 
         nt = state.get("next_track")
-        if nt:
-            parts.append(f"  Next: [italic]{nt.get('title', '?')}[/italic]")
+        if nt and nt.get("title"):
+            parts.append(f"  Next: [italic cyan]{nt['title']}[/italic cyan]")
 
         self.update("\n".join(parts))
 
@@ -182,7 +274,7 @@ Screen {
 }
 
 #decks {
-    height: 7;
+    height: 9;
     layout: horizontal;
 }
 
@@ -198,7 +290,7 @@ Screen {
 }
 
 #brain {
-    height: 3;
+    height: 4;
     padding: 0 1;
     border-top: solid $accent;
 }
@@ -209,14 +301,9 @@ Screen {
     padding: 0 1;
 }
 
-#input-area {
-    height: 3;
-    dock: bottom;
-    padding: 0 1;
-}
-
 #prompt-input {
     width: 100%;
+    dock: bottom;
 }
 
 Footer {
@@ -234,7 +321,6 @@ class DJTretaApp(App):
 
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit"),
-        Binding("ctrl+l", "live_toggle", "Live"),
         Binding("ctrl+s", "skip", "Skip"),
     ]
 
@@ -246,17 +332,14 @@ class DJTretaApp(App):
         yield CrossfaderWidget(id="crossfader")
         yield BrainWidget(id="brain")
         yield RichLog(id="conversation", highlight=True, markup=True, wrap=True)
-        yield Input(placeholder="Talk to DJ Treta... (type message or /help)", id="prompt-input")
+        yield Input(placeholder="Talk to DJ Treta... (or /help)", id="prompt-input")
         yield Footer()
 
     def on_mount(self) -> None:
         self.log_widget = self.query_one("#conversation", RichLog)
         self.log_widget.write("[dim]Welcome to DJ Treta. Type anything to talk, or /help for commands.[/dim]\n")
-        # Start polling
         self.set_interval(2.0, self.refresh_status)
-        # Show initial status
         self.refresh_status()
-        # Track daemon log position + file modification time
         self._log_pos = 0
         self._log_mtime = 0.0
         self.set_interval(3.0, self.poll_daemon_log)
@@ -288,22 +371,18 @@ class DJTretaApp(App):
             deck2_w.update_deck(d2, active == 2)
             xf_w.update_xf(xf)
         else:
-            deck1_w.update("[red]Mixxx offline[/red]")
-            deck2_w.update("")
-            xf_w.update("[red]No connection[/red]")
+            deck1_w.update("[red bold]DECK 1[/red bold]\n  [red]Mixxx offline[/red]\n\n\n")
+            deck2_w.update("[red bold]DECK 2[/red bold]\n  [red]Mixxx offline[/red]\n\n\n")
+            xf_w.update("[red]No connection to Mixxx[/red]")
 
         brain_w.update_brain(state)
 
     def poll_daemon_log(self) -> None:
-        """Check for new daemon log entries and show key events."""
         if not DAEMON_LOG.exists():
             return
         try:
-            # Detect daemon restart (file recreated = mtime jump backwards or file smaller)
             mtime = DAEMON_LOG.stat().st_mtime
-            size = DAEMON_LOG.stat().st_size
             if mtime != self._log_mtime and self._log_mtime > 0:
-                # Check if file was recreated (new daemon)
                 content_check = DAEMON_LOG.read_text()
                 if len(content_check.split("\n")) < self._log_pos:
                     self._log_pos = 0
@@ -331,17 +410,21 @@ class DJTretaApp(App):
 
                 msg = parts[1].strip()
                 if "ERROR" in line or "WARNING" in line:
-                    self.log_widget.write(f"[red]⚠ {msg}[/red]")
-                elif "Playing:" in msg:
-                    self.log_widget.write(f"[green]🎵 {msg}[/green]")
+                    self.log_widget.write(f"[red]  {msg}[/red]")
+                elif "Playing:" in msg or "now playing" in msg.lower():
+                    self.log_widget.write(f"[green]  {msg}[/green]")
                 elif "Next:" in msg:
-                    self.log_widget.write(f"[cyan]⏭ {msg}[/cyan]")
-                elif "Transition" in msg:
-                    self.log_widget.write(f"[blue]🔄 {msg}[/blue]")
-                elif "preparing" in msg.lower():
-                    self.log_widget.write(f"[yellow]🧠 {msg}[/yellow]")
-                elif "sync" in msg.lower():
-                    self.log_widget.write(f"[magenta]🔗 {msg}[/magenta]")
+                    self.log_widget.write(f"[cyan]  {msg}[/cyan]")
+                elif "Transition" in msg or "transition" in msg:
+                    self.log_widget.write(f"[blue]  {msg}[/blue]")
+                elif "preparing" in msg.lower() or "brain" in msg.lower():
+                    self.log_widget.write(f"[yellow]  {msg}[/yellow]")
+                elif "sync" in msg.lower() or "Loaded" in msg:
+                    self.log_widget.write(f"[magenta]  {msg}[/magenta]")
+                elif "Cleaning" in msg or "cleaned" in msg:
+                    self.log_widget.write(f"[dim]  {msg}[/dim]")
+                else:
+                    self.log_widget.write(f"[dim]  {msg}[/dim]")
         except Exception:
             pass
 
@@ -364,17 +447,17 @@ class DJTretaApp(App):
 
         if cmd == "help":
             self.log_widget.write(
-                "[bold]Commands:[/bold]\n"
-                "  [cyan]<message>[/cyan]        Talk to DJ Treta\n"
-                "  [cyan]/mood[/cyan] <name>     Change mood (dark-techno, melodic-techno, deep, progressive, psychill, vocal)\n"
-                "  [cyan]/skip[/cyan]            Skip to next track\n"
-                "  [cyan]/play[/cyan] [deck]     Play deck\n"
-                "  [cyan]/pause[/cyan] [deck]    Pause deck\n"
-                "  [cyan]/load[/cyan] <d> <name> Load track by name\n"
-                "  [cyan]/tracks[/cyan]          List library\n"
-                "  [cyan]/start[/cyan] [mood]    Start brain\n"
-                "  [cyan]/stop[/cyan]            Stop brain\n"
-                "  [cyan]/help[/cyan]            This help\n"
+                "\n[bold]Commands:[/bold]\n"
+                "  [cyan]<message>[/cyan]          Talk to DJ Treta\n"
+                "  [cyan]/mood[/cyan] <name>       Change mood\n"
+                "  [cyan]/skip[/cyan]              Skip (smooth 20s transition)\n"
+                "  [cyan]/play[/cyan] [deck]       Play\n"
+                "  [cyan]/pause[/cyan] [deck]      Pause\n"
+                "  [cyan]/load[/cyan] <d> <name>   Load track by name\n"
+                "  [cyan]/tracks[/cyan]            List library\n"
+                "  [cyan]/start[/cyan] [mood]      Start brain\n"
+                "  [cyan]/stop[/cyan]              Stop brain\n"
+                "  [cyan]/help[/cyan]              This help\n"
                 "  [dim]Ctrl+Q quit | Ctrl+S skip[/dim]\n"
             )
         elif cmd == "mood" and args:
@@ -403,19 +486,19 @@ class DJTretaApp(App):
         elif cmd == "stop":
             self.stop_brain()
         else:
-            self.log_widget.write(f"[red]Unknown: {text}[/red] — try /help")
+            self.log_widget.write(f"[red]Unknown: {text}[/red] — /help")
 
     @work(thread=True)
     def handle_talk(self, message: str) -> None:
         self.log_widget.write(f"\n[bold cyan]You:[/bold cyan] {message}")
-        self.log_widget.write("[dim]thinking...[/dim]")
+        self.log_widget.write("[dim]  thinking...[/dim]")
         response = send_command("talk", {"message": message})
         self.log_widget.write(f"[bold magenta]DJ Treta:[/bold magenta] {response}\n")
 
     @work(thread=True)
     def run_brain_command(self, cmd: str, args: dict) -> None:
         response = send_command(cmd, args)
-        self.log_widget.write(f"[green]{response}[/green]")
+        self.log_widget.write(f"[green]  {response}[/green]")
 
     def load_track(self, deck: int, query: str):
         for genre_dir in sorted(MUSIC_DIR.iterdir()):
@@ -424,9 +507,9 @@ class DJTretaApp(App):
             for f in sorted(genre_dir.iterdir()):
                 if query in f.stem.lower():
                     mixxx_post("/api/load", {"deck": deck, "track": str(f)})
-                    self.log_widget.write(f"[green]Loaded on Deck {deck}:[/green] {f.stem}")
+                    self.log_widget.write(f"[green]  Loaded on Deck {deck}: {f.stem}[/green]")
                     return
-        self.log_widget.write(f"[red]No track matching '{query}'[/red]")
+        self.log_widget.write(f"[red]  No track matching '{query}'[/red]")
 
     def show_tracks(self):
         lines = ["[bold]Library:[/bold]"]
@@ -434,9 +517,9 @@ class DJTretaApp(App):
             if not genre_dir.is_dir() or genre_dir.name.startswith('.'):
                 continue
             tracks = [f.stem for f in sorted(genre_dir.iterdir()) if f.suffix.lower() in ('.mp3', '.wav', '.flac')]
-            lines.append(f"\n[cyan]{genre_dir.name}[/cyan] ({len(tracks)})")
+            lines.append(f"\n  [cyan]{genre_dir.name}[/cyan] ({len(tracks)})")
             for t in tracks:
-                lines.append(f"  [dim]•[/dim] {t}")
+                lines.append(f"    [dim]•[/dim] {t}")
         self.log_widget.write("\n".join(lines))
 
     def start_brain(self, mood: str, duration: int):
@@ -449,19 +532,16 @@ class DJTretaApp(App):
             stderr=subprocess.STDOUT,
         )
         self._log_pos = 0
-        self.log_widget.write(f"[green]Brain started — mood: {mood}, duration: {duration}m[/green]")
+        self.log_widget.write(f"[green]  Brain started — mood: {mood}, duration: {duration}m[/green]")
 
     def stop_brain(self):
         import subprocess
         subprocess.run(["pkill", "-f", "python.*-m agent"], capture_output=True)
-        self.log_widget.write("[yellow]Brain stopped[/yellow]")
+        self.log_widget.write("[yellow]  Brain stopped[/yellow]")
 
     def action_skip(self):
-        self.log_widget.write("[yellow]Skipping...[/yellow]")
+        self.log_widget.write("[yellow]  Skipping (smooth 20s)...[/yellow]")
         self.run_brain_command("skip", {})
-
-    def action_live_toggle(self):
-        self.refresh_status()
 
 
 def main():
