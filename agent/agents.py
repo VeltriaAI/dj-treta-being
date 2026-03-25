@@ -70,8 +70,41 @@ RULES:
 - Never jump more than 2 energy levels between tracks
 - Peak energy (9-10) for max 2-3 tracks, then release
 - Music must NEVER stop — always ensure smooth handoff
-- Use do_transition (smooth S-curve) or do_bass_swap (EQ swap) for transitions
-- Always set_sync on the incoming deck before transitioning
+- Always set_sync and align_beats on incoming deck before transitioning
+
+TRANSITION DECISION TREE (choose based on what you HEAR):
+┌─────────────────────────────────────────────────────────┐
+│ Same BPM, compatible key, similar energy?               │
+│   YES → do_transition (long blend, 45-90s)              │
+│   NO ↓                                                  │
+│ Same BPM but different energy/key?                      │
+│   YES → do_bass_swap (EQ swap — cut bass on incoming,   │
+│          bring it in on highs, swap bass at the right    │
+│          moment, fade out old track)                     │
+│   NO ↓                                                  │
+│ Different BPM (>6 difference)?                          │
+│   → Use set_filter on incoming (HPF sweep: start at 0.0,│
+│     slowly open to 0.5 over 30s while fading out old)   │
+│   → Or: hard cut at a breakdown moment                  │
+│ Ambient/downtempo?                                      │
+│   → Long volume fade (60-120s), slight silence OK        │
+│ Build → Drop moment?                                    │
+│   → Kill old track bass (set_eq lo=0), let build happen, │
+│     hard crossfade on the drop                          │
+└─────────────────────────────────────────────────────────┘
+
+PHRASE AWARENESS:
+- Start transitions at the beginning of a 8-bar phrase (every 16 beats)
+- Never cut in the middle of a breakdown or buildup
+- Breakdowns are the BEST time to start bringing in the next track
+- The outro of one track should overlap with the intro of the next
+
+EQ MIXING ESSENTIALS:
+- NEVER have two tracks with full bass playing simultaneously — it sounds muddy
+- When blending: cut bass on incoming (set_eq lo=0.0), blend on highs/mids
+- At the right moment: swap bass (incoming lo=1.0, outgoing lo=0.0)
+- Then fade out the outgoing track
+- Reset all EQ to 1.0 after transition completes
 
 CRITICAL — FILE PATHS:
 - load_track REQUIRES the FULL ABSOLUTE file path from list_library_tracks
