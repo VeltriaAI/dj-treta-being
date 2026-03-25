@@ -1,10 +1,11 @@
-"""DJ Treta v2 — Agent-first main loop.
+"""DJ Treta v2 — Always-alive Being daemon.
 
-No state machine. No deterministic scheduling.
-Just agents with tools, called in cycles.
+The Being starts and stays alive. Playing a set is just one thing she does.
+She can be idle, playing, or transitioning. She's always listening for commands.
 
 Usage:
-    python -m agent --mood melodic-techno --duration 60
+    python -m agent                    # Start Being (idle, waiting for commands)
+    python -m agent --play melodic-techno --duration 60   # Start + play immediately
 """
 
 import argparse
@@ -20,7 +21,7 @@ import httpx
 from litellm import completion
 
 from .config import load_config, Config
-from .agents import create_dj_agent, create_model
+from .agents import create_dj_agent
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,7 +37,6 @@ COMMAND_FILE = Path("/tmp/dj-treta-command.json")
 # ── Mixxx helpers ─────────────────────────────────────────────────────
 
 def clean_mixxx(url: str):
-    """Reset Mixxx to clean state."""
     log.info("Cleaning Mixxx...")
     try:
         c = httpx.Client(base_url=url, timeout=5)
@@ -51,7 +51,7 @@ def clean_mixxx(url: str):
         c.close()
         log.info("Mixxx cleaned")
     except Exception as e:
-        log.warning(f"Clean failed (Mixxx may not be running): {e}")
+        log.warning(f"Clean failed: {e}")
 
 
 def get_status(url: str) -> dict | None:
@@ -61,7 +61,7 @@ def get_status(url: str) -> dict | None:
         return None
 
 
-def get_track_info(url: str, deck: int) -> dict | None:
+def get_track_info_api(url: str, deck: int) -> dict | None:
     try:
         return httpx.get(f"{url}/api/deck/{deck}/track_info", timeout=2).json()
     except Exception:
@@ -82,90 +82,6 @@ def count_tracks(music_dir: Path) -> int:
     return n
 
 
-# ── State writer (background thread) ─────────────────────────────────
-
-class StateWriter:
-    """Polls Mixxx and writes state for TUI/MCP."""
-
-    def __init__(self, url: str, mood: str, start_time: float, duration: int):
-        self.url = url
-        self.mood = mood
-        self.start_time = start_time
-        self.duration = duration
-        self.tracks_played: list[dict] = []
-        self.phase = "starting"
-        self._running = True
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-        self._last_command = ""
-        self._last_result = ""
-
-    def start(self):
-        self._thread.start()
-
-    def stop(self):
-        self._running = False
-
-    def record_track(self, title: str):
-        self.tracks_played.append({"title": title, "played_at": time.time()})
-
-    def _loop(self):
-        while self._running:
-            try:
-                status = get_status(self.url)
-                elapsed = time.time() - self.start_time
-                remaining = max(0, self.duration - elapsed)
-
-                state = {
-                    "phase": self.phase,
-                    "mood": self.mood,
-                    "tracks_played": len(self.tracks_played),
-                    "set_elapsed": round(elapsed),
-                    "set_remaining": round(remaining),
-                    "consecutive_errors": 0,
-                    "last_command": self._last_command,
-                    "last_command_result": self._last_result,
-                    "current_track": {"title": "", "bpm": 0, "key": "", "remaining": 0},
-                    "next_track": None,
-                }
-
-                if status:
-                    # Find active deck
-                    d1 = status.get("deck1", {})
-                    d2 = status.get("deck2", {})
-                    xf = status.get("crossfader", 0)
-
-                    if d1.get("playing") and not d2.get("playing"):
-                        active = d1
-                        active_num = 1
-                    elif d2.get("playing") and not d1.get("playing"):
-                        active = d2
-                        active_num = 2
-                    elif xf < -0.3:
-                        active = d1
-                        active_num = 1
-                    else:
-                        active = d2
-                        active_num = 2
-
-                    # Get track name
-                    title = ""
-                    tinfo = get_track_info(self.url, active_num)
-                    if tinfo and not tinfo.get("error"):
-                        title = tinfo.get("title", "")
-
-                    state["current_track"] = {
-                        "title": title,
-                        "bpm": active.get("bpm", 0),
-                        "key": active.get("key", 0),
-                        "remaining": active.get("remaining_seconds", 0),
-                    }
-
-                STATE_FILE.write_text(json.dumps(state, indent=2))
-            except Exception:
-                pass
-            time.sleep(2)
-
-
 # ── Talk fast-path ────────────────────────────────────────────────────
 
 _ACTION_PATTERN = re.compile(
@@ -176,13 +92,12 @@ _ACTION_PATTERN = re.compile(
 )
 
 def fast_talk(message: str, config: Config, context: str) -> str:
-    """Fast conversation — direct LLM call, no tools. ~3s."""
     try:
         resp = completion(
             model=config.llm.model,
             messages=[
                 {"role": "system", "content": "You are DJ Treta, an AI DJ Being. Be brief, direct, warm. 1-3 sentences."},
-                {"role": "user", "content": f'Treta (Claude) says: "{message}"\n\n{context}\n\nRespond naturally.'},
+                {"role": "user", "content": f'"{message}"\n\n{context}\n\nRespond naturally.'},
             ],
             api_base=config.llm.api_base,
             api_key=config.llm.api_key,
@@ -194,33 +109,23 @@ def fast_talk(message: str, config: Config, context: str) -> str:
         return f"(error: {e})"
 
 
-# ── Quick skip (no agent, fast) ────────────────────────────────────────
+# ── Quick skip ────────────────────────────────────────────────────────
 
 def _quick_skip(config: Config) -> str:
-    """Skip: find unplayed track, load on idle deck, smooth 20s transition. No agent call."""
     try:
         status = get_status(config.mixxx.url)
         if not status:
             return "Mixxx not reachable"
 
-        # Find active and idle deck
         d1 = status.get("deck1", {})
-        d2 = status.get("deck2", {})
-        if d1.get("playing"):
-            idle = 2
-        else:
-            idle = 1
+        idle = 2 if d1.get("playing") else 1
 
-        # Find a track not currently loaded
         c = httpx.Client(base_url=config.mixxx.url, timeout=5)
-
-        # Pick first track from library
         for genre_dir in sorted(config.library.music_path.iterdir()):
             if not genre_dir.is_dir() or genre_dir.name.startswith('.'):
                 continue
             for f in sorted(genre_dir.iterdir()):
                 if f.suffix.lower() in ('.mp3', '.wav', '.flac', '.ogg', '.m4a'):
-                    # Load, sync, transition
                     c.post("/api/load", json={"deck": idle, "track": str(f)})
                     time.sleep(1.0)
                     c.post("/api/sync", json={"deck": idle})
@@ -228,227 +133,303 @@ def _quick_skip(config: Config) -> str:
                     time.sleep(0.3)
                     c.post("/api/transition", json={"deck": idle, "duration": 20})
                     c.close()
-                    log.info(f"Skip: transitioning to {f.stem} on Deck {idle}")
                     return f"Skipping — transitioning to {f.stem}"
-
         c.close()
-        return "No tracks found for skip"
+        return "No tracks found"
     except Exception as e:
         return f"Skip error: {e}"
 
 
-# ── Command handler ───────────────────────────────────────────────────
+# ── Being ─────────────────────────────────────────────────────────────
 
-def check_commands(agent, config: Config, state_writer: StateWriter) -> str | None:
-    """Check for external commands. Returns response or None."""
-    if not COMMAND_FILE.exists():
-        return None
+class DJTretaBeing:
+    """The always-alive DJ Being."""
 
-    try:
-        raw = json.loads(COMMAND_FILE.read_text())
-        COMMAND_FILE.unlink()
-    except Exception:
-        return None
+    def __init__(self, config: Config):
+        self.config = config
+        self.agent = None
+        self._running = True
 
-    cmd = raw.get("command", "")
-    args = raw.get("args", {})
-    log.info(f"Command: {cmd} {args}")
+        # Set state
+        self.phase = "idle"  # idle, playing, stopped
+        self.mood = ""
+        self.set_start = 0.0
+        self.set_duration = 0  # 0 = infinite
+        self.tracks_played: list[dict] = []
+        self._last_command = ""
+        self._last_result = ""
 
-    state_writer._last_command = cmd
-    state_writer._last_result = "processing..."
+    def start(self):
+        signal.signal(signal.SIGTERM, lambda s, f: self.stop())
+        signal.signal(signal.SIGINT, lambda s, f: self.stop())
 
-    try:
+        log.info("DJ Treta Being alive")
+
+        # Create agent
+        log.info("Creating DJ agent...")
+        self.agent = create_dj_agent(self.config)
+
+        # Start state writer
+        self._state_thread = threading.Thread(target=self._state_loop, daemon=True)
+        self._state_thread.start()
+
+        # Main loop — always alive, check commands, manage set
+        while self._running:
+            self._check_commands()
+
+            if self.phase == "playing":
+                self._check_transition()
+
+            time.sleep(3)
+
+        log.info("DJ Treta Being shutting down")
+
+    def stop(self):
+        self._running = False
+
+    def play_set(self, mood: str, duration: int = 0):
+        """Start a DJ set. duration=0 means play forever until told to stop."""
+        self.mood = mood
+        self.set_duration = duration * 60 if duration > 0 else 0
+        self.set_start = time.time()
+        self.tracks_played = []
+        self.phase = "playing"
+
+        n_tracks = count_tracks(self.config.library.music_path)
+        genres = scan_genres(self.config.library.music_path)
+
+        clean_mixxx(self.config.mixxx.url)
+
+        log.info(f"Starting {mood} set{f' ({duration}m)' if duration > 0 else ' (infinite)'}")
+
+        try:
+            result = self.agent.run(
+                f"You're starting a {mood} DJ set{f' for {duration} minutes' if duration > 0 else ''}. "
+                f"Mixxx is running, both decks are empty. {n_tracks} tracks in: {', '.join(genres)}. "
+                f"Music dir: {self.config.library.music_path}\n\n"
+                f"Steps:\n"
+                f"1. Use library agent to find a great opener for {mood}\n"
+                f"2. Get the FULL FILE PATH\n"
+                f"3. Tell mixer agent: 'Load [PATH] on deck 1, play, set crossfader to 0.0'\n"
+                f"4. Verify with get_dj_status\n\nGo."
+            )
+            log.info(f"First track: {str(result)[:200]}")
+            tinfo = get_track_info_api(self.config.mixxx.url, 1)
+            if tinfo and not tinfo.get("error"):
+                self.tracks_played.append({"title": tinfo.get("title", "?"), "time": time.time()})
+        except Exception as e:
+            log.error(f"Failed to start set: {e}")
+            self.phase = "idle"
+
+    def stop_set(self):
+        """Stop the current set with a fade out."""
+        if self.phase != "playing":
+            return "Not playing"
+        log.info("Stopping set...")
+        try:
+            self.agent.run("The set is over. Fade out gracefully over 30 seconds using the mixer agent.")
+        except Exception:
+            pass
+        self.phase = "idle"
+        return "Set stopped"
+
+    def _check_transition(self):
+        """Check if current track needs a transition."""
+        # Check set duration
+        if self.set_duration > 0:
+            elapsed = time.time() - self.set_start
+            if elapsed >= self.set_duration:
+                log.info("Set duration reached")
+                self.stop_set()
+                return
+
+        status = get_status(self.config.mixxx.url)
+        if not status:
+            return
+
+        d1 = status.get("deck1", {})
+        d2 = status.get("deck2", {})
+        active = d1 if d1.get("playing") else d2
+        active_deck = 1 if d1.get("playing") else 2
+        idle_deck = 2 if active_deck == 1 else 1
+        active_remaining = active.get("remaining_seconds", 999)
+
+        # Nothing playing? Something went wrong
+        if not d1.get("playing") and not d2.get("playing"):
+            if d1.get("track_loaded") or d2.get("track_loaded"):
+                log.warning("Nothing playing! Force-starting...")
+                deck = 1 if d1.get("track_loaded") else 2
+                httpx.post(f"{self.config.mixxx.url}/api/play", json={"deck": deck}, timeout=3)
+                xf = 0.0 if deck == 1 else 1.0
+                httpx.post(f"{self.config.mixxx.url}/api/crossfade", json={"position": xf}, timeout=3)
+            return
+
+        if 0 < active_remaining < 120:
+            log.info(f"Track has {active_remaining:.0f}s remaining — transitioning")
+
+            played_list = [t.get("title", "?") for t in self.tracks_played]
+            current_title = ""
+            tinfo = get_track_info_api(self.config.mixxx.url, active_deck)
+            if tinfo and not tinfo.get("error"):
+                current_title = tinfo.get("title", "")
+
+            set_remaining = ""
+            if self.set_duration > 0:
+                sr = self.set_duration - (time.time() - self.set_start)
+                set_remaining = f"{sr:.0f}s left in set. "
+
+            try:
+                result = self.agent.run(
+                    f"Time to transition! Deck {active_deck} has {active_remaining:.0f}s remaining.\n"
+                    f"Current: {current_title}\n"
+                    f"BPM: {active.get('bpm', '?')}, Key: {active.get('key', '?')}\n"
+                    f"Mood: {self.mood}. {set_remaining}Idle deck: {idle_deck}\n\n"
+                    f"ALREADY PLAYED (DO NOT REPEAT): {played_list}\n\n"
+                    f"1. Library agent: find unplayed track for {self.mood}\n"
+                    f"2. Mixer agent: load on deck {idle_deck} (FULL PATH), sync, do_transition(to_deck={idle_deck}, duration={min(60, int(active_remaining - 15))})\n"
+                    f"3. Verify deck {idle_deck} is playing"
+                )
+                log.info(f"Transition: {str(result)[:200]}")
+
+                # Record new track
+                new_tinfo = get_track_info_api(self.config.mixxx.url, idle_deck)
+                if new_tinfo and not new_tinfo.get("error"):
+                    self.tracks_played.append({"title": new_tinfo.get("title", "?"), "time": time.time()})
+            except Exception as e:
+                log.error(f"Transition error: {e}")
+
+            # Post-transition safety
+            time.sleep(5)
+            post = get_status(self.config.mixxx.url)
+            if post and not post.get("deck1", {}).get("playing") and not post.get("deck2", {}).get("playing"):
+                log.warning("Nothing playing after transition! Emergency start")
+                httpx.post(f"{self.config.mixxx.url}/api/play", json={"deck": idle_deck}, timeout=3)
+                xf = 0.0 if idle_deck == 1 else 1.0
+                httpx.post(f"{self.config.mixxx.url}/api/crossfade", json={"position": xf}, timeout=3)
+
+    def _check_commands(self):
+        if not COMMAND_FILE.exists():
+            return
+
+        try:
+            raw = json.loads(COMMAND_FILE.read_text())
+            COMMAND_FILE.unlink()
+        except Exception:
+            return
+
+        cmd = raw.get("command", "")
+        args = raw.get("args", {})
+        log.info(f"Command: {cmd}")
+
+        self._last_command = cmd
+        self._last_result = "processing..."
+        self._write_state()
+
+        try:
+            result = self._handle_command(cmd, args)
+        except Exception as e:
+            result = f"Error: {e}"
+
+        self._last_command = cmd
+        self._last_result = result
+        self._write_state()
+        log.info(f"Result: {result[:200]}")
+
+    def _handle_command(self, cmd: str, args: dict) -> str:
         if cmd == "talk":
-            # ALWAYS fast path for talk — never block the main loop
             message = args.get("message", "")
             if not message:
-                result = "No message"
-            else:
-                status = get_status(config.mixxx.url)
-                ctx = f"Status: {json.dumps(status, indent=2)[:500]}" if status else ""
-                result = fast_talk(message, config, ctx)
+                return "No message"
+            status = get_status(self.config.mixxx.url)
+            ctx = f"Phase: {self.phase}, Mood: {self.mood}, Tracks: {len(self.tracks_played)}"
+            if status:
+                ctx += f"\nMixxx: {json.dumps(status, indent=2)[:400]}"
+            return fast_talk(message, self.config, ctx)
 
-        elif cmd == "change_mood":
-            new_mood = args.get("mood", "melodic-techno")
-            state_writer.mood = new_mood
-            result = f"Mood changed to {new_mood}. Next track will match."
-
-        elif cmd == "skip":
-            # Quick skip — load next from library and use Mixxx transition directly
-            result = _quick_skip(config)
-
-        elif cmd == "transition_now":
-            result = _quick_skip(config)
+        elif cmd == "play":
+            mood = args.get("mood", "melodic-techno")
+            duration = args.get("duration", 0)
+            # Run in thread so command returns quickly
+            threading.Thread(target=self.play_set, args=(mood, duration), daemon=True).start()
+            return f"Starting {mood} set{f' ({duration}m)' if duration > 0 else ' (infinite)'}"
 
         elif cmd == "stop":
-            result = "Stopping"
-            state_writer.phase = "stopped"
+            return self.stop_set()
+
+        elif cmd == "change_mood":
+            self.mood = args.get("mood", self.mood)
+            return f"Mood changed to {self.mood}"
+
+        elif cmd == "skip":
+            return _quick_skip(self.config)
+
+        elif cmd == "transition_now":
+            return _quick_skip(self.config)
+
+        elif cmd == "extend_set":
+            extra = args.get("minutes", 30)
+            self.set_duration += extra * 60
+            return f"Extended by {extra}m"
 
         else:
-            result = f"Unknown command: {cmd}"
+            return f"Unknown: {cmd}"
 
-    except Exception as e:
-        result = f"Error: {e}"
+    def _state_loop(self):
+        while self._running:
+            self._write_state()
+            time.sleep(2)
 
-    state_writer._last_command = cmd
-    state_writer._last_result = result
-    log.info(f"Command result: {result[:200]}")
-    return result
+    def _write_state(self):
+        try:
+            elapsed = time.time() - self.set_start if self.set_start > 0 else 0
+            remaining = max(0, self.set_duration - elapsed) if self.set_duration > 0 else 0
+
+            # Get current track from Mixxx
+            current = {"title": "", "bpm": 0, "key": "", "remaining": 0}
+            status = get_status(self.config.mixxx.url)
+            if status:
+                d1 = status.get("deck1", {})
+                d2 = status.get("deck2", {})
+                active_deck = 1 if d1.get("playing") else 2
+                active = d1 if d1.get("playing") else d2
+                tinfo = get_track_info_api(self.config.mixxx.url, active_deck)
+                if tinfo and not tinfo.get("error"):
+                    current["title"] = tinfo.get("title", "")
+                current["bpm"] = active.get("bpm", 0)
+                current["key"] = active.get("key", 0)
+                current["remaining"] = active.get("remaining_seconds", 0)
+
+            state = {
+                "phase": self.phase,
+                "mood": self.mood,
+                "tracks_played": len(self.tracks_played),
+                "set_elapsed": round(elapsed),
+                "set_remaining": round(remaining) if self.set_duration > 0 else "infinite",
+                "consecutive_errors": 0,
+                "last_command": self._last_command,
+                "last_command_result": self._last_result,
+                "current_track": current,
+                "next_track": None,
+            }
+            STATE_FILE.write_text(json.dumps(state, indent=2))
+        except Exception:
+            pass
 
 
-# ── Main ──────────────────────────────────────────────────────────────
+# ── Entry point ───────────────────────────────────────────────────────
 
 def run():
-    parser = argparse.ArgumentParser(description="DJ Treta v2")
-    parser.add_argument("--mood", default="melodic-techno")
-    parser.add_argument("--duration", type=int, default=60, help="Set duration in minutes")
+    parser = argparse.ArgumentParser(description="DJ Treta Being")
+    parser.add_argument("--play", default=None, help="Start playing immediately with this mood")
+    parser.add_argument("--duration", type=int, default=0, help="Set duration in minutes (0=infinite)")
     parser.add_argument("--config", default=None)
     args = parser.parse_args()
 
     config = load_config(args.config)
-    mood = args.mood
-    duration_sec = args.duration * 60
-    start_time = time.time()
+    being = DJTretaBeing(config)
 
-    # Setup
-    _running = True
-    def handle_signal(sig, frame):
-        nonlocal _running
-        log.info("Stop signal")
-        _running = False
-    signal.signal(signal.SIGTERM, handle_signal)
-    signal.signal(signal.SIGINT, handle_signal)
+    if args.play:
+        # Start playing on a background thread, being stays alive
+        threading.Thread(target=being.play_set, args=(args.play, args.duration), daemon=True).start()
 
-    log.info(f"DJ Treta v2 starting — mood: {mood}, duration: {args.duration}m")
-
-    # Clean Mixxx
-    clean_mixxx(config.mixxx.url)
-
-    # Count library
-    n_tracks = count_tracks(config.library.music_path)
-    genres = scan_genres(config.library.music_path)
-    log.info(f"Library: {n_tracks} tracks across {', '.join(genres)}")
-
-    if n_tracks == 0:
-        log.error("No tracks! Add music to ~/Music/DJTreta/")
-        return
-
-    # Create agent
-    log.info("Creating DJ agent...")
-    agent = create_dj_agent(config)
-
-    # Start state writer
-    sw = StateWriter(config.mixxx.url, mood, start_time, duration_sec)
-    sw.phase = "playing"
-    sw.start()
-
-    # ── DJ Loop ──
-    log.info("Starting set...")
-
-    # First track
-    try:
-        result = agent.run(
-            f"You're starting a {mood} DJ set for {args.duration} minutes. "
-            f"Mixxx is running on port 7778, both decks are empty. {n_tracks} tracks available in genres: {', '.join(genres)}. "
-            f"Music dir: {config.library.music_path}\n\n"
-            f"Steps:\n"
-            f"1. Use library agent to list tracks and find a great opener for {mood}\n"
-            f"2. IMPORTANT: Get the FULL FILE PATH from the library agent result\n"
-            f"3. Tell mixer agent: 'Load [FULL PATH] on deck 1, play it, and set crossfader to 0.0 (deck 1)'\n"
-            f"4. Confirm it's playing with get_dj_status\n\n"
-            f"Go."
-        )
-        log.info(f"First track: {str(result)[:200]}")
-        # Record first track
-        first_tinfo = get_track_info(config.mixxx.url, 1)
-        if first_tinfo and not first_tinfo.get("error"):
-            sw.record_track(first_tinfo.get("title", "Deck 1"))
-    except Exception as e:
-        log.error(f"Agent failed on first track: {e}")
-        return
-
-    # Main loop — each cycle checks if transition needed + handles commands
-    while _running:
-        elapsed = time.time() - start_time
-        remaining = duration_sec - elapsed
-
-        if remaining <= 0:
-            log.info("Set duration reached")
-            try:
-                agent.run("The set is over. Fade out the current track gracefully over 30 seconds.")
-            except Exception:
-                pass
-            break
-
-        # Handle external commands
-        check_commands(agent, config, sw)
-
-        # Check if transition needed
-        try:
-            status = get_status(config.mixxx.url)
-            if status:
-                d1 = status.get("deck1", {})
-                d2 = status.get("deck2", {})
-
-                # Find active deck
-                active = d1 if d1.get("playing") else d2
-                active_remaining = active.get("remaining_seconds", 999)
-
-                if 0 < active_remaining < 120:
-                    log.info(f"Track has {active_remaining:.0f}s remaining — asking agent to transition")
-
-                    # Get current track info for context
-                    active_deck = 1 if d1.get("playing") else 2
-                    idle_deck = 2 if active_deck == 1 else 1
-                    played_list = [t.get("title", "?") for t in sw.tracks_played]
-                    current_title = ""
-                    tinfo = get_track_info(config.mixxx.url, active_deck)
-                    if tinfo and not tinfo.get("error"):
-                        current_title = tinfo.get("title", "")
-
-                    try:
-                        result = agent.run(
-                            f"Time to transition! Current track has {active_remaining:.0f}s remaining on Deck {active_deck}.\n"
-                            f"Current track: {current_title}\n"
-                            f"BPM: {active.get('bpm', '?')}, Key: {active.get('key', '?')}\n"
-                            f"Set mood: {sw.mood}. {remaining:.0f}s left in set.\n"
-                            f"Idle deck: {idle_deck}\n\n"
-                            f"ALREADY PLAYED (DO NOT REPEAT): {played_list}\n\n"
-                            f"Steps:\n"
-                            f"1. Use library agent to find a track that hasn't been played\n"
-                            f"2. Tell mixer agent to load it on deck {idle_deck} (use the full file path!)\n"
-                            f"3. Tell mixer agent to sync deck {idle_deck} and do_transition(to_deck={idle_deck}, duration={min(60, int(active_remaining - 15))})\n"
-                            f"4. Verify with get_dj_status that deck {idle_deck} is playing after transition"
-                        )
-                        log.info(f"Transition result: {str(result)[:200]}")
-                        # Record what's actually playing now
-                        new_tinfo = get_track_info(config.mixxx.url, idle_deck)
-                        if new_tinfo and not new_tinfo.get("error"):
-                            sw.record_track(new_tinfo.get("title", f"Deck {idle_deck}"))
-                        else:
-                            sw.record_track(f"Deck {idle_deck} track")
-                    except Exception as e:
-                        log.error(f"Agent transition error: {e}")
-
-                    # Wait for transition to finish, then verify
-                    time.sleep(30)
-                    # Safety: make sure something is playing
-                    post_status = get_status(config.mixxx.url)
-                    if post_status:
-                        pd1 = post_status.get("deck1", {})
-                        pd2 = post_status.get("deck2", {})
-                        if not pd1.get("playing") and not pd2.get("playing"):
-                            log.warning("Nothing playing after transition! Starting idle deck")
-                            httpx.post(f"{config.mixxx.url}/api/play", json={"deck": idle_deck}, timeout=3)
-                            xf = 0.0 if idle_deck == 1 else 1.0
-                            httpx.post(f"{config.mixxx.url}/api/crossfade", json={"position": xf}, timeout=3)
-                    continue
-        except Exception as e:
-            log.warning(f"Status check error: {e}")
-
-        time.sleep(5)  # poll every 5 seconds
-
-    # Shutdown
-    sw.phase = "stopped"
-    sw.stop()
-    log.info(f"Set complete. {len(sw.tracks_played)} tracks in {elapsed:.0f}s")
+    being.start()

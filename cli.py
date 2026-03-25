@@ -71,7 +71,9 @@ KEY_MAP = {
     19: "F#m", 20: "Gm", 21: "G#m", 22: "Am", 23: "Bbm", 24: "Bm",
 }
 
-def format_time(seconds: float) -> str:
+def format_time(seconds) -> str:
+    if isinstance(seconds, str):
+        return seconds  # "infinite" etc
     if seconds <= 0:
         return "0:00"
     m, s = divmod(int(seconds), 60)

@@ -73,7 +73,8 @@ def read_state() -> dict | None:
         pass
     return None
 
-def fmt_time(s: float) -> str:
+def fmt_time(s) -> str:
+    if isinstance(s, str): return s
     if s <= 0: return "0:00"
     m, sec = divmod(int(s), 60)
     return f"{m}:{sec:02d}"
