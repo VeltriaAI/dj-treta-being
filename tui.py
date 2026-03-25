@@ -403,6 +403,8 @@ class DJTretaApp(App):
         Binding("ctrl+q", "quit", "Quit"),
         Binding("ctrl+s", "skip", "Skip"),
         Binding("ctrl+d", "toggle_debug", "Debug"),
+        Binding("ctrl+t", "show_tracks", "Tracks"),
+        Binding("ctrl+h", "show_set", "Set"),
     ]
 
     debug_mode = reactive(False)
@@ -794,6 +796,12 @@ class DJTretaApp(App):
     def action_skip(self):
         self.log_widget.write("[yellow]  Skipping...[/yellow]")
         self.run_brain_command("skip", {})
+
+    def action_show_tracks(self):
+        self.show_tracks()
+
+    def action_show_set(self):
+        self.show_set_history()
 
 
 def main():
