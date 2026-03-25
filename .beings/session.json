@@ -1,38 +1,9 @@
 {
-  "phase": "playing",
-  "mood": "bhojpuri",
-  "set_start": 1774476310.032011,
+  "phase": "idle",
+  "mood": "",
+  "set_start": 0.0,
   "set_duration": 0,
-  "tracks_played": [
-    {
-      "title": "Father Ocean (Ben B\u00f6hmer Remix)",
-      "time": 1774476395.704598
-    },
-    {
-      "title": "Children (Extended Mix)",
-      "time": 1774476855.6106591
-    },
-    {
-      "title": "Anjunadeep - Marsh - Gjipe",
-      "time": 1774477185.334337
-    },
-    {
-      "title": "DJ Pepusnik - Depeche Mode - Enjoy The Silence (ANYMA REMIX) 124 BPM",
-      "time": 1774477285.798111
-    },
-    {
-      "title": "Dj Lehsun - Malai Music Dholki Loop \uff5cBirha Loop 2024 \uff5c New Dholki Loop \uff5c Dj Song #djsong #bhojpurisong #bhojpuri",
-      "time": 1774477311.8168352
-    },
-    {
-      "title": "NR Remix Official - Lollypop Lagelu \uff5c Kamariya Kare Lapalop \uff5c Bhojpuri Trance Mix 2025 \ud83d\udca5 DJ Pavitra x DJ Lucky",
-      "time": 1774477322.757061
-    },
-    {
-      "title": "Bhataar Sanghe Ka Ka Kailu #DJ Remix Song \uff5c New #Bhojpuri Dj Song \uff5c Viral Dj Song \uff5c 2026 Dj Gana RDX",
-      "time": 1774477751.205854
-    }
-  ],
+  "tracks_played": [],
   "planned_tracks": [],
-  "saved_at": 1774477813.858124
+  "saved_at": 1774478072.68096
 }

@@ -111,9 +111,20 @@ def _step_callback(step, agent=None):
         agent_name = agent.name if agent and hasattr(agent, 'name') else "agent"
 
         # Model output = the thinking/reasoning text
+        # Try model_output first, then model_output_message.content
+        thinking = ""
         if step.model_output:
             thinking = str(step.model_output).strip()
-            if thinking and len(thinking) > 5:
+        elif step.model_output_message:
+            msg = step.model_output_message
+            if hasattr(msg, 'content') and msg.content:
+                thinking = str(msg.content).strip()
+            elif hasattr(msg, 'text') and msg.text:
+                thinking = str(msg.text).strip()
+
+        if thinking and len(thinking) > 5:
+            # Filter out tool call JSON — only show actual reasoning
+            if not thinking.startswith('{') and not thinking.startswith('['):
                 lines.append(f"[THINK:{agent_name}] {thinking[:500]}")
 
         # Tool calls
