@@ -359,9 +359,10 @@ class DJTretaBeing:
                     f"BPM: {active.get('bpm', '?')}, Key: {active.get('key', '?')}\n"
                     f"Mood: {self.mood}. {set_remaining}Idle deck: {idle_deck}\n\n"
                     f"ALREADY PLAYED (DO NOT REPEAT): {played_list}\n\n"
-                    f"1. Library agent: find unplayed track for {self.mood}\n"
-                    f"2. Mixer agent: load on deck {idle_deck} (FULL PATH), sync, do_transition(to_deck={idle_deck}, duration={min(60, int(active_remaining - 15))})\n"
-                    f"3. Verify deck {idle_deck} is playing"
+                    f"1. First, use hear_music() to LISTEN to the current track — feel the vibe\n"
+                    f"2. Library agent: find an unplayed track for {self.mood} that matches what you heard\n"
+                    f"3. Mixer agent: load on deck {idle_deck} (FULL PATH), sync, do_transition(to_deck={idle_deck}, duration={min(60, int(active_remaining - 15))})\n"
+                    f"4. Verify deck {idle_deck} is playing"
                 )
                 log.info(f"Transition: {str(result)[:200]}")
 
