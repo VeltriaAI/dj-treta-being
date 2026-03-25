@@ -1,3 +1,3 @@
-"""Run DJ Treta daemon: python -m agent --mood techno-deep --duration 60"""
-from .daemon import main
-main()
+"""Run DJ Treta: python -m agent --mood melodic-techno --duration 60"""
+from .main import run
+run()
