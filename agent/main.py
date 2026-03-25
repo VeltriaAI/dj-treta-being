@@ -158,6 +158,7 @@ class DJTretaBeing:
         self.set_start = 0.0
         self.set_duration = 0  # 0 = infinite
         self.tracks_played: list[dict] = []
+        self.planned_tracks: list[dict] = []  # upcoming tracks the brain is planning
         self._last_command = ""
         self._last_result = ""
 
@@ -171,6 +172,7 @@ class DJTretaBeing:
                 "set_start": self.set_start,
                 "set_duration": self.set_duration,
                 "tracks_played": self.tracks_played,
+                "planned_tracks": self.planned_tracks,
                 "saved_at": time.time(),
             }
             PERSIST_FILE.write_text(json.dumps(data, indent=2))
@@ -291,9 +293,66 @@ class DJTretaBeing:
             tinfo = get_track_info_api(self.config.mixxx.url, 1)
             if tinfo and not tinfo.get("error"):
                 self.tracks_played.append({"title": tinfo.get("title", "?"), "time": time.time()})
+
+            # Plan next 3 tracks
+            self._plan_ahead()
         except Exception as e:
             log.error(f"Failed to start set: {e}")
             self.phase = "idle"
+
+    def _plan_ahead(self):
+        """Ask brain to plan the next 3 tracks — energy arc, key flow, mood journey."""
+        if not self.agent:
+            return
+        played_list = [t.get("title", "?") for t in self.tracks_played]
+
+        # Get current track info
+        status = get_status(self.config.mixxx.url)
+        current_bpm = 0
+        current_key = ""
+        if status:
+            d1 = status.get("deck1", {})
+            d2 = status.get("deck2", {})
+            active = d1 if d1.get("playing") else d2
+            current_bpm = active.get("bpm", 0)
+            current_key = fmt_key(active.get("key", 0)) if active.get("key") else ""
+
+        try:
+            log.info("Planning next 3 tracks...")
+            result = self.agent.run(
+                f"Plan the next 3 tracks for this {self.mood} set.\n"
+                f"Current BPM: {current_bpm:.0f}, Key: {current_key}\n"
+                f"Already played: {played_list}\n\n"
+                f"Use the library agent to browse available tracks.\n"
+                f"For each planned track, tell me: title, why it fits, energy level (1-10).\n"
+                f"Consider: BPM compatibility, key flow (Camelot), energy arc.\n\n"
+                f"Return as:\n"
+                f"NEXT 1: <track name> — <reason> (energy: X)\n"
+                f"NEXT 2: <track name> — <reason> (energy: X)\n"
+                f"NEXT 3: <track name> — <reason> (energy: X)"
+            )
+            result_str = str(result)
+            log.info(f"Planned: {result_str[:300]}")
+
+            # Parse planned tracks
+            self.planned_tracks = []
+            for line in result_str.split("\n"):
+                line = line.strip()
+                if line.startswith("NEXT"):
+                    # Extract track name
+                    parts = line.split(":", 1)
+                    if len(parts) >= 2:
+                        track_info = parts[1].strip()
+                        name = track_info.split("—")[0].strip() if "—" in track_info else track_info.split("(")[0].strip()
+                        reason = track_info.split("—")[1].strip() if "—" in track_info else ""
+                        self.planned_tracks.append({"title": name, "reason": reason})
+
+            if not self.planned_tracks:
+                # Couldn't parse structured output — save raw
+                self.planned_tracks = [{"title": result_str[:200], "reason": ""}]
+
+        except Exception as e:
+            log.warning(f"Planning failed: {e}")
 
     def stop_set(self):
         """Stop the current set with a fade out."""
@@ -370,6 +429,9 @@ class DJTretaBeing:
                 new_tinfo = get_track_info_api(self.config.mixxx.url, idle_deck)
                 if new_tinfo and not new_tinfo.get("error"):
                     self.tracks_played.append({"title": new_tinfo.get("title", "?"), "time": time.time()})
+
+                # Re-plan next tracks (in background — don't block transition check)
+                threading.Thread(target=self._plan_ahead, daemon=True).start()
             except Exception as e:
                 log.error(f"Transition error: {e}")
 
@@ -497,6 +559,7 @@ class DJTretaBeing:
                 "last_command_result": self._last_result,
                 "current_track": current,
                 "next_track": None,
+                "planned_tracks": self.planned_tracks,
             }
             STATE_FILE.write_text(json.dumps(state, indent=2))
         except Exception:

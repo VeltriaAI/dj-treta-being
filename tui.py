@@ -763,21 +763,24 @@ class DJTretaApp(App):
         self.log_widget.write("\n".join(lines))
 
     def show_set_history(self):
-        """Show full set playlist — what's been played."""
+        """Show full set journey — played, now, planned."""
         state = read_state()
         status = mixxx_get("/api/status")
 
-        lines = ["\n[bold]SET HISTORY[/bold]"]
+        lines = ["\n[bold]SET JOURNEY[/bold]"]
 
         if state:
             mood = state.get("mood", "?")
             elapsed = state.get("set_elapsed", 0)
             remaining = state.get("set_remaining", 0)
-            n_tracks = state.get("tracks_played", 0)
-            lines.append(f"  Mood: [bold]{mood}[/bold]  Duration: {fmt_time(elapsed)}{f' / {fmt_time(elapsed + remaining)}' if isinstance(remaining, (int, float)) else f' / {remaining}'}")
+            if isinstance(remaining, str):
+                dur_str = f"{fmt_time(elapsed)} / {remaining}"
+            else:
+                dur_str = f"{fmt_time(elapsed)} / {fmt_time(elapsed + remaining)}"
+            lines.append(f"  Mood: [bold]{mood}[/bold]  Duration: {dur_str}")
             lines.append("")
 
-        # Get tracks from session file
+        # ── PLAYED ──
         session_file = Path.home() / "beings" / "dj-treta" / ".beings" / "session.json"
         tracks = []
         if session_file.exists():
@@ -787,9 +790,8 @@ class DJTretaApp(App):
             except Exception:
                 pass
 
-        if not tracks:
-            lines.append("  [dim]No tracks played yet[/dim]")
-        else:
+        if tracks:
+            lines.append("  [dim]── Played ──[/dim]")
             for i, t in enumerate(tracks, 1):
                 title = t.get("title", "Unknown")
                 played_at = t.get("time", 0)
@@ -798,9 +800,10 @@ class DJTretaApp(App):
                     ts = datetime.datetime.fromtimestamp(played_at).strftime("%H:%M")
                 else:
                     ts = "?"
-                lines.append(f"  [bold]{i:2d}.[/bold] [dim]{ts}[/dim]  {title}")
+                lines.append(f"  [dim]{i:2d}. {ts}[/dim]  {title}")
+            lines.append("")
 
-        # Show what's currently playing
+        # ── NOW PLAYING ──
         if status:
             d1 = status.get("deck1", {})
             d2 = status.get("deck2", {})
@@ -810,9 +813,30 @@ class DJTretaApp(App):
                     title = tinfo.get("title", "?") if tinfo and not tinfo.get("error") else "?"
                     bpm = d.get("bpm", 0)
                     key = fmt_key(d.get("key", 0))
-                    remaining = d.get("remaining_seconds", 0)
-                    lines.append(f"\n  [bold green]▶ NOW:[/bold green] {title}")
-                    lines.append(f"         {bpm:.0f} BPM  {key}  {fmt_time(remaining)} remaining")
+                    rem = d.get("remaining_seconds", 0)
+                    lines.append(f"  [bold green]▶ NOW PLAYING[/bold green]")
+                    lines.append(f"      {title}")
+                    lines.append(f"      {bpm:.0f} BPM  {key}  {fmt_time(rem)} remaining")
+                    lines.append("")
+
+        # ── PLANNED ──
+        planned = []
+        if state:
+            planned = state.get("planned_tracks", [])
+
+        if planned:
+            lines.append("  [bold cyan]── Coming Up ──[/bold cyan]")
+            for i, t in enumerate(planned, 1):
+                title = t.get("title", "?")
+                reason = t.get("reason", "")
+                if reason:
+                    lines.append(f"  [cyan]{i}.[/cyan] {title}")
+                    lines.append(f"     [dim italic]{reason}[/dim italic]")
+                else:
+                    lines.append(f"  [cyan]{i}.[/cyan] {title}")
+        else:
+            lines.append("  [dim]── Coming Up ──[/dim]")
+            lines.append("  [dim]Brain hasn't planned ahead yet[/dim]")
 
         lines.append("")
         self.log_widget.write("\n".join(lines))
