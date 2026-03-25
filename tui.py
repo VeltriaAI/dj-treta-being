@@ -445,20 +445,17 @@ class DJTretaApp(App):
         self._log_mtime = 0.0
         self._debug_log_pos = 0
         self._thinking_pos = 0
+        self.show_thinking = True  # thinking shows in main panel by default
         self.set_interval(3.0, self.poll_daemon_log)
         self.set_interval(1.0, self.poll_debug_log)
         self.set_interval(1.0, self.poll_thinking_log)
 
     def action_toggle_thinking(self) -> None:
-        thinking_log = self.query_one("#thinking-log")
-        if thinking_log.has_class("visible"):
-            thinking_log.remove_class("visible")
-            self.log_widget.write("[dim]Thinking panel OFF[/dim]")
+        self.show_thinking = not self.show_thinking
+        if self.show_thinking:
+            self.log_widget.write("[green]Thinking ON — you'll see 💭 why she makes decisions[/green]")
         else:
-            thinking_log.add_class("visible")
-            self.thinking_widget.write("[bold bright_green]── DJ Treta's Mind ──[/bold bright_green]")
-            self.thinking_widget.write("[dim]Why she picks tracks, chooses techniques, and what she hears[/dim]\n")
-            self.log_widget.write("[green]Thinking panel ON (Ctrl+R to toggle)[/green]")
+            self.log_widget.write("[dim]Thinking OFF[/dim]")
 
     def action_toggle_debug(self) -> None:
         debug_log = self.query_one("#debug-log")
@@ -612,11 +609,10 @@ class DJTretaApp(App):
             pass
 
     def poll_thinking_log(self) -> None:
-        """Agent internal thinking — split between thinking and debug panels."""
-        thinking_visible = self.query_one("#thinking-log").has_class("visible")
+        """Agent internal thinking — reasoning in main panel, technical in debug."""
         debug_visible = self.query_one("#debug-log").has_class("visible")
 
-        if not thinking_visible and not debug_visible:
+        if not self.show_thinking and not debug_visible:
             return
         if not THINKING_LOG.exists():
             return
@@ -631,21 +627,23 @@ class DJTretaApp(App):
                     continue
 
                 if line.startswith("[THINK:"):
-                    # Reasoning → THINKING panel
-                    if thinking_visible:
+                    # Reasoning → MAIN panel (always, if show_thinking)
+                    if self.show_thinking:
                         agent = line.split("]")[0].split(":")[1]
                         thought = line.split("] ", 1)[1] if "] " in line else line
-                        self.thinking_widget.write(f"[bold bright_white]💭 {agent}:[/bold bright_white] [italic]{thought}[/italic]\n")
+                        # Truncate very long thoughts
+                        if len(thought) > 300:
+                            thought = thought[:300] + "..."
+                        self.log_widget.write(f"[dim]💭 {agent}:[/dim] [italic dim]{thought}[/italic dim]")
 
                 elif line.startswith("[CALL:"):
-                    # Tool calls → DEBUG panel
+                    # Tool calls → DEBUG panel only
                     if debug_visible:
                         agent = line.split("]")[0].split(":")[1]
                         call = line.split("] ", 1)[1] if "] " in line else line
                         self.debug_widget.write(f"[cyan]  🔧 {agent} → {call}[/cyan]")
 
                 elif line.startswith("[OBS:"):
-                    # Observations → DEBUG panel
                     if debug_visible:
                         agent = line.split("]")[0].split(":")[1]
                         obs = line.split("] ", 1)[1] if "] " in line else line
@@ -654,7 +652,6 @@ class DJTretaApp(App):
                         self.debug_widget.write(f"[dim green]  📋 {agent} ← {obs}[/dim green]")
 
                 elif line.startswith("[TOKENS:"):
-                    # Token usage → DEBUG panel
                     if debug_visible:
                         self.debug_widget.write(f"[dim yellow]  {line}[/dim yellow]")
         except Exception:
