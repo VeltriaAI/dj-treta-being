@@ -405,12 +405,13 @@ class DJTretaBeing:
             tinfo = get_track_info_api(self.config.mixxx.url, 1)
             if tinfo and not tinfo.get("error"):
                 self.tracks_played.append({"title": tinfo.get("title", "?"), "time": time.time()})
-
-            # Plan next 3 tracks
-            self._plan_ahead()
         except Exception as e:
             log.error(f"Failed to start set: {e}")
             self.phase = "idle"
+            return
+
+        # Plan next tracks in background — failure here should NEVER kill the set
+        threading.Thread(target=self._plan_ahead, daemon=True).start()
 
     def _plan_ahead(self):
         """Ask brain to plan the next 3 tracks — energy arc, key flow, mood journey."""
