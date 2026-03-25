@@ -187,6 +187,44 @@ def get_track_info(deck: int) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# BEAT ALIGNMENT — Phase matching like a human DJ
+# ═══════════════════════════════════════════════════════════════════════
+
+@tool
+def align_beats(deck: int) -> str:
+    """Align the beats of a deck to match the other playing deck.
+    This is like a human DJ nudging the jog wheel to get kicks landing together.
+    Call this AFTER loading and syncing a track, BEFORE or DURING a transition.
+
+    Args:
+        deck: The deck to align (1 or 2). Its beats will snap to the other deck's grid.
+    """
+    # beatsync_phase = align phase without changing BPM
+    _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "beatsync_phase", "value": 1})
+    # Also enable quantize so future actions stay on-grid
+    _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "quantize", "value": 1})
+    return f"Beats aligned on Deck {deck} — phase matched and quantize enabled"
+
+
+@tool
+def nudge_track(deck: int, direction: str = "forward", strength: float = 0.5) -> str:
+    """Nudge a track forward or backward slightly — like touching the jog wheel.
+    Use this to fine-tune beat alignment during a mix.
+
+    Args:
+        deck: Deck to nudge (1 or 2).
+        direction: 'forward' to speed up momentarily, 'backward' to slow down.
+        strength: Nudge strength 0.0 to 1.0 (0.5 = gentle, 1.0 = strong push).
+    """
+    import time as _time
+    value = strength if direction == "forward" else -strength
+    _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "wheel", "value": value})
+    _time.sleep(0.1)
+    _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "wheel", "value": 0})
+    return f"Nudged Deck {deck} {direction} (strength {strength})"
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # AUDIO PERCEPTION — Hear the music through Gemini
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -313,10 +351,14 @@ def do_transition(to_deck: int, duration: int = 60) -> str:
         if not deck_state.get("track_loaded", False):
             return f"ABORTED: Deck {to_deck} has no track loaded! Load a track first with load_track."
 
-    # Ensure incoming is playing + synced
+    # Ensure incoming is playing + synced + phase aligned
     _mixxx_post("/api/sync", {"deck": to_deck})
     _mixxx_post("/api/play", {"deck": to_deck})
     _time.sleep(0.3)
+    # Phase align — snap beats to the other deck's grid
+    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "beatsync_phase", "value": 1})
+    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "quantize", "value": 1})
+    _time.sleep(0.1)
 
     # Verify it actually started playing
     status2 = _mixxx_get("/api/status")
