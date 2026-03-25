@@ -20,7 +20,6 @@ import time
 from pathlib import Path
 
 import httpx
-from litellm import completion
 
 from .config import load_config, Config
 from .agents import create_dj_agent
@@ -589,56 +588,45 @@ class DJTretaBeing:
         self._write_state()
         log.info(f"Result: {result[:200]}")
 
-    # Patterns that need the agent (not just fast talk)
-    _PLAY_PATTERN = re.compile(
-        r'\b(play|start|dj|set|mix|spin)\b.*\b(melodic|techno|deep|dark|progressive|ambient|chill|vocal|house|psychill|minimal)\b',
-        re.IGNORECASE,
-    )
-    _ACTION_PATTERN = re.compile(
-        r'\b(play|load|skip|transition|mix|blend|swap|download|search|find'
-        r'|change|switch|darker|lighter|harder|softer|build|drop|cut'
-        r'|bass|eq|filter|volume|crossfade|sync|stop|fade|hear|listen'
-        r'|bpm|tempo|faster|slower|speed|energy|increase|decrease|louder|quieter)\b',
-        re.IGNORECASE,
-    )
-
     def _handle_command(self, cmd: str, args: dict) -> str:
         if cmd == "talk":
             message = args.get("message", "")
             if not message:
                 return "No message"
 
-            # If asking to play a set — detect mood and start
-            play_match = self._PLAY_PATTERN.search(message)
-            if play_match and self.phase == "idle":
-                mood = play_match.group(2).lower()
-                # Map common words to mood names
-                mood_map = {"techno": "melodic-techno", "chill": "psychill", "house": "deep-house"}
-                mood = mood_map.get(mood, mood)
-                threading.Thread(target=self.play_set, args=(mood, 0), daemon=True).start()
-                return f"Starting {mood} set — searching for tracks now..."
+            if not self.agent:
+                return "Brain not ready yet"
 
-            # If asking to hear/listen — use actual audio perception
-            if re.search(r'\b(hear|listen|sound|audio)\b', message, re.IGNORECASE):
-                from .tools import hear_music
-                audio = hear_music(deck=0, duration=10)
-                ctx = f"You just LISTENED to the music. What you heard:\n{audio}\n\nPhase: {self.phase}, Mood: {self.mood}"
-                return fast_talk(message, self.config, ctx)
+            # Everything goes through the agent — she decides what to do.
+            # If it's just conversation, she'll respond without tools.
+            # If it needs action, she has all the tools.
+            context = (
+                f"Phase: {self.phase}, Mood: {self.mood or 'none'}, "
+                f"Tracks played: {len(self.tracks_played)}"
+            )
+            try:
+                result = str(self.agent.run(
+                    f'{context}\n\n'
+                    f'The listener says: "{message}"\n\n'
+                    f'Respond naturally. If they want you to DO something (play, skip, change BPM, '
+                    f'download, adjust EQ, etc.), use your tools. If it\'s just conversation, '
+                    f'just respond — no tools needed.'
+                ))
 
-            # If asking for action while playing — route through agent
-            if self.phase == "playing" and self._ACTION_PATTERN.search(message) and self.agent:
-                try:
-                    result = str(self.agent.run(f'The listener says: "{message}". Take action if needed.'))
-                    return result
-                except Exception as e:
-                    return f"Agent error: {e}"
+                # If she decided to start a set (detected play intent)
+                if self.phase == "idle" and any(w in message.lower() for w in ["play", "start", "baja", "shuru"]):
+                    # Extract mood from agent's response or message
+                    mood = "deep"  # default
+                    for m in ["melodic", "techno", "deep", "dark", "progressive", "ambient",
+                              "chill", "vocal", "house", "psychill", "minimal", "bhojpuri"]:
+                        if m in message.lower() or m in result.lower():
+                            mood = m
+                            break
+                    threading.Thread(target=self.play_set, args=(mood, 0), daemon=True).start()
 
-            # Default: fast conversation
-            status = get_status(self.config.mixxx.url)
-            ctx = f"Phase: {self.phase}, Mood: {self.mood}, Tracks: {len(self.tracks_played)}"
-            if status:
-                ctx += f"\nMixxx: {json.dumps(status, indent=2)[:400]}"
-            return fast_talk(message, self.config, ctx)
+                return result
+            except Exception as e:
+                return f"Error: {e}"
 
         elif cmd == "play":
             mood = args.get("mood", "melodic-techno")
