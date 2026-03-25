@@ -376,6 +376,57 @@ def cmd_help():
 
 # ── Main Loop ─────────────────────────────────────────────────────────
 
+def _daemon_cmd(action):
+    """Start/stop/restart the Being daemon."""
+    import subprocess
+    DJ_HOME = Path(__file__).parent
+    PYTHON = DJ_HOME / ".venv" / "bin" / "python3"
+    PID_FILE = Path("/tmp/dj-treta.pid")
+    LOG = Path("/tmp/dj-treta-daemon.log")
+
+    if action in ("stop", "restart"):
+        if PID_FILE.exists():
+            try:
+                pid = int(PID_FILE.read_text().strip())
+                os.kill(pid, 15)  # SIGTERM
+                console.print(f"[yellow]Stopped (PID {pid})[/yellow]")
+                PID_FILE.unlink(missing_ok=True)
+            except (ProcessLookupError, ValueError):
+                PID_FILE.unlink(missing_ok=True)
+        else:
+            if action == "stop":
+                console.print("[dim]Not running[/dim]")
+                return
+        if action == "restart":
+            import time
+            time.sleep(2)
+
+    if action in ("start", "restart"):
+        if PID_FILE.exists():
+            try:
+                pid = int(PID_FILE.read_text().strip())
+                os.kill(pid, 0)
+                console.print(f"[yellow]Already running (PID {pid})[/yellow]")
+                return
+            except (ProcessLookupError, ValueError):
+                PID_FILE.unlink(missing_ok=True)
+
+        PID_FILE.unlink(missing_ok=True)
+        subprocess.Popen(
+            [str(PYTHON), "-m", "agent"],
+            cwd=str(DJ_HOME),
+            stdout=open(str(LOG), "w"),
+            stderr=subprocess.STDOUT,
+        )
+        import time
+        time.sleep(2)
+        if PID_FILE.exists():
+            console.print(f"[green]Started (PID {PID_FILE.read_text().strip()})[/green]")
+        else:
+            console.print("[green]Starting...[/green]")
+        console.print("[dim]Talk to her: djtreta talk 'play something melodic'[/dim]")
+
+
 BANNER = """[bold bright_white]
   ╔══════════════════════════════════════╗
   ║          [bold cyan]DJ Treta[/bold cyan] [dim]v1.0[/dim]              ║
@@ -391,7 +442,6 @@ def main():
             cmd_status()
             return
         elif cmd in ("ui", "tui"):
-            # Launch full TUI
             from tui import main as tui_main
             tui_main()
             return
@@ -404,6 +454,15 @@ def main():
         elif cmd == "logs":
             n = int(sys.argv[2]) if len(sys.argv) > 2 else 20
             cmd_logs(n)
+            return
+        elif cmd == "start":
+            _daemon_cmd("start")
+            return
+        elif cmd == "stop":
+            _daemon_cmd("stop")
+            return
+        elif cmd == "restart":
+            _daemon_cmd("restart")
             return
 
     # Interactive mode
