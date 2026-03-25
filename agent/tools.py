@@ -472,9 +472,12 @@ def do_bass_swap(to_deck: int, duration: int = 60) -> str:
             _mixxx_post("/api/volume", {"deck": out_deck, "volume": round(fade, 2)})
         _time.sleep(1.0 / fps)
 
-    # Cleanup
+    # Cleanup — crossfader to incoming, pause outgoing, reset EQ
+    xf = 0.0 if to_deck == 1 else 1.0
+    _mixxx_post("/api/crossfade", {"position": xf})
     _mixxx_post("/api/pause", {"deck": out_deck})
     _mixxx_post("/api/volume", {"deck": out_deck, "volume": 1.0})
+    _mixxx_post("/api/volume", {"deck": to_deck, "volume": 1.0})
     for band in ["hi", "mid", "lo"]:
         _mixxx_post("/api/eq", {"deck": out_deck, band: 1.0})
         _mixxx_post("/api/eq", {"deck": to_deck, band: 1.0})
