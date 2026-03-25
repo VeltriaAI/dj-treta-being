@@ -315,11 +315,27 @@ class BrainWidget(Static):
         else:
             set_str = f"{fmt_time(elapsed)} / {fmt_time(elapsed + remaining)}"
 
+        # Get billing info
+        billing_str = ""
+        try:
+            billing_file = Path("/tmp/dj-treta-billing.json")
+            if billing_file.exists():
+                b = json.loads(billing_file.read_text())
+                total_tokens = b.get("total_input_tokens", 0) + b.get("total_output_tokens", 0)
+                cost = b.get("total_cost_usd", 0)
+                if total_tokens > 0:
+                    if total_tokens > 1_000_000:
+                        billing_str = f"  [dim]{total_tokens/1_000_000:.1f}M tokens ${cost:.3f}[/dim]"
+                    else:
+                        billing_str = f"  [dim]{total_tokens//1000}K tokens ${cost:.4f}[/dim]"
+        except Exception:
+            pass
+
         line1 = (
             f"[{pc}]● {phase.upper()}[/{pc}]  "
             f"Mood: [bold]{mood or 'none'}[/bold]  "
             f"Tracks: [bold]{played}[/bold]  "
-            f"Set: {set_str}"
+            f"Set: {set_str}{billing_str}"
         )
 
         parts = [line1]
@@ -716,6 +732,8 @@ class DJTretaApp(App):
             self.start_brain()
         elif cmd == "kill":
             self.stop_brain()
+        elif cmd == "cost":
+            self.show_cost()
         elif cmd in ("thinking", "mind"):
             self.action_toggle_thinking()
         elif cmd == "debug":
@@ -837,6 +855,43 @@ class DJTretaApp(App):
 
         lines.append("")
         self.log_widget.write("\n".join(lines))
+
+    def show_cost(self):
+        """Show billing — tokens used, cost, per-agent breakdown."""
+        billing_file = Path("/tmp/dj-treta-billing.json")
+        if not billing_file.exists():
+            self.log_widget.write("[dim]No billing data yet[/dim]")
+            return
+
+        try:
+            b = json.loads(billing_file.read_text())
+            elapsed = time.time() - b.get("session_start", time.time())
+            mins = elapsed / 60
+
+            lines = ["\n[bold]BILLING[/bold]"]
+            lines.append(f"  Session: {mins:.0f} minutes")
+            lines.append(f"  Total calls: [bold]{b['calls']}[/bold]")
+            lines.append(f"  Input tokens:  [bold]{b['total_input_tokens']:,}[/bold]")
+            lines.append(f"  Output tokens: [bold]{b['total_output_tokens']:,}[/bold]")
+            lines.append(f"  Total cost:    [bold green]${b['total_cost_usd']:.4f}[/bold green]")
+
+            if mins > 0:
+                cost_per_hour = b['total_cost_usd'] / mins * 60
+                lines.append(f"  Cost/hour:     [bold]${cost_per_hour:.3f}/hr[/bold]")
+
+            if b.get("by_agent"):
+                lines.append("\n  [dim]By agent:[/dim]")
+                for name, data in b["by_agent"].items():
+                    lines.append(
+                        f"    {name}: {data['calls']} calls, "
+                        f"{data['input']:,}+{data['output']:,} tokens, "
+                        f"${data['cost']:.4f}"
+                    )
+
+            lines.append("")
+            self.log_widget.write("\n".join(lines))
+        except Exception as e:
+            self.log_widget.write(f"[red]Billing error: {e}[/red]")
 
     def start_brain(self):
         import subprocess

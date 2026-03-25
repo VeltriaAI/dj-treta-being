@@ -120,6 +120,35 @@ You talk to Treta (Claude) and to Manish. Be brief, direct, warm."""
 
 
 THINKING_FILE = Path("/tmp/dj-treta-thinking.log")
+BILLING_FILE = Path("/tmp/dj-treta-billing.json")
+
+# Token pricing per million tokens (update as needed)
+MODEL_PRICING = {
+    "gemini-3-flash": {"input": 0.10, "output": 0.40},      # $/M tokens
+    "gemini-3.1-pro": {"input": 1.25, "output": 10.00},
+    "gemini-2.5-flash": {"input": 0.15, "output": 0.60},
+    "default": {"input": 0.10, "output": 0.40},
+}
+
+
+def _load_billing() -> dict:
+    try:
+        if BILLING_FILE.exists():
+            return json.loads(BILLING_FILE.read_text())
+    except Exception:
+        pass
+    return {"total_input_tokens": 0, "total_output_tokens": 0, "total_cost_usd": 0.0,
+            "calls": 0, "by_agent": {}, "session_start": time.time()}
+
+
+def _save_billing(data: dict):
+    try:
+        BILLING_FILE.write_text(json.dumps(data, indent=2))
+    except Exception:
+        pass
+
+
+import time
 
 
 def _step_callback(step, agent=None):
@@ -158,9 +187,35 @@ def _step_callback(step, agent=None):
             obs = str(step.observations)[:300]
             lines.append(f"[OBS:{agent_name}] {obs}")
 
-        # Token usage
+        # Token usage + billing
         if step.token_usage:
             lines.append(f"[TOKENS:{agent_name}] {step.token_usage}")
+
+            # Track billing
+            try:
+                inp = getattr(step.token_usage, 'input_tokens', 0) or 0
+                out = getattr(step.token_usage, 'output_tokens', 0) or 0
+                billing = _load_billing()
+                billing["total_input_tokens"] += inp
+                billing["total_output_tokens"] += out
+                billing["calls"] += 1
+
+                # Calculate cost
+                pricing = MODEL_PRICING.get("default")
+                cost = (inp / 1_000_000 * pricing["input"]) + (out / 1_000_000 * pricing["output"])
+                billing["total_cost_usd"] += cost
+
+                # Per-agent tracking
+                if agent_name not in billing["by_agent"]:
+                    billing["by_agent"][agent_name] = {"input": 0, "output": 0, "cost": 0.0, "calls": 0}
+                billing["by_agent"][agent_name]["input"] += inp
+                billing["by_agent"][agent_name]["output"] += out
+                billing["by_agent"][agent_name]["cost"] += cost
+                billing["by_agent"][agent_name]["calls"] += 1
+
+                _save_billing(billing)
+            except Exception:
+                pass
 
         if lines:
             with open(THINKING_FILE, "a") as f:
