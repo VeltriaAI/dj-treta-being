@@ -1,6 +1,6 @@
 {
   "phase": "playing",
-  "mood": "deep",
+  "mood": "bhojpuri",
   "set_start": 1774476310.032011,
   "set_duration": 0,
   "tracks_played": [
@@ -15,8 +15,25 @@
     {
       "title": "Anjunadeep - Marsh - Gjipe",
       "time": 1774477185.334337
+    },
+    {
+      "title": "DJ Pepusnik - Depeche Mode - Enjoy The Silence (ANYMA REMIX) 124 BPM",
+      "time": 1774477285.798111
+    },
+    {
+      "title": "Dj Lehsun - Malai Music Dholki Loop \uff5cBirha Loop 2024 \uff5c New Dholki Loop \uff5c Dj Song #djsong #bhojpurisong #bhojpuri",
+      "time": 1774477311.8168352
+    },
+    {
+      "title": "NR Remix Official - Lollypop Lagelu \uff5c Kamariya Kare Lapalop \uff5c Bhojpuri Trance Mix 2025 \ud83d\udca5 DJ Pavitra x DJ Lucky",
+      "time": 1774477322.757061
     }
   ],
-  "planned_tracks": [],
-  "saved_at": 1774477201.7739599
+  "planned_tracks": [
+    {
+      "title": "Based on your current vibe (122 BPM, 10A/Bm) and the tracks you've already played, I\u2019ve curated the next three steps of this journey to build energy and then close with a beautiful, emotional resoluti",
+      "reason": ""
+    }
+  ],
+  "saved_at": 1774477444.5107698
 }

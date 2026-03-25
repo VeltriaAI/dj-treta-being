@@ -597,7 +597,8 @@ class DJTretaBeing:
     _ACTION_PATTERN = re.compile(
         r'\b(play|load|skip|transition|mix|blend|swap|download|search|find'
         r'|change|switch|darker|lighter|harder|softer|build|drop|cut'
-        r'|bass|eq|filter|volume|crossfade|sync|stop|fade|hear|listen)\b',
+        r'|bass|eq|filter|volume|crossfade|sync|stop|fade|hear|listen'
+        r'|bpm|tempo|faster|slower|speed|energy|increase|decrease|louder|quieter)\b',
         re.IGNORECASE,
     )
 
