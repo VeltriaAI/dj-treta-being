@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-DJ Treta TUI — Full terminal UI. Decks always visible, brain activity live, conversation inline.
+DJ Treta TUI — Full DJ console in the terminal.
 
 Usage:
     python tui.py
-    djtreta ui
+    djtreta tui
 """
 
 import json
@@ -46,7 +46,6 @@ CAMELOT_MAP = {
     "F#m": "11A", "Gm": "6A", "G#m": "1A", "Am": "8A", "Bbm": "3A", "Bm": "10A",
 }
 
-# Track info cache (to avoid spamming /api/deck/N/track_info every 2s)
 _track_cache: dict[int, dict] = {}
 _track_cache_path: dict[int, str] = {}
 
@@ -79,21 +78,23 @@ def fmt_time(s) -> str:
     m, sec = divmod(int(s), 60)
     return f"{m}:{sec:02d}"
 
+def fmt_time_precise(s) -> str:
+    if s <= 0: return "0:00.00"
+    m, sec = divmod(s, 60)
+    return f"{int(m)}:{sec:05.2f}"
+
 def fmt_key(k: int) -> str:
     name = KEY_MAP.get(k, "")
     cam = CAMELOT_MAP.get(name, "")
     return f"{name} ({cam})" if cam else name or "—"
 
 def get_track_name(deck: int, file_path: str = "") -> str:
-    """Get track name — cached, only fetches when track changes."""
     global _track_cache, _track_cache_path
-
     if file_path and file_path == _track_cache_path.get(deck, ""):
         cached = _track_cache.get(deck, {})
         title = cached.get("title", "")
         artist = cached.get("artist", "")
         if title:
-            # Clean up "uploader - title" format from yt-dlp filenames
             if " - " in title and not artist:
                 parts = title.split(" - ", 1)
                 if len(parts) == 2:
@@ -104,21 +105,50 @@ def get_track_name(deck: int, file_path: str = "") -> str:
             return title
         return ""
 
-    # Fetch fresh
     info = mixxx_get(f"/api/deck/{deck}/track_info")
     if info and not info.get("error"):
         _track_cache[deck] = info
         _track_cache_path[deck] = file_path or info.get("file_path", "")
         return get_track_name(deck, _track_cache_path[deck])
 
-    # Fallback: extract from file path
     if file_path:
         name = Path(file_path).stem
         _track_cache_path[deck] = file_path
         _track_cache[deck] = {"title": name}
         return name
-
     return ""
+
+def vu_bar(level: float, width: int = 12) -> str:
+    """Vertical-style VU meter rendered horizontally with colors."""
+    filled = int(level * width)
+    if filled <= 0:
+        return "[dim]" + "░" * width + "[/dim]"
+
+    # Green zone (0-60%), Yellow (60-80%), Red (80-100%)
+    green_end = int(width * 0.6)
+    yellow_end = int(width * 0.8)
+
+    bar = ""
+    for i in range(width):
+        if i < filled:
+            if i < green_end:
+                bar += "[green]█[/green]"
+            elif i < yellow_end:
+                bar += "[yellow]█[/yellow]"
+            else:
+                bar += "[red]█[/red]"
+        else:
+            bar += "[dim]░[/dim]"
+    return bar
+
+def knob_display(value: float, label: str, neutral: float = 1.0) -> str:
+    """Show a knob value with visual indicator."""
+    if abs(value - neutral) < 0.05:
+        return f"[dim]{label}[/dim]"
+    elif value > neutral:
+        return f"[bold yellow]{label}↑{value:.1f}[/bold yellow]"
+    else:
+        return f"[bold cyan]{label}↓{value:.1f}[/bold cyan]"
 
 def send_command(command: str, args: dict = {}) -> str:
     COMMAND_FILE.write_text(json.dumps({"command": command, "args": args}))
@@ -135,95 +165,128 @@ def send_command(command: str, args: dict = {}) -> str:
 # ── Widgets ───────────────────────────────────────────────────────────
 
 class DeckWidget(Static):
-    """Single deck display with track name, waveform progress, BPM, key."""
+    """Full DJ deck display — track, waveform, BPM, key, EQ, VU, filter, sync."""
 
     def __init__(self, deck_num: int, **kwargs):
         super().__init__(**kwargs)
         self.deck_num = deck_num
 
-    def update_deck(self, deck: dict, is_active: bool):
+    def update_deck(self, deck: dict, live: dict, is_active: bool):
         if not deck.get("track_loaded"):
             color = "cyan" if self.deck_num == 1 else "magenta"
             self.update(
                 f"[bold {color}]DECK {self.deck_num}[/bold {color}]\n"
-                f"[dim]  No track loaded[/dim]\n\n\n\n"
+                f"[dim]  No track loaded[/dim]\n\n\n\n\n\n"
             )
             return
 
         playing = deck.get("playing", False)
         bpm = deck.get("bpm", 0)
+        file_bpm = deck.get("file_bpm", 0)
         key = fmt_key(deck.get("key", 0))
         pos = deck.get("position_seconds", 0)
         dur = deck.get("duration", 0)
         remaining = deck.get("remaining_seconds", 0)
         synced = deck.get("sync_enabled", False)
         vol = deck.get("volume", 1.0)
-        file_path = deck.get("file_path", "")
+        rate = deck.get("rate", 0) * 100  # as percentage
+        loop = deck.get("loop_enabled", False)
 
-        # Get track name
-        track_name = get_track_name(self.deck_num, file_path)
+        # EQ
+        eq_hi = deck.get("eq_hi", 1.0)
+        eq_mid = deck.get("eq_mid", 1.0)
+        eq_lo = deck.get("eq_lo", 1.0)
+
+        # VU from live data
+        vu_l = live.get("vu_left", 0)
+        vu_r = live.get("vu_right", 0)
+        beat_active = live.get("beat_active", False)
+        beat_dist = live.get("beat_distance", 0)
+        peak = live.get("peak_indicator", False)
+
+        # Track name
+        track_name = get_track_name(self.deck_num)
         if not track_name:
-            # Try from daemon state
             state = read_state()
             if state:
                 ct = state.get("current_track", {})
                 if ct.get("title"):
                     track_name = ct["title"]
 
-        # Truncate long names
-        max_name_len = 44
-        if len(track_name) > max_name_len:
-            track_name = track_name[:max_name_len - 1] + "…"
+        max_name = 48
+        if len(track_name) > max_name:
+            track_name = track_name[:max_name - 1] + "…"
 
-        # Progress bar — waveform style
+        # Progress bar
         pct = pos / dur if dur > 0 else 0
-        w = 40
+        w = 44
         filled = int(pct * w)
-        # Use block characters for a waveform feel
-        bar = "█" * filled + "▓" + "░" * max(0, w - filled - 1)
+        bar = "█" * filled + "▌" + "░" * max(0, w - filled - 1)
 
+        # Colors
         icon = "▶" if playing else "⏸"
         color = "cyan" if self.deck_num == 1 else "magenta"
         dim_color = "bright_cyan" if self.deck_num == 1 else "bright_magenta"
+        active_str = f" [bold yellow]★[/bold yellow]" if is_active else ""
+        beat_str = "[bold white]●[/bold white]" if beat_active else "[dim]○[/dim]"
 
-        # Active deck indicator
-        active_str = f" [bold yellow]★ ACTIVE[/bold yellow]" if is_active else ""
-
-        # Tags
+        # Status tags
         tags = []
         if synced:
             tags.append("[green]SYNC[/green]")
-        if vol < 0.9:
-            tags.append(f"[yellow]VOL {vol:.0%}[/yellow]")
-        tags_str = "  ".join(tags)
+        if loop:
+            tags.append("[yellow]LOOP[/yellow]")
+        if peak:
+            tags.append("[red bold]PEAK[/red bold]")
+        tags_str = " ".join(tags)
 
-        # Volume meter (simple)
-        eq_hi = deck.get("eq_hi", 1.0)
-        eq_mid = deck.get("eq_mid", 1.0)
-        eq_lo = deck.get("eq_lo", 1.0)
-        eq_str = ""
-        if eq_hi != 1.0 or eq_mid != 1.0 or eq_lo != 1.0:
-            eq_str = f"  [dim]EQ H:{eq_hi:.1f} M:{eq_mid:.1f} L:{eq_lo:.1f}[/dim]"
+        # Rate display
+        rate_str = f"[dim]{rate:+.1f}%[/dim]" if abs(rate) > 0.01 else ""
+
+        # EQ knobs
+        eq_str = f"{knob_display(eq_hi, 'H')} {knob_display(eq_mid, 'M')} {knob_display(eq_lo, 'L')}"
+
+        # VU meters
+        vu_str = f"L {vu_bar(vu_l, 10)}  R {vu_bar(vu_r, 10)}"
+
+        # Volume fader visual
+        vol_pct = int(vol * 10)
+        vol_bar = "█" * vol_pct + "░" * (10 - vol_pct)
+        vol_str = f"VOL [{dim_color}]{vol_bar}[/{dim_color}] {vol:.0%}"
 
         self.update(
-            f"[bold {color}]DECK {self.deck_num}[/bold {color}]{active_str}\n"
+            f"[bold {color}]DECK {self.deck_num}{active_str}[/bold {color}]  {beat_str}  {tags_str}\n"
             f"  [bold]{track_name}[/bold]\n"
-            f"  {icon} {fmt_time(pos)} [{dim_color}]{bar}[/{dim_color}] {fmt_time(dur)}\n"
-            f"  [bold]{bpm:.0f}[/bold] BPM  [bold]{key}[/bold]  {tags_str}\n"
-            f"  Remaining [bold]{fmt_time(remaining)}[/bold]{eq_str}"
+            f"  {icon} {fmt_time_precise(pos)} [{dim_color}]{bar}[/{dim_color}] -{fmt_time(remaining)}\n"
+            f"  [bold]{bpm:.2f}[/bold] BPM {rate_str}  [bold]{key}[/bold]  (file: {file_bpm:.0f})\n"
+            f"  EQ {eq_str}  {vol_str}\n"
+            f"  {vu_str}"
         )
 
 
-class CrossfaderWidget(Static):
-    """Crossfader visualization."""
+class MixerWidget(Static):
+    """Center mixer — crossfader, master VU, master vol, headphone."""
 
-    def update_xf(self, xf: float):
-        w = 50
+    def update_mixer(self, status: dict, live: dict):
+        xf = status.get("crossfader", 0)
+        master_vol = status.get("master_volume", 1)
+        head_vol = status.get("headphone_volume", 1)
+        m_vu_l = live.get("master_vu_left", 0)
+        m_vu_r = live.get("master_vu_right", 0)
+
+        # Crossfader
+        w = 40
         pos = int((xf + 1) / 2 * w)
         pos = max(0, min(w, pos))
-        left = "─" * pos
-        right = "─" * (w - pos)
-        self.update(f"  [cyan]D1[/cyan] {left}[bold yellow]◆[/bold yellow]{right} [magenta]D2[/magenta]")
+        xf_bar = "─" * pos + "[bold yellow]◆[/bold yellow]" + "─" * (w - pos)
+
+        # Master VU
+        master_vu = f"L {vu_bar(m_vu_l, 15)}  R {vu_bar(m_vu_r, 15)}"
+
+        self.update(
+            f"  [cyan]D1[/cyan] {xf_bar} [magenta]D2[/magenta]\n"
+            f"  MASTER {master_vu}  VOL {master_vol:.0%}  HEAD {head_vol:.0%}"
+        )
 
 
 class BrainWidget(Static):
@@ -242,11 +305,10 @@ class BrainWidget(Static):
 
         colors = {
             "playing": "green", "preparing": "yellow", "transitioning": "blue",
-            "recovery": "red", "starting": "yellow", "stopped": "dim",
+            "recovery": "red", "starting": "yellow", "stopped": "dim", "idle": "dim",
         }
         pc = colors.get(phase, "white")
 
-        # Main line
         if isinstance(remaining, str):
             set_str = f"{fmt_time(elapsed)} / {remaining}"
         else:
@@ -254,12 +316,11 @@ class BrainWidget(Static):
 
         line1 = (
             f"[{pc}]● {phase.upper()}[/{pc}]  "
-            f"Mood: [bold]{mood}[/bold]  "
+            f"Mood: [bold]{mood or 'none'}[/bold]  "
             f"Tracks: [bold]{played}[/bold]  "
             f"Set: {set_str}"
         )
 
-        # Second line — now playing from brain state + next track
         parts = [line1]
         ct = state.get("current_track", {})
         if ct.get("title"):
@@ -280,7 +341,7 @@ Screen {
 }
 
 #decks {
-    height: 9;
+    height: 10;
     layout: horizontal;
 }
 
@@ -290,9 +351,10 @@ Screen {
     padding: 0 1;
 }
 
-#crossfader {
-    height: 1;
+#mixer {
+    height: 2;
     text-align: center;
+    padding: 0 1;
 }
 
 #brain {
@@ -335,7 +397,7 @@ class DJTretaApp(App):
         with Horizontal(id="decks"):
             yield DeckWidget(1, id="deck1")
             yield DeckWidget(2, id="deck2")
-        yield CrossfaderWidget(id="crossfader")
+        yield MixerWidget(id="mixer")
         yield BrainWidget(id="brain")
         yield RichLog(id="conversation", highlight=True, markup=True, wrap=True)
         yield Input(placeholder="Talk to DJ Treta... (or /help)", id="prompt-input")
@@ -343,7 +405,7 @@ class DJTretaApp(App):
 
     def on_mount(self) -> None:
         self.log_widget = self.query_one("#conversation", RichLog)
-        self.log_widget.write("[dim]Welcome to DJ Treta. Type anything to talk, or /help for commands.[/dim]\n")
+        self.log_widget.write("[dim]DJ Treta Console. Type anything to talk, /help for commands.[/dim]\n")
         self.set_interval(1.0, self.refresh_status)
         self.refresh_status()
         self._log_pos = 0
@@ -352,16 +414,19 @@ class DJTretaApp(App):
 
     def refresh_status(self) -> None:
         status = mixxx_get("/api/status")
+        live = mixxx_get("/api/live")
         state = read_state()
 
         deck1_w = self.query_one("#deck1", DeckWidget)
         deck2_w = self.query_one("#deck2", DeckWidget)
-        xf_w = self.query_one("#crossfader", CrossfaderWidget)
+        mixer_w = self.query_one("#mixer", MixerWidget)
         brain_w = self.query_one("#brain", BrainWidget)
 
-        if status:
+        if status and live:
             d1 = status.get("deck1", {})
             d2 = status.get("deck2", {})
+            l1 = live.get("deck1", {})
+            l2 = live.get("deck2", {})
             xf = status.get("crossfader", 0)
 
             if d1.get("playing") and not d2.get("playing"):
@@ -373,13 +438,13 @@ class DJTretaApp(App):
             else:
                 active = 2
 
-            deck1_w.update_deck(d1, active == 1)
-            deck2_w.update_deck(d2, active == 2)
-            xf_w.update_xf(xf)
+            deck1_w.update_deck(d1, l1, active == 1)
+            deck2_w.update_deck(d2, l2, active == 2)
+            mixer_w.update_mixer(status, live)
         else:
-            deck1_w.update("[red bold]DECK 1[/red bold]\n  [red]Mixxx offline[/red]\n\n\n")
-            deck2_w.update("[red bold]DECK 2[/red bold]\n  [red]Mixxx offline[/red]\n\n\n")
-            xf_w.update("[red]No connection to Mixxx[/red]")
+            deck1_w.update("[red bold]DECK 1[/red bold]\n  [red]Mixxx offline[/red]\n\n\n\n\n")
+            deck2_w.update("[red bold]DECK 2[/red bold]\n  [red]Mixxx offline[/red]\n\n\n\n\n")
+            mixer_w.update("[red]No connection to Mixxx[/red]")
 
         brain_w.update_brain(state)
 
@@ -427,8 +492,8 @@ class DJTretaApp(App):
                     self.log_widget.write(f"[yellow]  {msg}[/yellow]")
                 elif "sync" in msg.lower() or "Loaded" in msg:
                     self.log_widget.write(f"[magenta]  {msg}[/magenta]")
-                elif "Cleaning" in msg or "cleaned" in msg:
-                    self.log_widget.write(f"[dim]  {msg}[/dim]")
+                elif "hear" in msg.lower() or "listen" in msg.lower():
+                    self.log_widget.write(f"[bright_green]  {msg}[/bright_green]")
                 else:
                     self.log_widget.write(f"[dim]  {msg}[/dim]")
         except Exception:
@@ -455,30 +520,33 @@ class DJTretaApp(App):
             self.log_widget.write(
                 "\n[bold]Commands:[/bold]\n"
                 "  [cyan]<message>[/cyan]          Talk to DJ Treta\n"
+                "  [cyan]/play[/cyan] [mood] [min] Start a set (e.g. /play dark-techno 60)\n"
+                "  [cyan]/stop[/cyan]              Stop the set (fade out)\n"
                 "  [cyan]/mood[/cyan] <name>       Change mood\n"
                 "  [cyan]/skip[/cyan]              Skip (smooth 20s transition)\n"
-                "  [cyan]/play[/cyan] [deck]       Play\n"
                 "  [cyan]/pause[/cyan] [deck]      Pause\n"
                 "  [cyan]/load[/cyan] <d> <name>   Load track by name\n"
                 "  [cyan]/tracks[/cyan]            List library\n"
-                "  [cyan]/start[/cyan] [mood]      Start brain\n"
-                "  [cyan]/stop[/cyan]              Stop brain\n"
+                "  [cyan]/start[/cyan]             Start Being daemon\n"
+                "  [cyan]/kill[/cyan]              Kill Being daemon\n"
                 "  [cyan]/help[/cyan]              This help\n"
                 "  [dim]Ctrl+Q quit | Ctrl+S skip[/dim]\n"
             )
+        elif cmd == "play":
+            mood = args[0] if args else "melodic-techno"
+            dur = int(args[1]) if len(args) > 1 else 0
+            self.log_widget.write(f"[green]  Starting {mood} set...[/green]")
+            self.run_brain_command("play", {"mood": mood, "duration": dur})
+        elif cmd == "stop":
+            self.run_brain_command("stop", {})
         elif cmd == "mood" and args:
-            self.log_widget.write(f"[yellow]Changing mood to {args[0]}...[/yellow]")
             self.run_brain_command("change_mood", {"mood": args[0]})
         elif cmd == "skip":
             self.action_skip()
-        elif cmd == "play":
-            deck = int(args[0]) if args else 1
-            mixxx_post("/api/play", {"deck": deck})
-            self.log_widget.write(f"[green]▶ Deck {deck}[/green]")
         elif cmd == "pause":
             deck = int(args[0]) if args else 1
             mixxx_post("/api/pause", {"deck": deck})
-            self.log_widget.write(f"[yellow]⏸ Deck {deck}[/yellow]")
+            self.log_widget.write(f"[yellow]  Paused Deck {deck}[/yellow]")
         elif cmd == "load" and len(args) >= 2:
             deck = int(args[0])
             query = " ".join(args[1:]).lower()
@@ -486,10 +554,8 @@ class DJTretaApp(App):
         elif cmd == "tracks":
             self.show_tracks()
         elif cmd == "start":
-            mood = args[0] if args else "melodic-techno"
-            dur = int(args[1]) if len(args) > 1 else 60
-            self.start_brain(mood, dur)
-        elif cmd == "stop":
+            self.start_brain()
+        elif cmd == "kill":
             self.stop_brain()
         else:
             self.log_widget.write(f"[red]Unknown: {text}[/red] — /help")
@@ -528,25 +594,25 @@ class DJTretaApp(App):
                 lines.append(f"    [dim]•[/dim] {t}")
         self.log_widget.write("\n".join(lines))
 
-    def start_brain(self, mood: str, duration: int):
+    def start_brain(self):
         import subprocess
         venv = Path(__file__).parent / ".venv" / "bin" / "python3"
         subprocess.Popen(
-            [str(venv), "-m", "agent", "--mood", mood, "--duration", str(duration)],
+            [str(venv), "-m", "agent"],
             cwd=str(Path(__file__).parent),
             stdout=open("/tmp/dj-treta-daemon.log", "w"),
             stderr=subprocess.STDOUT,
         )
         self._log_pos = 0
-        self.log_widget.write(f"[green]  Brain started — mood: {mood}, duration: {duration}m[/green]")
+        self.log_widget.write("[green]  Being daemon started[/green]")
 
     def stop_brain(self):
         import subprocess
         subprocess.run(["pkill", "-f", "python.*-m agent"], capture_output=True)
-        self.log_widget.write("[yellow]  Brain stopped[/yellow]")
+        self.log_widget.write("[yellow]  Being daemon killed[/yellow]")
 
     def action_skip(self):
-        self.log_widget.write("[yellow]  Skipping (smooth 20s)...[/yellow]")
+        self.log_widget.write("[yellow]  Skipping...[/yellow]")
         self.run_brain_command("skip", {})
 
 
