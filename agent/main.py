@@ -11,8 +11,10 @@ Usage:
 import argparse
 import json
 import logging
+import os
 import re
 import signal
+import sys
 import threading
 import time
 from pathlib import Path
@@ -32,7 +34,28 @@ log = logging.getLogger("dj-treta")
 
 STATE_FILE = Path("/tmp/dj-treta-state.json")
 COMMAND_FILE = Path("/tmp/dj-treta-command.json")
+PID_FILE = Path("/tmp/dj-treta.pid")
 PERSIST_FILE = Path(__file__).parent.parent / ".beings" / "session.json"  # survives restarts
+
+
+def _check_single_instance():
+    """Ensure only one Being instance runs. Kill stale PIDs."""
+    if PID_FILE.exists():
+        try:
+            old_pid = int(PID_FILE.read_text().strip())
+            # Check if process is alive
+            import os
+            os.kill(old_pid, 0)  # signal 0 = check existence
+            log.error(f"Another instance already running (PID {old_pid}). Kill it first or use the CLI.")
+            sys.exit(1)
+        except ProcessLookupError:
+            # Stale PID file — process is dead
+            PID_FILE.unlink()
+        except ValueError:
+            PID_FILE.unlink()
+
+    # Write our PID
+    PID_FILE.write_text(str(os.getpid()))
 
 
 # ── Mixxx helpers ─────────────────────────────────────────────────────
@@ -291,6 +314,7 @@ class DJTretaBeing:
             return False
 
     def start(self):
+        _check_single_instance()
         signal.signal(signal.SIGTERM, lambda s, f: self.stop())
         signal.signal(signal.SIGINT, lambda s, f: self.stop())
 
@@ -331,6 +355,10 @@ class DJTretaBeing:
     def stop(self):
         self._save_session()
         self._running = False
+        try:
+            PID_FILE.unlink(missing_ok=True)
+        except Exception:
+            pass
 
     def play_set(self, mood: str, duration: int = 0):
         """Start a DJ set. duration=0 means play forever until told to stop."""
