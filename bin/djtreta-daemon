@@ -1,0 +1,72 @@
+#!/bin/bash
+# DJ Treta Being daemon manager
+# Usage: djtreta-daemon start|stop|restart|status|logs
+
+DJ_HOME="$HOME/beings/dj-treta"
+PYTHON="$DJ_HOME/.venv/bin/python3"
+LOG="/tmp/dj-treta-daemon.log"
+PID_FILE="/tmp/dj-treta.pid"
+
+case "$1" in
+    start)
+        if [ -f "$PID_FILE" ] && kill -0 "$(cat $PID_FILE)" 2>/dev/null; then
+            echo "Already running (PID $(cat $PID_FILE))"
+            exit 1
+        fi
+        # Clean stale PID
+        rm -f "$PID_FILE"
+        echo "Starting DJ Treta Being..."
+        cd "$DJ_HOME"
+        $PYTHON -m agent > "$LOG" 2>&1 &
+        # Don't write PID here — the Being writes it via _check_single_instance
+        sleep 2
+        if [ -f "$PID_FILE" ]; then
+            echo "Started (PID $(cat $PID_FILE))"
+        else
+            echo "Started (PID $!)"
+        fi
+        echo "Talk to her: djtreta talk 'play something melodic'"
+        ;;
+    stop)
+        if [ -f "$PID_FILE" ]; then
+            PID=$(cat "$PID_FILE")
+            echo "Stopping (PID $PID)..."
+            kill "$PID" 2>/dev/null
+            rm -f "$PID_FILE"
+            echo "Stopped"
+        else
+            echo "Not running"
+        fi
+        ;;
+    restart)
+        $0 stop
+        sleep 2
+        $0 start
+        ;;
+    status)
+        if [ -f "$PID_FILE" ] && kill -0 "$(cat $PID_FILE)" 2>/dev/null; then
+            echo "Running (PID $(cat $PID_FILE))"
+            $PYTHON "$DJ_HOME/cli.py" status
+        else
+            echo "Not running"
+        fi
+        ;;
+    logs)
+        N=${2:-20}
+        $PYTHON "$DJ_HOME/cli.py" logs "$N"
+        ;;
+    *)
+        echo "DJ Treta Being Daemon"
+        echo "  djtreta-daemon start    — Start the Being"
+        echo "  djtreta-daemon stop     — Stop the Being"
+        echo "  djtreta-daemon restart  — Restart"
+        echo "  djtreta-daemon status   — Show status"
+        echo "  djtreta-daemon logs [n] — Show logs"
+        echo ""
+        echo "Talk to her:"
+        echo "  djtreta talk 'play something deep and melodic'"
+        echo "  djtreta talk 'go darker'"
+        echo "  djtreta talk 'how are you feeling?'"
+        echo "  djtreta tui"
+        ;;
+esac

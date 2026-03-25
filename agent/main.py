@@ -43,18 +43,14 @@ def _check_single_instance():
     if PID_FILE.exists():
         try:
             old_pid = int(PID_FILE.read_text().strip())
-            # Check if process is alive
-            import os
             os.kill(old_pid, 0)  # signal 0 = check existence
             log.error(f"Another instance already running (PID {old_pid}). Kill it first or use the CLI.")
             sys.exit(1)
         except ProcessLookupError:
-            # Stale PID file — process is dead
             PID_FILE.unlink()
         except ValueError:
             PID_FILE.unlink()
 
-    # Write our PID
     PID_FILE.write_text(str(os.getpid()))
 
 
@@ -573,11 +569,33 @@ class DJTretaBeing:
         self._write_state()
         log.info(f"Result: {result[:200]}")
 
+    # Patterns that need the agent (not just fast talk)
+    _PLAY_PATTERN = re.compile(
+        r'\b(play|start|dj|set|mix|spin)\b.*\b(melodic|techno|deep|dark|progressive|ambient|chill|vocal|house|psychill|minimal)\b',
+        re.IGNORECASE,
+    )
+    _ACTION_PATTERN = re.compile(
+        r'\b(play|load|skip|transition|mix|blend|swap|download|search|find'
+        r'|change|switch|darker|lighter|harder|softer|build|drop|cut'
+        r'|bass|eq|filter|volume|crossfade|sync|stop|fade|hear|listen)\b',
+        re.IGNORECASE,
+    )
+
     def _handle_command(self, cmd: str, args: dict) -> str:
         if cmd == "talk":
             message = args.get("message", "")
             if not message:
                 return "No message"
+
+            # If asking to play a set — detect mood and start
+            play_match = self._PLAY_PATTERN.search(message)
+            if play_match and self.phase == "idle":
+                mood = play_match.group(2).lower()
+                # Map common words to mood names
+                mood_map = {"techno": "melodic-techno", "chill": "psychill", "house": "deep-house"}
+                mood = mood_map.get(mood, mood)
+                threading.Thread(target=self.play_set, args=(mood, 0), daemon=True).start()
+                return f"Starting {mood} set — searching for tracks now..."
 
             # If asking to hear/listen — use actual audio perception
             if re.search(r'\b(hear|listen|sound|audio)\b', message, re.IGNORECASE):
@@ -586,6 +604,15 @@ class DJTretaBeing:
                 ctx = f"You just LISTENED to the music. What you heard:\n{audio}\n\nPhase: {self.phase}, Mood: {self.mood}"
                 return fast_talk(message, self.config, ctx)
 
+            # If asking for action while playing — route through agent
+            if self.phase == "playing" and self._ACTION_PATTERN.search(message) and self.agent:
+                try:
+                    result = str(self.agent.run(f'The listener says: "{message}". Take action if needed.'))
+                    return result
+                except Exception as e:
+                    return f"Agent error: {e}"
+
+            # Default: fast conversation
             status = get_status(self.config.mixxx.url)
             ctx = f"Phase: {self.phase}, Mood: {self.mood}, Tracks: {len(self.tracks_played)}"
             if status:
@@ -595,7 +622,6 @@ class DJTretaBeing:
         elif cmd == "play":
             mood = args.get("mood", "melodic-techno")
             duration = args.get("duration", 0)
-            # Run in thread so command returns quickly
             threading.Thread(target=self.play_set, args=(mood, duration), daemon=True).start()
             return f"Starting {mood} set{f' ({duration}m)' if duration > 0 else ' (infinite)'}"
 
@@ -670,8 +696,8 @@ class DJTretaBeing:
 # ── Entry point ───────────────────────────────────────────────────────
 
 def run():
-    parser = argparse.ArgumentParser(description="DJ Treta Being")
-    parser.add_argument("--play", default=None, help="Start playing immediately with this mood")
+    parser = argparse.ArgumentParser(description="DJ Treta Being — always alive daemon")
+    parser.add_argument("--play", default=None, help="Optional: start playing immediately with this mood")
     parser.add_argument("--duration", type=int, default=0, help="Set duration in minutes (0=infinite)")
     parser.add_argument("--config", default=None)
     args = parser.parse_args()
@@ -680,7 +706,8 @@ def run():
     being = DJTretaBeing(config)
 
     if args.play:
-        # Start playing on a background thread, being stays alive
         threading.Thread(target=being.play_set, args=(args.play, args.duration), daemon=True).start()
 
     being.start()
+    # Default: starts idle, waiting for talk commands
+    # "djtreta talk 'play something melodic'" → she starts playing
