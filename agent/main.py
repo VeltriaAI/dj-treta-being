@@ -535,10 +535,10 @@ class DJTretaBeing:
                     f"BPM: {active.get('bpm', '?')}, Key: {active.get('key', '?')}\n"
                     f"Mood: {self.mood}. {set_remaining}Idle deck: {idle_deck}\n\n"
                     f"ALREADY PLAYED (DO NOT REPEAT): {played_list}\n\n"
-                    f"1. First, use hear_music() to LISTEN to the current track — feel the vibe\n"
-                    f"2. Library agent: find an unplayed track for {self.mood} that matches what you heard\n"
-                    f"3. Mixer agent: load on deck {idle_deck} (FULL PATH), sync, do_transition(to_deck={idle_deck}, duration={min(60, int(active_remaining - 15))})\n"
-                    f"4. Verify deck {idle_deck} is playing"
+                    f"Steps:\n"
+                    f"1. Use library agent to find an unplayed track for {self.mood}\n"
+                    f"2. Use mixer agent with ONE command: 'Load [FULL PATH] on deck {idle_deck}, then call do_transition(to_deck={idle_deck}, duration={min(45, int(active_remaining - 10))})'\n"
+                    f"CRITICAL: do_transition handles sync, play, phase-align, and crossfade — you MUST call it or music will stop."
                 )
                 log.info(f"Transition: {str(result)[:200]}")
 

@@ -1,9 +1,9 @@
 {
-  "phase": "idle",
+  "phase": "playing",
   "mood": "",
   "set_start": 0.0,
   "set_duration": 0,
   "tracks_played": [],
   "planned_tracks": [],
-  "saved_at": 1774478072.68096
+  "saved_at": 1774478301.792083
 }
