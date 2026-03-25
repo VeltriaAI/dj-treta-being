@@ -369,6 +369,17 @@ Screen {
     padding: 0 1;
 }
 
+#debug-log {
+    height: 1fr;
+    border-top: solid $warning;
+    padding: 0 1;
+    display: none;
+}
+
+#debug-log.visible {
+    display: block;
+}
+
 #prompt-input {
     width: 100%;
     dock: bottom;
@@ -390,7 +401,10 @@ class DJTretaApp(App):
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit"),
         Binding("ctrl+s", "skip", "Skip"),
+        Binding("ctrl+d", "toggle_debug", "Debug"),
     ]
+
+    debug_mode = reactive(False)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -400,17 +414,85 @@ class DJTretaApp(App):
         yield MixerWidget(id="mixer")
         yield BrainWidget(id="brain")
         yield RichLog(id="conversation", highlight=True, markup=True, wrap=True)
+        yield RichLog(id="debug-log", highlight=True, markup=True, wrap=True)
         yield Input(placeholder="Talk to DJ Treta... (or /help)", id="prompt-input")
         yield Footer()
 
     def on_mount(self) -> None:
         self.log_widget = self.query_one("#conversation", RichLog)
+        self.debug_widget = self.query_one("#debug-log", RichLog)
         self.log_widget.write("[dim]DJ Treta Console. Type anything to talk, /help for commands.[/dim]\n")
         self.set_interval(1.0, self.refresh_status)
         self.refresh_status()
         self._log_pos = 0
         self._log_mtime = 0.0
+        self._debug_log_pos = 0
         self.set_interval(3.0, self.poll_daemon_log)
+        self.set_interval(1.0, self.poll_debug_log)
+
+    def action_toggle_debug(self) -> None:
+        debug_log = self.query_one("#debug-log")
+        if debug_log.has_class("visible"):
+            debug_log.remove_class("visible")
+            self.log_widget.write("[dim]Debug mode OFF[/dim]")
+        else:
+            debug_log.add_class("visible")
+            self.debug_widget.write("[yellow bold]── Debug Mode ──[/yellow bold]")
+            self.debug_widget.write("[dim]Showing raw agent activity: tool calls, LLM responses, timing[/dim]\n")
+            self.log_widget.write("[yellow]Debug mode ON (Ctrl+D to toggle)[/yellow]")
+
+    def poll_debug_log(self) -> None:
+        """Raw unfiltered daemon log for debug panel."""
+        if not self.query_one("#debug-log").has_class("visible"):
+            return
+        if not DAEMON_LOG.exists():
+            return
+        try:
+            content = DAEMON_LOG.read_text()
+            lines = content.split("\n")
+            new_lines = lines[self._debug_log_pos:]
+            self._debug_log_pos = len(lines)
+
+            for line in new_lines:
+                if not line.strip():
+                    continue
+                clean = line.strip()
+
+                # Color by type
+                if "Calling tool:" in clean:
+                    # Extract tool name and args
+                    self.debug_widget.write(f"[bold cyan]  {clean}[/bold cyan]")
+                elif "Observations:" in clean:
+                    # Truncate observations
+                    obs = clean[:150] + "..." if len(clean) > 150 else clean
+                    self.debug_widget.write(f"[dim green]  {obs}[/dim green]")
+                elif "Step " in clean and "Duration" in clean:
+                    self.debug_widget.write(f"[yellow]  {clean}[/yellow]")
+                elif "New run" in clean:
+                    self.debug_widget.write(f"[bold magenta]  {clean}[/bold magenta]")
+                elif "Final answer:" in clean:
+                    ans = clean[:200] + "..." if len(clean) > 200 else clean
+                    self.debug_widget.write(f"[bold green]  {ans}[/bold green]")
+                elif "Initial plan" in clean or "plan" in clean.lower():
+                    self.debug_widget.write(f"[bright_yellow]  {clean}[/bright_yellow]")
+                elif "ERROR" in clean or "error" in clean.lower():
+                    self.debug_widget.write(f"[bold red]  {clean}[/bold red]")
+                elif "WARNING" in clean:
+                    self.debug_widget.write(f"[red]  {clean}[/red]")
+                elif "LiteLLM" in clean or "completion()" in clean:
+                    self.debug_widget.write(f"[dim]  {clean}[/dim]")
+                elif "INFO" in clean:
+                    parts = clean.split("] ", 1)
+                    if len(parts) >= 2:
+                        self.debug_widget.write(f"[dim white]  {parts[1]}[/dim white]")
+                elif "─" in clean or "│" in clean or "╭" in clean or "╰" in clean:
+                    self.debug_widget.write(f"[dim]{clean}[/dim]")
+                else:
+                    if len(clean) > 200:
+                        clean = clean[:200] + "..."
+                    self.debug_widget.write(f"[dim]  {clean}[/dim]")
+        except Exception:
+            pass
 
     def refresh_status(self) -> None:
         status = mixxx_get("/api/status")
@@ -557,6 +639,8 @@ class DJTretaApp(App):
             self.start_brain()
         elif cmd == "kill":
             self.stop_brain()
+        elif cmd == "debug":
+            self.action_toggle_debug()
         else:
             self.log_widget.write(f"[red]Unknown: {text}[/red] — /help")
 
