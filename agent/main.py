@@ -339,10 +339,30 @@ class DJTretaBeing:
 
         # Main loop — always alive, check commands, manage set
         while self._running:
-            self._check_commands()
+            try:
+                self._check_commands()
 
-            if self.phase == "playing":
-                self._check_transition()
+                if self.phase == "playing":
+                    self._check_transition()
+
+                    # Watchdog: if nothing is playing on Mixxx, force-start
+                    status = get_status(self.config.mixxx.url)
+                    if status:
+                        d1 = status.get("deck1", {})
+                        d2 = status.get("deck2", {})
+                        if not d1.get("playing") and not d2.get("playing"):
+                            # Both decks silent while phase=playing — something went wrong
+                            if d1.get("track_loaded"):
+                                log.warning("Watchdog: nothing playing, starting Deck 1")
+                                httpx.post(f"{self.config.mixxx.url}/api/play", json={"deck": 1}, timeout=3)
+                                httpx.post(f"{self.config.mixxx.url}/api/crossfade", json={"position": 0.0}, timeout=3)
+                            elif d2.get("track_loaded"):
+                                log.warning("Watchdog: nothing playing, starting Deck 2")
+                                httpx.post(f"{self.config.mixxx.url}/api/play", json={"deck": 2}, timeout=3)
+                                httpx.post(f"{self.config.mixxx.url}/api/crossfade", json={"position": 1.0}, timeout=3)
+
+            except Exception as e:
+                log.warning(f"Main loop error: {e}")
 
             time.sleep(3)
 
