@@ -646,6 +646,7 @@ class DJTretaApp(App):
                 "  [cyan]/skip[/cyan]              Skip (smooth 20s transition)\n"
                 "  [cyan]/pause[/cyan] [deck]      Pause\n"
                 "  [cyan]/load[/cyan] <d> <name>   Load track by name\n"
+                "  [cyan]/set[/cyan]               Show set history (full playlist)\n"
                 "  [cyan]/tracks[/cyan]            List library\n"
                 "  [cyan]/start[/cyan]             Start Being daemon\n"
                 "  [cyan]/kill[/cyan]              Kill Being daemon\n"
@@ -679,6 +680,8 @@ class DJTretaApp(App):
             self.stop_brain()
         elif cmd == "debug":
             self.action_toggle_debug()
+        elif cmd == "set":
+            self.show_set_history()
         else:
             self.log_widget.write(f"[red]Unknown: {text}[/red] — /help")
 
@@ -714,6 +717,61 @@ class DJTretaApp(App):
             lines.append(f"\n  [cyan]{genre_dir.name}[/cyan] ({len(tracks)})")
             for t in tracks:
                 lines.append(f"    [dim]•[/dim] {t}")
+        self.log_widget.write("\n".join(lines))
+
+    def show_set_history(self):
+        """Show full set playlist — what's been played."""
+        state = read_state()
+        status = mixxx_get("/api/status")
+
+        lines = ["\n[bold]SET HISTORY[/bold]"]
+
+        if state:
+            mood = state.get("mood", "?")
+            elapsed = state.get("set_elapsed", 0)
+            remaining = state.get("set_remaining", 0)
+            n_tracks = state.get("tracks_played", 0)
+            lines.append(f"  Mood: [bold]{mood}[/bold]  Duration: {fmt_time(elapsed)}{f' / {fmt_time(elapsed + remaining)}' if isinstance(remaining, (int, float)) else f' / {remaining}'}")
+            lines.append("")
+
+        # Get tracks from session file
+        session_file = Path.home() / "beings" / "dj-treta" / ".beings" / "session.json"
+        tracks = []
+        if session_file.exists():
+            try:
+                session = json.loads(session_file.read_text())
+                tracks = session.get("tracks_played", [])
+            except Exception:
+                pass
+
+        if not tracks:
+            lines.append("  [dim]No tracks played yet[/dim]")
+        else:
+            for i, t in enumerate(tracks, 1):
+                title = t.get("title", "Unknown")
+                played_at = t.get("time", 0)
+                if played_at:
+                    import datetime
+                    ts = datetime.datetime.fromtimestamp(played_at).strftime("%H:%M")
+                else:
+                    ts = "?"
+                lines.append(f"  [bold]{i:2d}.[/bold] [dim]{ts}[/dim]  {title}")
+
+        # Show what's currently playing
+        if status:
+            d1 = status.get("deck1", {})
+            d2 = status.get("deck2", {})
+            for deck_num, d in [(1, d1), (2, d2)]:
+                if d.get("playing"):
+                    tinfo = mixxx_get(f"/api/deck/{deck_num}/track_info")
+                    title = tinfo.get("title", "?") if tinfo and not tinfo.get("error") else "?"
+                    bpm = d.get("bpm", 0)
+                    key = fmt_key(d.get("key", 0))
+                    remaining = d.get("remaining_seconds", 0)
+                    lines.append(f"\n  [bold green]▶ NOW:[/bold green] {title}")
+                    lines.append(f"         {bpm:.0f} BPM  {key}  {fmt_time(remaining)} remaining")
+
+        lines.append("")
         self.log_widget.write("\n".join(lines))
 
     def start_brain(self):
