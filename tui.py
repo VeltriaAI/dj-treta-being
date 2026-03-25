@@ -30,6 +30,7 @@ MIXXX_URL = "http://localhost:7778"
 STATE_FILE = Path("/tmp/dj-treta-state.json")
 COMMAND_FILE = Path("/tmp/dj-treta-command.json")
 DAEMON_LOG = Path("/tmp/dj-treta-daemon.log")
+THINKING_LOG = Path("/tmp/dj-treta-thinking.log")
 MUSIC_DIR = Path.home() / "Music" / "DJTreta"
 
 KEY_MAP = {
@@ -427,8 +428,10 @@ class DJTretaApp(App):
         self._log_pos = 0
         self._log_mtime = 0.0
         self._debug_log_pos = 0
+        self._thinking_pos = 0
         self.set_interval(3.0, self.poll_daemon_log)
         self.set_interval(1.0, self.poll_debug_log)
+        self.set_interval(1.0, self.poll_thinking_log)
 
     def action_toggle_debug(self) -> None:
         debug_log = self.query_one("#debug-log")
@@ -578,6 +581,41 @@ class DJTretaApp(App):
                     self.log_widget.write(f"[bright_green]  {msg}[/bright_green]")
                 else:
                     self.log_widget.write(f"[dim]  {msg}[/dim]")
+        except Exception:
+            pass
+
+    def poll_thinking_log(self) -> None:
+        """Agent internal thinking — from step_callbacks."""
+        if not self.query_one("#debug-log").has_class("visible"):
+            return
+        if not THINKING_LOG.exists():
+            return
+        try:
+            content = THINKING_LOG.read_text()
+            lines = content.split("\n")
+            new_lines = lines[self._thinking_pos:]
+            self._thinking_pos = len(lines)
+
+            for line in new_lines:
+                if not line.strip():
+                    continue
+                if line.startswith("[THINK:"):
+                    # Agent's reasoning — the gold
+                    agent = line.split("]")[0].split(":")[1]
+                    thought = line.split("] ", 1)[1] if "] " in line else line
+                    self.debug_widget.write(f"[bold bright_white]  💭 {agent}:[/bold bright_white] [italic]{thought}[/italic]")
+                elif line.startswith("[CALL:"):
+                    agent = line.split("]")[0].split(":")[1]
+                    call = line.split("] ", 1)[1] if "] " in line else line
+                    self.debug_widget.write(f"[cyan]  🔧 {agent} → {call}[/cyan]")
+                elif line.startswith("[OBS:"):
+                    agent = line.split("]")[0].split(":")[1]
+                    obs = line.split("] ", 1)[1] if "] " in line else line
+                    if len(obs) > 150:
+                        obs = obs[:150] + "..."
+                    self.debug_widget.write(f"[dim green]  📋 {agent} ← {obs}[/dim green]")
+                elif line.startswith("[TOKENS:"):
+                    self.debug_widget.write(f"[dim yellow]  {line}[/dim yellow]")
         except Exception:
             pass
 

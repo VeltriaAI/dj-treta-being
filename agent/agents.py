@@ -90,6 +90,47 @@ You talk to Treta (Claude) and to Manish. Be brief, direct, warm."""
     return base + "\n\n" + "\n\n---\n\n".join(parts)
 
 
+THINKING_FILE = Path("/tmp/dj-treta-thinking.log")
+
+
+def _step_callback(step):
+    """Captures agent thinking after each step — written to file for TUI debug panel."""
+    try:
+        lines = []
+        agent_name = getattr(step, '_agent_name', 'agent')
+
+        # Model output = the thinking text
+        if hasattr(step, 'model_output') and step.model_output:
+            thinking = str(step.model_output).strip()
+            if thinking:
+                lines.append(f"[THINK:{agent_name}] {thinking[:500]}")
+
+        # Tool calls
+        if hasattr(step, 'tool_calls') and step.tool_calls:
+            for tc in step.tool_calls:
+                name = getattr(tc, 'name', '?')
+                args = getattr(tc, 'arguments', {})
+                lines.append(f"[CALL:{agent_name}] {name}({json.dumps(args)[:200]})")
+
+        # Observations (tool results)
+        if hasattr(step, 'observations') and step.observations:
+            obs = str(step.observations)[:300]
+            lines.append(f"[OBS:{agent_name}] {obs}")
+
+        # Token usage
+        if hasattr(step, 'token_usage') and step.token_usage:
+            lines.append(f"[TOKENS:{agent_name}] {step.token_usage}")
+
+        if lines:
+            with open(THINKING_FILE, "a") as f:
+                for line in lines:
+                    f.write(line + "\n")
+    except Exception:
+        pass
+
+
+import json as _json
+
 def create_model(config: Config) -> LiteLLMModel:
     return LiteLLMModel(
         model_id=config.llm.model,
@@ -109,12 +150,13 @@ def create_dj_agent(config: Config) -> ToolCallingAgent:
             get_dj_status, get_deck_info, load_track, play_deck, pause_deck,
             set_volume, set_crossfader, set_eq, set_filter, set_sync,
             get_live_data, get_track_info, do_transition, do_bass_swap,
-            list_library_tracks,  # needs this to look up full file paths
+            list_library_tracks,
         ],
         model=model,
         name="mixer",
         description="Controls Mixxx DJ decks — load tracks, play, pause, EQ, filter, sync, volume, crossfade, and execute transitions (smooth blend or bass swap). IMPORTANT: load_track requires the FULL ABSOLUTE file path (e.g. /Users/.../Music/DJTreta/genre/file.mp3). Use list_library_tracks to find paths.",
         max_steps=10,
+        step_callbacks=[_step_callback],
     )
 
     library = ToolCallingAgent(
@@ -125,7 +167,14 @@ def create_dj_agent(config: Config) -> ToolCallingAgent:
         name="library",
         description="Manages the DJ music library — list available tracks by genre folder, search YouTube for new music, download tracks, check what's been played in this set. Use for ALL track discovery.",
         max_steps=8,
+        step_callbacks=[_step_callback],
     )
+
+    # Clear thinking log on new agent creation
+    try:
+        THINKING_FILE.write_text("")
+    except Exception:
+        pass
 
     dj = ToolCallingAgent(
         tools=[
@@ -141,6 +190,7 @@ def create_dj_agent(config: Config) -> ToolCallingAgent:
         planning_interval=5,
         name="dj_treta",
         description="DJ Treta — autonomous AI DJ",
+        step_callbacks=[_step_callback],
     )
 
     return dj
