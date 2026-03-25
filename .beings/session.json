@@ -1,45 +1,14 @@
 {
-  "phase": "playing",
-  "mood": "",
-  "set_start": 0.0,
+  "phase": "idle",
+  "mood": "melodic-techno",
+  "set_start": 1774475222.414732,
   "set_duration": 0,
   "tracks_played": [
     {
-      "title": "We Are Ever \uff5c Afro Progressive x Tech House \uff5c 123 BPM",
-      "time": 1774472109.892865
-    },
-    {
-      "title": "ARTBAT Fan - ARTBAT, Dino Lenny - Our Space (Original Mix)",
-      "time": 1774472319.658279
-    },
-    {
-      "title": "Obscura Music - Agents Of Time - Era (Original Mix)",
-      "time": 1774472709.967996
-    },
-    {
-      "title": "Afterlife - AL029 - Colyn - Resolve",
-      "time": 1774473099.4045281
-    },
-    {
-      "title": "Afterlife - Colyn - Give You My All (Extended Mix)",
-      "time": 1774473448.1113222
-    },
-    {
-      "title": "Bolton Sounds - Progressive House 2026 - Vokzu - U.P (Extended Mix) [SkyTop]",
-      "time": 1774473715.2112892
-    },
-    {
-      "title": "Sounds Of Toma - Massano - Visitors (Extended Mix) [Melodic House & Techno] [Eternity Sounds]",
-      "time": 1774474062.241197
-    },
-    {
       "title": "adriatique - Adriatique - Soul Valley (Original Mix)",
-      "time": 1774474439.709307
-    },
-    {
-      "title": "adriatique - Adriatique - Undrstnd (Original Mix)",
-      "time": 1774474924.994467
+      "time": 1774475311.181317
     }
   ],
-  "saved_at": 1774475158.193745
+  "planned_tracks": [],
+  "saved_at": 1774475361.648108
 }

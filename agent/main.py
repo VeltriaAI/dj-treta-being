@@ -361,7 +361,11 @@ class DJTretaBeing:
             d2 = status.get("deck2", {})
             active = d1 if d1.get("playing") else d2
             current_bpm = active.get("bpm", 0)
-            current_key = fmt_key(active.get("key", 0)) if active.get("key") else ""
+            from .camelot import mixxx_key_to_musical, mixxx_key_to_camelot
+            key_num = active.get("key", 0)
+            musical = mixxx_key_to_musical(key_num) if key_num else ""
+            camelot = mixxx_key_to_camelot(key_num) if key_num else ""
+            current_key = f"{musical} ({camelot})" if musical else ""
 
         try:
             log.info("Planning next 3 tracks...")
