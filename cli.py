@@ -388,6 +388,11 @@ def main():
         if cmd == "status":
             cmd_status()
             return
+        elif cmd == "ui":
+            # Launch full TUI
+            from tui import main as tui_main
+            tui_main()
+            return
         elif cmd == "live":
             cmd_live()
             return
