@@ -190,11 +190,13 @@ class DJDaemon:
 
     def _build_context(self) -> dict:
         """Build context dict for brain calls."""
+        self._enrich_current_track()
         return {
             "mood": self.state.mood,
             "current_bpm": self.state.current_track.bpm,
             "current_key": self.state.current_track.key,
             "current_energy": self.state.current_track.energy,
+            "current_remaining": self.state.current_track.remaining,
             "target_energy": "maintain",
             "tracks_played": [t["title"] for t in self.state.tracks_played],
             "idle_deck": self.state.idle_deck,
@@ -361,11 +363,15 @@ class DJDaemon:
         """Ask brain to pick and load the next track."""
         played_titles = [t["title"] for t in self.state.tracks_played]
 
+        # Read actual BPM/key from Mixxx for better brain decisions
+        self._enrich_current_track()
+
         context = {
             "mood": self.state.mood,
             "current_bpm": self.state.current_track.bpm,
             "current_key": self.state.current_track.key,
             "current_energy": self.state.current_track.energy,
+            "current_remaining": self.state.current_track.remaining,
             "target_energy": "maintain",
             "tracks_played": played_titles,
             "idle_deck": self.state.idle_deck,
@@ -395,30 +401,68 @@ class DJDaemon:
             )
             self.state.transition_technique = decision.get("technique", "blend")
             raw_duration = decision.get("duration", self.config.transitions.default_duration)
-            # Clamp duration to safe range
+
+            # Clamp duration: min 10s, max 120s, and must fit within remaining time
+            max_for_track = max(self.MIN_TRANSITION_DURATION, int(self.state.current_track.remaining - self.TRANSITION_BUFFER))
             self.state.transition_duration = max(
                 self.MIN_TRANSITION_DURATION,
-                min(self.MAX_TRANSITION_DURATION, raw_duration)
+                min(self.MAX_TRANSITION_DURATION, min(raw_duration, max_for_track))
             )
             if raw_duration != self.state.transition_duration:
                 log.warning(f"Brain wanted {raw_duration}s transition, clamped to {self.state.transition_duration}s")
 
-            # Ensure the track is loaded on idle deck
-            self._load_on_idle(track_path)
-            log.info(f"Next: {self.state.next_track.title} via {self.state.transition_technique}")
+            # Load track on idle deck + enable sync
+            self._load_and_sync(track_path)
+            log.info(f"Next: {self.state.next_track.title} via {self.state.transition_technique} ({self.state.transition_duration}s)")
 
         except Exception as e:
             log.error(f"Brain failed preparing next: {e}")
             self._emergency_next()
 
-    def _load_on_idle(self, track_path: str):
-        """Load a track on the idle deck without playing."""
+    def _enrich_current_track(self):
+        """Read BPM/key from Mixxx for the current track."""
+        try:
+            client = httpx.Client(base_url=self.config.mixxx.url, timeout=3)
+            status = client.get("/api/status").json()
+            deck = status.get(f"deck{self.state.active_deck}", {})
+            self.state.current_track.bpm = deck.get("bpm", 0)
+            key_num = deck.get("key", 0)
+            if key_num > 0:
+                musical = mixxx_key_to_musical(key_num)
+                if musical:
+                    self.state.current_track.key = format_key(*musical)
+            self.state.current_track.duration = deck.get("duration", 0)
+            client.close()
+        except Exception as e:
+            log.warning(f"Could not enrich track info: {e}")
+
+    def _load_and_sync(self, track_path: str):
+        """Load a track on the idle deck and enable beat sync."""
+        deck = self.state.idle_deck
         client = httpx.Client(base_url=self.config.mixxx.url, timeout=5)
         try:
-            client.post("/api/load", json={"deck": self.state.idle_deck, "track": track_path})
-            time.sleep(0.3)
+            # Load the track
+            client.post("/api/load", json={"deck": deck, "track": track_path})
+            time.sleep(1.0)  # give Mixxx time to analyze BPM
+
+            # Enable sync so BPM matches the playing deck
+            client.post("/api/sync", json={"deck": deck})
+            log.info(f"Loaded + synced on Deck {deck}")
+
+            # Read back what Mixxx detected
+            status = client.get("/api/status").json()
+            deck_info = status.get(f"deck{deck}", {})
+            if self.state.next_track:
+                self.state.next_track.bpm = deck_info.get("bpm", 0)
+                key_num = deck_info.get("key", 0)
+                if key_num > 0:
+                    musical = mixxx_key_to_musical(key_num)
+                    if musical:
+                        self.state.next_track.key = format_key(*musical)
+                log.info(f"Deck {deck}: {self.state.next_track.bpm} BPM, key {self.state.next_track.key}")
+
         except Exception as e:
-            log.warning(f"_load_on_idle error: {e}")
+            log.warning(f"_load_and_sync error: {e}")
         finally:
             client.close()
 
@@ -450,7 +494,7 @@ class DJDaemon:
         self.state.phase = DJPhase.PLAYING
 
     def _emergency_next(self):
-        """Emergency: load any unplayed track and hard cut."""
+        """Emergency: load any unplayed track, sync, and hard cut."""
         played_paths = {self.state.current_track.path}
         for t in self.state.tracks_played:
             played_paths.add(t.get("path", ""))
@@ -463,8 +507,10 @@ class DJDaemon:
                 )
                 self.state.transition_technique = "hard_cut"
                 self.state.transition_duration = 5
+                # Load and sync before transitioning
+                self._load_and_sync(t["path"])
                 self.state.phase = DJPhase.TRANSITIONING
-                log.warning(f"Emergency load: {self.state.next_track.title}")
+                log.warning(f"Emergency load + sync: {self.state.next_track.title}")
                 self._execute_transition()
                 return
 

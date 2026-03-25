@@ -197,13 +197,18 @@ class TransitionExecutor:
             pass  # best effort
 
     def _verify_deck_ready(self, deck: int) -> bool:
-        """Pre-flight: ensure deck has a track loaded. Start playback if needed."""
+        """Pre-flight: ensure deck has a track loaded, synced, and playing."""
         try:
             status = self._client.get("/api/status").json()
             deck_state = status.get(f"deck{deck}", {})
 
             if not deck_state.get("track_loaded", False):
                 return False
+
+            # Enable sync to match BPM with the other deck
+            if not deck_state.get("sync_enabled", False):
+                self._post("/api/sync", {"deck": deck})
+                time.sleep(0.2)
 
             # If track loaded but not playing, start it
             if not deck_state.get("playing", False):

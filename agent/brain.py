@@ -150,6 +150,9 @@ class DJBrain:
         Returns:
             dict with: track_path, reason, energy, transition_technique
         """
+        remaining = context.get('current_remaining', 120)
+        max_duration = max(30, int(remaining - 15))  # leave 15s buffer
+
         prompt = f"""Pick the next track for the set.
 
 Current state:
@@ -158,23 +161,29 @@ Current state:
 - Current key: {context.get('current_key', 'unknown')}
 - Current energy: {context.get('current_energy', 5)}
 - Target energy: {context.get('target_energy', 'maintain')}
+- Current track remaining: {remaining:.0f}s
 - Tracks played so far: {context.get('tracks_played', [])}
-- Set elapsed: {context.get('set_elapsed', 0)}s
-- Set remaining: {context.get('set_remaining', 3600)}s
+- Set elapsed: {context.get('set_elapsed', 0):.0f}s
+- Set remaining: {context.get('set_remaining', 3600):.0f}s
+
+IMPORTANT TIMING RULES:
+- The current track has {remaining:.0f}s remaining
+- Your transition duration MUST be between 30 and {max_duration}s
+- The daemon will handle loading and syncing — you just pick the track
+- Do NOT call load_track or play_deck — just tell me what to play
 
 Use list_library_tracks to see available tracks.
-Use get_set_history to check what's already been played.
-Use get_dj_status to see current deck state.
+Use get_dj_status to check current deck BPM and key.
 
-Pick the best next track and load it on deck {context.get('idle_deck', 2)}.
-Also decide the transition technique: blend, bass_swap, filter_sweep, or hard_cut.
+Pick the best next track. Consider BPM compatibility (±6 BPM ideal), key compatibility
+(same Camelot or adjacent), and energy flow.
 
 Return your answer as:
-TRACK: <full path>
+TRACK: <full file path>
 TECHNIQUE: <blend|bass_swap|filter_sweep|hard_cut>
-DURATION: <transition duration in seconds>
+DURATION: <transition duration in seconds, between 30 and {max_duration}>
 ENERGY: <1-10 energy level of chosen track>
-REASON: <why this track>"""
+REASON: <one sentence why>"""
 
         result = self.agent.run(prompt)
         return self._parse_decision(str(result))
