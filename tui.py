@@ -413,10 +413,10 @@ class DJTretaApp(App):
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit"),
         Binding("ctrl+s", "skip", "Skip"),
-        Binding("ctrl+d", "toggle_debug", "Debug"),
-        Binding("ctrl+r", "toggle_thinking", "Thinking"),
-        Binding("ctrl+t", "show_tracks", "Tracks"),
-        Binding("ctrl+h", "show_set", "Set"),
+        Binding("f2", "toggle_debug", "Debug"),
+        Binding("f3", "toggle_thinking", "Thinking"),
+        Binding("f4", "show_tracks", "Tracks"),
+        Binding("f5", "show_set", "Set"),
     ]
 
     debug_mode = reactive(False)
