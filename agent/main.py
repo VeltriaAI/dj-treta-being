@@ -180,6 +180,12 @@ def _quick_skip(config: Config, being=None) -> str:
                     if str(f) not in skip_paths:
                         all_tracks.append(f)
 
+        # Filter by mood/genre first
+        if being and being.mood:
+            mood_tracks = [t for t in all_tracks if being.mood in str(t.parent.name).lower()]
+            if mood_tracks:
+                all_tracks = mood_tracks
+
         if not all_tracks:
             # No unplayed tracks — ask agent to search and download
             if being and being.agent:
@@ -245,9 +251,11 @@ class DJTretaBeing:
         self.set_start = 0.0
         self.set_duration = 0  # 0 = infinite
         self.tracks_played: list[dict] = []
-        self.planned_tracks: list[dict] = []  # upcoming tracks the brain is planning
+        self.planned_tracks: list[dict] = []
         self._last_command = ""
         self._last_result = ""
+        self._transition_thread = None  # background thread for agent transitions
+        self._talk_lock = threading.Lock()  # prevent concurrent agent.run calls
 
     def _save_session(self):
         """Persist session state to disk — survives restarts."""
@@ -336,29 +344,17 @@ class DJTretaBeing:
         self._state_thread = threading.Thread(target=self._state_loop, daemon=True)
         self._state_thread.start()
 
-        # Main loop — always alive, check commands, manage set
+        # Start watchdog — catches silence even when agent.run blocks
+        self._watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True)
+        self._watchdog_thread.start()
+
+        # Main loop — lightweight, never blocks
         while self._running:
             try:
                 self._check_commands()
 
                 if self.phase == "playing":
                     self._check_transition()
-
-                    # Watchdog: if nothing is playing on Mixxx, force-start
-                    status = get_status(self.config.mixxx.url)
-                    if status:
-                        d1 = status.get("deck1", {})
-                        d2 = status.get("deck2", {})
-                        if not d1.get("playing") and not d2.get("playing"):
-                            # Both decks silent while phase=playing — something went wrong
-                            if d1.get("track_loaded"):
-                                log.warning("Watchdog: nothing playing, starting Deck 1")
-                                httpx.post(f"{self.config.mixxx.url}/api/play", json={"deck": 1}, timeout=3)
-                                httpx.post(f"{self.config.mixxx.url}/api/crossfade", json={"position": 0.0}, timeout=3)
-                            elif d2.get("track_loaded"):
-                                log.warning("Watchdog: nothing playing, starting Deck 2")
-                                httpx.post(f"{self.config.mixxx.url}/api/play", json={"deck": 2}, timeout=3)
-                                httpx.post(f"{self.config.mixxx.url}/api/crossfade", json={"position": 1.0}, timeout=3)
 
             except Exception as e:
                 log.warning(f"Main loop error: {e}")
@@ -483,9 +479,32 @@ class DJTretaBeing:
         self.phase = "idle"
         return "Set stopped"
 
+    def _watchdog_loop(self):
+        """Independent watchdog — catches silence even when agent blocks."""
+        while self._running:
+            try:
+                if self.phase == "playing":
+                    status = get_status(self.config.mixxx.url)
+                    if status:
+                        d1 = status.get("deck1", {})
+                        d2 = status.get("deck2", {})
+                        if not d1.get("playing") and not d2.get("playing"):
+                            if d1.get("track_loaded"):
+                                log.warning("WATCHDOG: silence! Starting Deck 1")
+                                httpx.post(f"{self.config.mixxx.url}/api/play", json={"deck": 1}, timeout=3)
+                                httpx.post(f"{self.config.mixxx.url}/api/crossfade", json={"position": 0.0}, timeout=3)
+                            elif d2.get("track_loaded"):
+                                log.warning("WATCHDOG: silence! Starting Deck 2")
+                                httpx.post(f"{self.config.mixxx.url}/api/play", json={"deck": 2}, timeout=3)
+                                httpx.post(f"{self.config.mixxx.url}/api/crossfade", json={"position": 1.0}, timeout=3)
+                            else:
+                                log.warning("WATCHDOG: silence and no tracks loaded!")
+            except Exception:
+                pass
+            time.sleep(5)
+
     def _check_transition(self):
-        """Check if current track needs a transition."""
-        # Check set duration
+        """Check if transition needed — launches agent in background thread."""
         if self.set_duration > 0:
             elapsed = time.time() - self.set_start
             if elapsed >= self.set_duration:
@@ -493,73 +512,70 @@ class DJTretaBeing:
                 self.stop_set()
                 return
 
+        # Don't check if a transition is already in progress
+        if self._transition_thread and self._transition_thread.is_alive():
+            return
+
         status = get_status(self.config.mixxx.url)
         if not status:
             return
 
         d1 = status.get("deck1", {})
         d2 = status.get("deck2", {})
+
+        if not d1.get("playing") and not d2.get("playing"):
+            return  # watchdog handles silence
+
         active = d1 if d1.get("playing") else d2
         active_deck = 1 if d1.get("playing") else 2
         idle_deck = 2 if active_deck == 1 else 1
         active_remaining = active.get("remaining_seconds", 999)
 
-        # Nothing playing? Something went wrong
-        if not d1.get("playing") and not d2.get("playing"):
-            if d1.get("track_loaded") or d2.get("track_loaded"):
-                log.warning("Nothing playing! Force-starting...")
-                deck = 1 if d1.get("track_loaded") else 2
-                httpx.post(f"{self.config.mixxx.url}/api/play", json={"deck": deck}, timeout=3)
-                xf = 0.0 if deck == 1 else 1.0
-                httpx.post(f"{self.config.mixxx.url}/api/crossfade", json={"position": xf}, timeout=3)
-            return
-
         if 0 < active_remaining < 120:
-            log.info(f"Track has {active_remaining:.0f}s remaining — transitioning")
+            log.info(f"Track has {active_remaining:.0f}s remaining — launching transition")
 
-            played_list = [t.get("title", "?") for t in self.tracks_played]
-            current_title = ""
-            tinfo = get_track_info_api(self.config.mixxx.url, active_deck)
-            if tinfo and not tinfo.get("error"):
-                current_title = tinfo.get("title", "")
+            # Launch agent in background — main loop stays alive
+            self._transition_thread = threading.Thread(
+                target=self._do_transition,
+                args=(active_deck, idle_deck, active_remaining),
+                daemon=True,
+            )
+            self._transition_thread.start()
 
-            set_remaining = ""
-            if self.set_duration > 0:
-                sr = self.set_duration - (time.time() - self.set_start)
-                set_remaining = f"{sr:.0f}s left in set. "
+    def _do_transition(self, active_deck, idle_deck, active_remaining):
+        """Run transition in background thread — agent does its thing."""
+        played_list = [t.get("title", "?") for t in self.tracks_played]
+        current_title = ""
+        tinfo = get_track_info_api(self.config.mixxx.url, active_deck)
+        if tinfo and not tinfo.get("error"):
+            current_title = tinfo.get("title", "")
 
-            try:
-                result = self.agent.run(
-                    f"Time to transition! Deck {active_deck} has {active_remaining:.0f}s remaining.\n"
-                    f"Current: {current_title}\n"
-                    f"BPM: {active.get('bpm', '?')}, Key: {active.get('key', '?')}\n"
-                    f"Mood: {self.mood}. {set_remaining}Idle deck: {idle_deck}\n\n"
-                    f"ALREADY PLAYED (DO NOT REPEAT): {played_list}\n\n"
-                    f"Steps:\n"
-                    f"1. Use library agent to find an unplayed track for {self.mood}\n"
-                    f"2. Use mixer agent with ONE command: 'Load [FULL PATH] on deck {idle_deck}, then call do_transition(to_deck={idle_deck}, duration={min(45, int(active_remaining - 10))})'\n"
-                    f"CRITICAL: do_transition handles sync, play, phase-align, and crossfade — you MUST call it or music will stop."
-                )
-                log.info(f"Transition: {str(result)[:200]}")
+        set_remaining = ""
+        if self.set_duration > 0:
+            sr = self.set_duration - (time.time() - self.set_start)
+            set_remaining = f"{sr:.0f}s left in set. "
 
-                # Record new track
-                new_tinfo = get_track_info_api(self.config.mixxx.url, idle_deck)
-                if new_tinfo and not new_tinfo.get("error"):
-                    self.tracks_played.append({"title": new_tinfo.get("title", "?"), "time": time.time()})
+        try:
+            result = self.agent.run(
+                f"Time to transition! Deck {active_deck} has {active_remaining:.0f}s remaining.\n"
+                f"Current: {current_title}\n"
+                f"BPM: {active_deck}, Key: ?\n"
+                f"Mood: {self.mood}. {set_remaining}Idle deck: {idle_deck}\n\n"
+                f"ALREADY PLAYED (DO NOT REPEAT): {played_list}\n\n"
+                f"Steps:\n"
+                f"1. Use library agent to find an unplayed track for {self.mood}\n"
+                f"2. Use mixer agent: 'Load [FULL PATH] on deck {idle_deck}, then do_transition(to_deck={idle_deck}, duration={min(45, int(active_remaining - 10))})'\n"
+                f"CRITICAL: You MUST call do_transition or music will stop."
+            )
+            log.info(f"Transition: {str(result)[:200]}")
 
-                # Re-plan next tracks (in background — don't block transition check)
-                threading.Thread(target=self._plan_ahead, daemon=True).start()
-            except Exception as e:
-                log.error(f"Transition error: {e}")
+            new_tinfo = get_track_info_api(self.config.mixxx.url, idle_deck)
+            if new_tinfo and not new_tinfo.get("error"):
+                self.tracks_played.append({"title": new_tinfo.get("title", "?"), "time": time.time()})
 
-            # Post-transition safety
-            time.sleep(5)
-            post = get_status(self.config.mixxx.url)
-            if post and not post.get("deck1", {}).get("playing") and not post.get("deck2", {}).get("playing"):
-                log.warning("Nothing playing after transition! Emergency start")
-                httpx.post(f"{self.config.mixxx.url}/api/play", json={"deck": idle_deck}, timeout=3)
-                xf = 0.0 if idle_deck == 1 else 1.0
-                httpx.post(f"{self.config.mixxx.url}/api/crossfade", json={"position": xf}, timeout=3)
+            threading.Thread(target=self._plan_ahead, daemon=True).start()
+        except Exception as e:
+            log.error(f"Transition error: {e}")
 
     def _check_commands(self):
         if not COMMAND_FILE.exists():
@@ -598,36 +614,43 @@ class DJTretaBeing:
             if not self.agent:
                 return "Brain not ready yet"
 
-            # Everything goes through the agent — she decides what to do.
-            # If it's just conversation, she'll respond without tools.
-            # If it needs action, she has all the tools.
-            context = (
-                f"Phase: {self.phase}, Mood: {self.mood or 'none'}, "
-                f"Tracks played: {len(self.tracks_played)}"
-            )
-            try:
-                result = str(self.agent.run(
-                    f'{context}\n\n'
-                    f'The listener says: "{message}"\n\n'
-                    f'Respond naturally. If they want you to DO something (play, skip, change BPM, '
-                    f'download, adjust EQ, etc.), use your tools. If it\'s just conversation, '
-                    f'just respond — no tools needed.'
-                ))
+            # Check if this is a play request while idle
+            if self.phase == "idle" and any(w in message.lower() for w in ["play", "start", "baja", "shuru", "bajao"]):
+                mood = "deep"
+                for m in ["melodic", "techno", "deep", "dark", "progressive", "ambient",
+                          "chill", "vocal", "house", "psychill", "minimal", "bhojpuri",
+                          "trance", "lofi", "bollywood"]:
+                    if m in message.lower():
+                        mood = m
+                        break
+                threading.Thread(target=self.play_set, args=(mood, 0), daemon=True).start()
+                return f"Starting {mood} set — searching for tracks..."
 
-                # If she decided to start a set (detected play intent)
-                if self.phase == "idle" and any(w in message.lower() for w in ["play", "start", "baja", "shuru"]):
-                    # Extract mood from agent's response or message
-                    mood = "deep"  # default
-                    for m in ["melodic", "techno", "deep", "dark", "progressive", "ambient",
-                              "chill", "vocal", "house", "psychill", "minimal", "bhojpuri"]:
-                        if m in message.lower() or m in result.lower():
-                            mood = m
-                            break
-                    threading.Thread(target=self.play_set, args=(mood, 0), daemon=True).start()
+            # Run agent in background thread — don't block main loop
+            def _talk_bg():
+                try:
+                    context = (
+                        f"Phase: {self.phase}, Mood: {self.mood or 'none'}, "
+                        f"Tracks played: {len(self.tracks_played)}"
+                    )
+                    with self._talk_lock:
+                        result = str(self.agent.run(
+                            f'{context}\n\n'
+                            f'The listener says: "{message}"\n\n'
+                            f'Respond naturally. If they want you to DO something (play, skip, change BPM, '
+                            f'download, adjust EQ, etc.), use your tools. If it\'s just conversation, '
+                            f'just respond — no tools needed.'
+                        ))
+                    self._last_command = cmd
+                    self._last_result = result
+                    self._write_state()
+                    log.info(f"Talk result: {result[:200]}")
+                except Exception as e:
+                    self._last_result = f"Error: {e}"
+                    self._write_state()
 
-                return result
-            except Exception as e:
-                return f"Error: {e}"
+            threading.Thread(target=_talk_bg, daemon=True).start()
+            return "processing..."  # immediate return, result comes async
 
         elif cmd == "play":
             mood = args.get("mood", "melodic-techno")
