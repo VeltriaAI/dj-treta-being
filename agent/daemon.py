@@ -149,9 +149,9 @@ class DJDaemon:
             return f"Mood changed to {new_mood}. Next track will match."
 
         elif cmd == "skip":
-            # Fast skip — no brain call, just emergency load + hard cut
-            self._emergency_next()
-            return "Skipped to next track"
+            # Fast skip — load next track, smooth transition if current is still playing
+            self._skip_next()
+            return "Skipping to next track"
 
         elif cmd == "talk":
             # Two-way conversation with the brain
@@ -481,6 +481,52 @@ Do NOT pick a track already played. Consider BPM (±6) and key compatibility."""
             log.warning(f"_load_and_sync error: {e}")
         finally:
             client.close()
+
+    def _skip_next(self):
+        """Skip: load next unplayed track, smooth transition if current is still playing."""
+        played_paths = {self.state.current_track.path}
+        for t in self.state.tracks_played:
+            played_paths.add(t.get("path", ""))
+
+        idle = self.state.idle_deck
+        for t in self._library:
+            if t["path"] not in played_paths:
+                log.info(f"Skip: loading {Path(t['path']).stem} on Deck {idle}")
+                try:
+                    client = httpx.Client(base_url=self.config.mixxx.url, timeout=5)
+                    client.post("/api/load", json={"deck": idle, "track": t["path"]})
+                    time.sleep(1.0)
+                    client.post("/api/sync", json={"deck": idle})
+                    client.post("/api/play", json={"deck": idle})
+                    time.sleep(0.3)
+
+                    # Smooth transition (20s) using Mixxx C++ engine
+                    client.post("/api/transition", json={"deck": idle, "duration": 20})
+                    log.info(f"Skip: transitioning to Deck {idle} over 20s")
+                    time.sleep(22)
+
+                    # Cleanup outgoing
+                    old_deck = 1 if idle == 2 else 2
+                    client.post("/api/pause", json={"deck": old_deck})
+                    for band in ["hi", "mid", "lo"]:
+                        client.post("/api/eq", json={"deck": old_deck, band: 1.0})
+                    client.close()
+                except Exception as e:
+                    log.error(f"Skip transition failed: {e}")
+                    return
+
+                # Update state
+                self.state.swap_decks()
+                self.state.current_track = TrackState(
+                    path=t["path"],
+                    title=Path(t["path"]).stem,
+                )
+                self.state.record_track(self.state.current_track)
+                self._preparing = False
+                log.info(f"Skip complete: now playing {self.state.current_track.title}")
+                return
+
+        log.warning("Skip: all tracks played — nothing to skip to")
 
     def _emergency_next(self):
         """Emergency: load any unplayed track, sync, and hard cut. No brain involved."""
