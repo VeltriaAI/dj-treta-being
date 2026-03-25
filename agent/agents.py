@@ -5,6 +5,7 @@ DJ Agent (manager) delegates to:
   - Library Agent: track discovery and management
 """
 
+import json
 from pathlib import Path
 
 from smolagents import ToolCallingAgent, LiteLLMModel
@@ -101,43 +102,46 @@ You talk to Treta (Claude) and to Manish. Be brief, direct, warm."""
 THINKING_FILE = Path("/tmp/dj-treta-thinking.log")
 
 
-def _step_callback(step):
-    """Captures agent thinking after each step — written to file for TUI debug panel."""
+def _step_callback(step, agent=None):
+    """Captures agent thinking after each step — written to file for TUI."""
     try:
         lines = []
-        agent_name = getattr(step, '_agent_name', 'agent')
+        agent_name = agent.name if agent and hasattr(agent, 'name') else "agent"
 
-        # Model output = the thinking text
-        if hasattr(step, 'model_output') and step.model_output:
+        # Model output = the thinking/reasoning text
+        if step.model_output:
             thinking = str(step.model_output).strip()
-            if thinking:
+            if thinking and len(thinking) > 5:
                 lines.append(f"[THINK:{agent_name}] {thinking[:500]}")
 
         # Tool calls
-        if hasattr(step, 'tool_calls') and step.tool_calls:
+        if step.tool_calls:
             for tc in step.tool_calls:
                 name = getattr(tc, 'name', '?')
                 args = getattr(tc, 'arguments', {})
-                lines.append(f"[CALL:{agent_name}] {name}({json.dumps(args)[:200]})")
+                args_str = json.dumps(args)[:200] if isinstance(args, dict) else str(args)[:200]
+                lines.append(f"[CALL:{agent_name}] {name}({args_str})")
 
         # Observations (tool results)
-        if hasattr(step, 'observations') and step.observations:
+        if step.observations:
             obs = str(step.observations)[:300]
             lines.append(f"[OBS:{agent_name}] {obs}")
 
         # Token usage
-        if hasattr(step, 'token_usage') and step.token_usage:
+        if step.token_usage:
             lines.append(f"[TOKENS:{agent_name}] {step.token_usage}")
 
         if lines:
             with open(THINKING_FILE, "a") as f:
                 for line in lines:
                     f.write(line + "\n")
-    except Exception:
-        pass
-
-
-import json as _json
+    except Exception as e:
+        # Write error to thinking file for debugging
+        try:
+            with open(THINKING_FILE, "a") as f:
+                f.write(f"[ERROR:callback] {e}\n")
+        except Exception:
+            pass
 
 def create_model(config: Config) -> LiteLLMModel:
     return LiteLLMModel(
