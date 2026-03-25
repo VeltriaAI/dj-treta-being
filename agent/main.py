@@ -163,7 +163,30 @@ def _quick_skip(config: Config, being=None) -> str:
                         all_tracks.append(f)
 
         if not all_tracks:
-            return "No unplayed tracks left"
+            # No unplayed tracks — ask agent to search and download
+            if being and being.agent:
+                log.info("Skip: no unplayed tracks, asking agent to find and download one...")
+                try:
+                    result = being.agent.run(
+                        f"The library has no unplayed tracks for skipping. "
+                        f"Current mood is {being.mood}. "
+                        f"Use the library agent to search YouTube for a great {being.mood} track, "
+                        f"download it, then tell me the file path."
+                    )
+                    # Check if something was downloaded
+                    all_tracks = []
+                    for genre_dir in sorted(config.library.music_path.iterdir()):
+                        if not genre_dir.is_dir() or genre_dir.name.startswith('.') or genre_dir.name == '_sets':
+                            continue
+                        for f in sorted(genre_dir.iterdir()):
+                            if f.suffix.lower() in ('.mp3', '.wav', '.flac', '.ogg', '.m4a'):
+                                if str(f) not in skip_paths:
+                                    all_tracks.append(f)
+                except Exception as e:
+                    log.error(f"Agent download failed: {e}")
+
+            if not all_tracks:
+                return "No tracks available — download failed"
 
         # Pick random to add variety
         track = random.choice(all_tracks)

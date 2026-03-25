@@ -1,5 +1,5 @@
 {
-  "phase": "idle",
+  "phase": "playing",
   "mood": "melodic-techno",
   "set_start": 1774475222.414732,
   "set_duration": 0,
@@ -10,5 +10,5 @@
     }
   ],
   "planned_tracks": [],
-  "saved_at": 1774475361.648108
+  "saved_at": 1774475562.143119
 }
