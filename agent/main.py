@@ -649,12 +649,29 @@ class DJTretaBeing:
                     needs_tools = "tool" in classify.choices[0].message.content.lower()
 
                     if needs_tools:
-                        # Full agent with tools (~15-30s)
+                        # Quick acknowledgment first — user sees this immediately
+                        ack = completion(
+                            model=self.config.llm.model,
+                            messages=[
+                                {"role": "system", "content": "You are DJ Treta. The listener asked you to do something. Give a SHORT one-line acknowledgment of what you're about to do. Be warm, natural."},
+                                {"role": "user", "content": f'"{message}"'},
+                            ],
+                            api_base=self.config.llm.api_base,
+                            api_key=self.config.llm.api_key,
+                            temperature=0.7, timeout=10,
+                        )
+                        ack_text = ack.choices[0].message.content.strip()
+                        self._last_result = f"{ack_text} ..."
+                        self._write_state()
+                        log.info(f"Talk ack: {ack_text}")
+
+                        # Now do the actual work
                         with self._talk_lock:
                             result = str(self.agent.run(
                                 f'{context}\n\nThe listener says: "{message}"\n\n'
-                                f'Take action using your tools, then respond briefly.'
+                                f'Take action using your tools, then respond briefly with what you did.'
                             ))
+                        result = f"{ack_text}\n\n{result}"
                     else:
                         # Fast chat — single LLM call (~3s)
                         resp = completion(
