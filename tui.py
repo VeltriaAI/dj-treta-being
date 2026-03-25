@@ -247,11 +247,16 @@ class BrainWidget(Static):
         pc = colors.get(phase, "white")
 
         # Main line
+        if isinstance(remaining, str):
+            set_str = f"{fmt_time(elapsed)} / {remaining}"
+        else:
+            set_str = f"{fmt_time(elapsed)} / {fmt_time(elapsed + remaining)}"
+
         line1 = (
             f"[{pc}]● {phase.upper()}[/{pc}]  "
             f"Mood: [bold]{mood}[/bold]  "
             f"Tracks: [bold]{played}[/bold]  "
-            f"Set: {fmt_time(elapsed)} / {fmt_time(elapsed + remaining)}"
+            f"Set: {set_str}"
         )
 
         # Second line — now playing from brain state + next track
@@ -339,7 +344,7 @@ class DJTretaApp(App):
     def on_mount(self) -> None:
         self.log_widget = self.query_one("#conversation", RichLog)
         self.log_widget.write("[dim]Welcome to DJ Treta. Type anything to talk, or /help for commands.[/dim]\n")
-        self.set_interval(2.0, self.refresh_status)
+        self.set_interval(1.0, self.refresh_status)
         self.refresh_status()
         self._log_pos = 0
         self._log_mtime = 0.0
