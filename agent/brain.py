@@ -214,52 +214,75 @@ If you want to adjust something, use the appropriate tool (set_eq, set_filter, e
             return None
         return {"action": result_str}
 
+    # Action keywords that need the full agent (tool calls)
+    _ACTION_WORDS = {
+        "play", "load", "skip", "transition", "mix", "blend", "swap",
+        "download", "search", "find", "get", "change", "switch", "go",
+        "darker", "lighter", "harder", "softer", "build", "drop", "cut",
+        "bass", "eq", "filter", "volume", "crossfade", "sync",
+    }
+
     def talk(self, message: str, context: dict) -> str:
         """Talk to the brain. Full two-way conversation.
 
-        This is Being-to-Being communication. Claude (Treta) sends a message,
-        the brain (Gemini DJ Treta) responds — can take actions, share thoughts,
-        push back, or just vibe.
-
-        Conversation history is maintained so she remembers what we discussed.
-
-        Args:
-            message: Natural language from Claude/user — anything goes
-            context: Current DJ state for grounding
-
-        Returns:
-            Brain's response as a string
+        Fast path: pure conversation → single LLM call (2-3s)
+        Action path: needs tools → full agent run (15-30s)
         """
-        # Build conversation context
         history_str = ""
         if self._conversation:
-            # Keep last 10 exchanges to avoid token bloat
-            recent = self._conversation[-10:]
+            recent = self._conversation[-6:]
             history_str = "\n\nRecent conversation:\n"
             for entry in recent:
                 history_str += f"Treta (Claude): {entry['from']}\n"
                 history_str += f"Treta (DJ): {entry['response']}\n\n"
 
-        prompt = f"""Treta (Claude) says to you:
+        state_str = (
+            f"Current state: Mood={context.get('mood', '?')}, "
+            f"BPM={context.get('current_bpm', '?')}, "
+            f"Key={context.get('current_key', '?')}, "
+            f"Energy={context.get('current_energy', 5)}, "
+            f"Tracks played={len(context.get('tracks_played', []))}, "
+            f"Set {context.get('set_elapsed', 0):.0f}s elapsed, "
+            f"{context.get('set_remaining', 3600):.0f}s remaining"
+        )
 
-"{message}"
+        # Decide: does this need tools or just conversation?
+        msg_lower = message.lower()
+        needs_action = any(word in msg_lower for word in self._ACTION_WORDS)
+
+        if needs_action:
+            # Full agent with tools
+            prompt = f"""Treta (Claude) says: "{message}"
 
 {history_str}
+{state_str}
 
-Current state:
-- Mood: {context.get('mood', 'unknown')}
-- Current BPM: {context.get('current_bpm', 'unknown')}
-- Current key: {context.get('current_key', 'unknown')}
-- Current energy: {context.get('current_energy', 5)}
-- Tracks played: {len(context.get('tracks_played', []))}
-- Set elapsed: {context.get('set_elapsed', 0):.0f}s
-- Set remaining: {context.get('set_remaining', 3600):.0f}s
+Use your tools to execute what's asked, then respond briefly with what you did."""
+            response = str(self.agent.run(prompt))
+        else:
+            # Fast path: direct LLM call, no tools
+            from litellm import completion
+            messages = [
+                {"role": "system", "content": self.agent.prompt_templates["system_prompt"][:2000]},
+                {"role": "user", "content": f"""Treta (Claude) says: "{message}"
 
-Respond naturally. If the message asks you to DO something musical, use your tools
-and tell her what you did. If it's just conversation, just talk. Be yourself."""
+{history_str}
+{state_str}
 
-        result = self.agent.run(prompt)
-        response = str(result)
+Respond naturally in 1-3 sentences. You're a DJ mid-set, keep it brief and real."""},
+            ]
+            try:
+                resp = completion(
+                    model=self.config.llm.model,
+                    messages=messages,
+                    api_base=self.config.llm.api_base,
+                    api_key=self.config.llm.api_key,
+                    temperature=self.config.llm.temperature,
+                    timeout=self.config.llm.timeout,
+                )
+                response = resp.choices[0].message.content.strip()
+            except Exception as e:
+                response = f"(brain error: {e})"
 
         # Save to conversation history
         self._conversation.append({
