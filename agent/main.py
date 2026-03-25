@@ -626,25 +626,53 @@ class DJTretaBeing:
                 threading.Thread(target=self.play_set, args=(mood, 0), daemon=True).start()
                 return f"Starting {mood} set — searching for tracks..."
 
-            # Run agent in background thread — don't block main loop
+            # Smart routing: 1 quick LLM call decides if tools needed
             def _talk_bg():
                 try:
+                    from litellm import completion
                     context = (
                         f"Phase: {self.phase}, Mood: {self.mood or 'none'}, "
                         f"Tracks played: {len(self.tracks_played)}"
                     )
-                    with self._talk_lock:
-                        result = str(self.agent.run(
-                            f'{context}\n\n'
-                            f'The listener says: "{message}"\n\n'
-                            f'Respond naturally. If they want you to DO something (play, skip, change BPM, '
-                            f'download, adjust EQ, etc.), use your tools. If it\'s just conversation, '
-                            f'just respond — no tools needed.'
-                        ))
+
+                    # Quick classify: does this need tools?
+                    classify = completion(
+                        model=self.config.llm.model,
+                        messages=[{"role": "user", "content":
+                            f'Does this message need DJ tools (load track, change BPM, EQ, filter, skip, download, etc.) '
+                            f'or is it just conversation? Answer ONLY "tools" or "chat".\n'
+                            f'Message: "{message}"'}],
+                        api_base=self.config.llm.api_base,
+                        api_key=self.config.llm.api_key,
+                        temperature=0, timeout=10,
+                    )
+                    needs_tools = "tool" in classify.choices[0].message.content.lower()
+
+                    if needs_tools:
+                        # Full agent with tools (~15-30s)
+                        with self._talk_lock:
+                            result = str(self.agent.run(
+                                f'{context}\n\nThe listener says: "{message}"\n\n'
+                                f'Take action using your tools, then respond briefly.'
+                            ))
+                    else:
+                        # Fast chat — single LLM call (~3s)
+                        resp = completion(
+                            model=self.config.llm.model,
+                            messages=[
+                                {"role": "system", "content": "You are DJ Treta, an AI DJ Being. Be brief, direct, warm. 1-3 sentences."},
+                                {"role": "user", "content": f'{context}\n\n"{message}"'},
+                            ],
+                            api_base=self.config.llm.api_base,
+                            api_key=self.config.llm.api_key,
+                            temperature=0.7, timeout=15,
+                        )
+                        result = resp.choices[0].message.content.strip()
+
                     self._last_command = cmd
                     self._last_result = result
                     self._write_state()
-                    log.info(f"Talk result: {result[:200]}")
+                    log.info(f"Talk result ({'tools' if needs_tools else 'chat'}): {result[:200]}")
                 except Exception as e:
                     self._last_result = f"Error: {e}"
                     self._write_state()
