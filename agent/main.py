@@ -563,9 +563,15 @@ class DJTretaBeing:
                 f"Mood: {self.mood}. {set_remaining}Idle deck: {idle_deck}\n\n"
                 f"ALREADY PLAYED (DO NOT REPEAT): {played_list}\n\n"
                 f"Steps:\n"
-                f"1. Use library agent to find an unplayed track for {self.mood}\n"
-                f"2. Use mixer agent: 'Load [FULL PATH] on deck {idle_deck}, then do_transition(to_deck={idle_deck}, duration={min(45, int(active_remaining - 10))})'\n"
-                f"CRITICAL: You MUST call do_transition or music will stop."
+                f"1. hear_music(deck={active_deck}) — LISTEN to current track, feel its vibe and energy\n"
+                f"2. Library agent: find unplayed track for {self.mood} that matches what you heard\n"
+                f"3. Mixer agent: 'Load [FULL PATH] on deck {idle_deck}'\n"
+                f"4. hear_music(deck={idle_deck}) — LISTEN to loaded track, compare with current\n"
+                f"5. Based on what you heard, choose technique:\n"
+                f"   - Similar energy/key → do_transition (smooth blend)\n"
+                f"   - Different energy → do_bass_swap (EQ swap for clean handoff)\n"
+                f"6. Mixer agent: execute do_transition or do_bass_swap(to_deck={idle_deck}, duration={min(45, int(active_remaining - 10))})\n"
+                f"CRITICAL: You MUST call do_transition or do_bass_swap — or music stops."
             )
             log.info(f"Transition: {str(result)[:200]}")
 
