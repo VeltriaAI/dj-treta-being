@@ -88,7 +88,8 @@ def count_tracks(music_dir: Path) -> int:
 _ACTION_PATTERN = re.compile(
     r'\b(play|load|skip|transition|mix|blend|swap|download|search|find'
     r'|change|switch|darker|lighter|harder|softer|build|drop|cut'
-    r'|bass|eq|filter|volume|crossfade|sync)\b',
+    r'|bass|eq|filter|volume|crossfade|sync'
+    r'|hear|listen|sound|audio)\b',
     re.IGNORECASE,
 )
 
@@ -413,6 +414,14 @@ class DJTretaBeing:
             message = args.get("message", "")
             if not message:
                 return "No message"
+
+            # If asking to hear/listen — use actual audio perception
+            if re.search(r'\b(hear|listen|sound|audio)\b', message, re.IGNORECASE):
+                from .tools import hear_music
+                audio = hear_music(deck=0, duration=10)
+                ctx = f"You just LISTENED to the music. What you heard:\n{audio}\n\nPhase: {self.phase}, Mood: {self.mood}"
+                return fast_talk(message, self.config, ctx)
+
             status = get_status(self.config.mixxx.url)
             ctx = f"Phase: {self.phase}, Mood: {self.mood}, Tracks: {len(self.tracks_played)}"
             if status:
