@@ -113,31 +113,77 @@ def fast_talk(message: str, config: Config, context: str) -> str:
 
 # ── Quick skip ────────────────────────────────────────────────────────
 
-def _quick_skip(config: Config) -> str:
+def _quick_skip(config: Config, being=None) -> str:
+    """Skip: find an unplayed track, load, sync, transition. Avoids current + played tracks."""
     try:
         status = get_status(config.mixxx.url)
         if not status:
             return "Mixxx not reachable"
 
         d1 = status.get("deck1", {})
+        d2 = status.get("deck2", {})
         idle = 2 if d1.get("playing") else 1
 
-        c = httpx.Client(base_url=config.mixxx.url, timeout=5)
+        # Build set of paths to skip (currently loaded + played)
+        skip_paths = set()
+        for deck_num in [1, 2]:
+            tinfo = get_track_info_api(config.mixxx.url, deck_num)
+            if tinfo and not tinfo.get("error"):
+                fp = tinfo.get("file_path", "")
+                if fp:
+                    skip_paths.add(fp)
+
+        # Also skip tracks from session history
+        if being and being.tracks_played:
+            session_file = PERSIST_FILE
+            if session_file.exists():
+                try:
+                    session = json.loads(session_file.read_text())
+                    for t in session.get("tracks_played", []):
+                        title = t.get("title", "").lower()
+                        # Match by title substring in filename
+                        for genre_dir in config.library.music_path.iterdir():
+                            if not genre_dir.is_dir():
+                                continue
+                            for f in genre_dir.iterdir():
+                                if title and title in f.stem.lower():
+                                    skip_paths.add(str(f))
+                except Exception:
+                    pass
+
+        # Find first track NOT in skip set
+        import random
+        all_tracks = []
         for genre_dir in sorted(config.library.music_path.iterdir()):
-            if not genre_dir.is_dir() or genre_dir.name.startswith('.'):
+            if not genre_dir.is_dir() or genre_dir.name.startswith('.') or genre_dir.name == '_sets':
                 continue
             for f in sorted(genre_dir.iterdir()):
                 if f.suffix.lower() in ('.mp3', '.wav', '.flac', '.ogg', '.m4a'):
-                    c.post("/api/load", json={"deck": idle, "track": str(f)})
-                    time.sleep(1.0)
-                    c.post("/api/sync", json={"deck": idle})
-                    c.post("/api/play", json={"deck": idle})
-                    time.sleep(0.3)
-                    c.post("/api/transition", json={"deck": idle, "duration": 20})
-                    c.close()
-                    return f"Skipping — transitioning to {f.stem}"
+                    if str(f) not in skip_paths:
+                        all_tracks.append(f)
+
+        if not all_tracks:
+            return "No unplayed tracks left"
+
+        # Pick random to add variety
+        track = random.choice(all_tracks)
+
+        c = httpx.Client(base_url=config.mixxx.url, timeout=5)
+        c.post("/api/load", json={"deck": idle, "track": str(track)})
+        time.sleep(1.0)
+        c.post("/api/sync", json={"deck": idle})
+        c.post("/api/play", json={"deck": idle})
+        time.sleep(0.3)
+        c.post("/api/transition", json={"deck": idle, "duration": 20})
         c.close()
-        return "No tracks found"
+
+        log.info(f"Skip: transitioning to {track.stem} on Deck {idle}")
+
+        # Record in being's played list
+        if being:
+            being.tracks_played.append({"title": track.stem, "time": time.time()})
+
+        return f"Skipping — {track.stem}"
     except Exception as e:
         return f"Skip error: {e}"
 
@@ -506,10 +552,10 @@ class DJTretaBeing:
             return f"Mood changed to {self.mood}"
 
         elif cmd == "skip":
-            return _quick_skip(self.config)
+            return _quick_skip(self.config, self)
 
         elif cmd == "transition_now":
-            return _quick_skip(self.config)
+            return _quick_skip(self.config, self)
 
         elif cmd == "extend_set":
             extra = args.get("minutes", 30)
