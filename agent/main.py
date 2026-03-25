@@ -229,7 +229,17 @@ class DJTretaBeing:
         self.agent = create_dj_agent(self.config)
 
         # Try to restore previous session
-        self._restore_session()
+        restored = self._restore_session()
+
+        # Even without session, check if Mixxx has music playing
+        if not restored:
+            status = get_status(self.config.mixxx.url)
+            if status:
+                d1 = status.get("deck1", {})
+                d2 = status.get("deck2", {})
+                if d1.get("playing") or d2.get("playing"):
+                    self.phase = "playing"
+                    log.info("No saved session, but Mixxx has music playing — monitoring")
 
         # Start state writer
         self._state_thread = threading.Thread(target=self._state_loop, daemon=True)
