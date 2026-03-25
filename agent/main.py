@@ -32,6 +32,7 @@ log = logging.getLogger("dj-treta")
 
 STATE_FILE = Path("/tmp/dj-treta-state.json")
 COMMAND_FILE = Path("/tmp/dj-treta-command.json")
+PERSIST_FILE = Path(__file__).parent.parent / ".beings" / "session.json"  # survives restarts
 
 
 # ── Mixxx helpers ─────────────────────────────────────────────────────
@@ -159,6 +160,64 @@ class DJTretaBeing:
         self._last_command = ""
         self._last_result = ""
 
+    def _save_session(self):
+        """Persist session state to disk — survives restarts."""
+        try:
+            PERSIST_FILE.parent.mkdir(parents=True, exist_ok=True)
+            data = {
+                "phase": self.phase,
+                "mood": self.mood,
+                "set_start": self.set_start,
+                "set_duration": self.set_duration,
+                "tracks_played": self.tracks_played,
+                "saved_at": time.time(),
+            }
+            PERSIST_FILE.write_text(json.dumps(data, indent=2))
+        except Exception:
+            pass
+
+    def _restore_session(self):
+        """Restore session from disk if available and recent (< 1 hour old)."""
+        try:
+            if not PERSIST_FILE.exists():
+                return False
+            data = json.loads(PERSIST_FILE.read_text())
+            saved_at = data.get("saved_at", 0)
+            age = time.time() - saved_at
+            if age > 3600:  # older than 1 hour, ignore
+                log.info("Old session found but expired (>1h), starting fresh")
+                return False
+
+            self.mood = data.get("mood", self.mood)
+            self.tracks_played = data.get("tracks_played", [])
+            self.set_start = data.get("set_start", 0)
+            self.set_duration = data.get("set_duration", 0)
+            phase = data.get("phase", "idle")
+
+            log.info(f"Restored session: mood={self.mood}, tracks={len(self.tracks_played)}, phase={phase}")
+
+            # Check if Mixxx still has something playing
+            status = get_status(self.config.mixxx.url)
+            if status:
+                d1 = status.get("deck1", {})
+                d2 = status.get("deck2", {})
+                if d1.get("playing") or d2.get("playing"):
+                    self.phase = "playing"
+                    log.info("Mixxx still has music playing — resuming")
+                    return True
+
+            # Mixxx silent but session was playing — restart the set
+            if phase == "playing" and self.mood:
+                self.phase = "idle"  # play_set will set to playing
+                log.info(f"Resuming {self.mood} set...")
+                threading.Thread(target=self.play_set, args=(self.mood, 0), daemon=True).start()
+                return True
+
+            return True
+        except Exception as e:
+            log.warning(f"Could not restore session: {e}")
+            return False
+
     def start(self):
         signal.signal(signal.SIGTERM, lambda s, f: self.stop())
         signal.signal(signal.SIGINT, lambda s, f: self.stop())
@@ -168,6 +227,9 @@ class DJTretaBeing:
         # Create agent
         log.info("Creating DJ agent...")
         self.agent = create_dj_agent(self.config)
+
+        # Try to restore previous session
+        self._restore_session()
 
         # Start state writer
         self._state_thread = threading.Thread(target=self._state_loop, daemon=True)
@@ -185,6 +247,7 @@ class DJTretaBeing:
         log.info("DJ Treta Being shutting down")
 
     def stop(self):
+        self._save_session()
         self._running = False
 
     def play_set(self, mood: str, duration: int = 0):
@@ -375,8 +438,12 @@ class DJTretaBeing:
             return f"Unknown: {cmd}"
 
     def _state_loop(self):
+        save_counter = 0
         while self._running:
             self._write_state()
+            save_counter += 1
+            if save_counter % 5 == 0:  # persist to disk every 10s
+                self._save_session()
             time.sleep(2)
 
     def _write_state(self):
