@@ -187,6 +187,56 @@ def get_track_info(deck: int) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# BPM / RATE CONTROL
+# ═══════════════════════════════════════════════════════════════════════
+
+@tool
+def set_rate(deck: int, rate: float = 0.0) -> str:
+    """Set the playback rate/pitch of a deck. Use to change BPM.
+
+    rate=0.0 means original BPM (reset to file's native tempo).
+    Positive = faster, negative = slower. Range roughly -0.5 to 0.5.
+
+    To reset to original BPM: set_rate(deck, 0.0)
+    To speed up by 3%: set_rate(deck, 0.03)
+
+    Args:
+        deck: Deck number (1 or 2).
+        rate: Rate adjustment. 0.0 = original BPM.
+    """
+    # Also disable sync so rate change sticks
+    _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "sync_enabled", "value": 0})
+    _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "rate", "value": rate})
+
+    # Read back actual BPM
+    status = _mixxx_get("/api/status")
+    if status:
+        bpm = status.get(f"deck{deck}", {}).get("bpm", 0)
+        file_bpm = status.get(f"deck{deck}", {}).get("file_bpm", 0)
+        return f"Deck {deck}: rate={rate}, BPM now {bpm:.1f} (file: {file_bpm:.0f})"
+    return f"Deck {deck}: rate set to {rate}"
+
+
+@tool
+def reset_bpm(deck: int) -> str:
+    """Reset a deck to its original BPM — undoes any sync or rate changes.
+
+    Args:
+        deck: Deck number (1 or 2).
+    """
+    _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "sync_enabled", "value": 0})
+    _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "rate", "value": 0})
+    _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "rate_set_default", "value": 1})
+
+    status = _mixxx_get("/api/status")
+    if status:
+        bpm = status.get(f"deck{deck}", {}).get("bpm", 0)
+        file_bpm = status.get(f"deck{deck}", {}).get("file_bpm", 0)
+        return f"Deck {deck}: BPM reset to original {file_bpm:.0f} (was {bpm:.1f})"
+    return f"Deck {deck}: BPM reset to original"
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # BEAT ALIGNMENT — Phase matching like a human DJ
 # ═══════════════════════════════════════════════════════════════════════
 

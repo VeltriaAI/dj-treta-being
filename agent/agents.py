@@ -17,8 +17,7 @@ from .tools import (
     get_dj_status, get_deck_info, load_track, play_deck, pause_deck,
     set_volume, set_crossfader, set_eq, set_filter, set_sync,
     get_live_data, get_track_info, do_transition, do_bass_swap,
-    # Beat alignment
-    align_beats, nudge_track,
+    set_rate, reset_bpm, align_beats, nudge_track,
     # Audio perception
     hear_music,
     # Library tools
@@ -175,7 +174,7 @@ def create_dj_agent(config: Config) -> ToolCallingAgent:
             get_dj_status, get_deck_info, load_track, play_deck, pause_deck,
             set_volume, set_crossfader, set_eq, set_filter, set_sync,
             get_live_data, get_track_info, do_transition, do_bass_swap,
-            align_beats, nudge_track,
+            set_rate, reset_bpm, align_beats, nudge_track,
             list_library_tracks,
         ],
         model=model,
