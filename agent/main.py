@@ -359,6 +359,10 @@ def run():
             f"Go."
         )
         log.info(f"First track: {str(result)[:200]}")
+        # Record first track
+        first_tinfo = get_track_info(config.mixxx.url, 1)
+        if first_tinfo and not first_tinfo.get("error"):
+            sw.record_track(first_tinfo.get("title", "Deck 1"))
     except Exception as e:
         log.error(f"Agent failed on first track: {e}")
         return
@@ -392,21 +396,52 @@ def run():
 
                 if 0 < active_remaining < 120:
                     log.info(f"Track has {active_remaining:.0f}s remaining — asking agent to transition")
+
+                    # Get current track info for context
+                    active_deck = 1 if d1.get("playing") else 2
+                    idle_deck = 2 if active_deck == 1 else 1
+                    played_list = [t.get("title", "?") for t in sw.tracks_played]
+                    current_title = ""
+                    tinfo = get_track_info(config.mixxx.url, active_deck)
+                    if tinfo and not tinfo.get("error"):
+                        current_title = tinfo.get("title", "")
+
                     try:
                         result = agent.run(
-                            f"The current track has {active_remaining:.0f}s remaining. "
-                            f"Set mood is {sw.mood}. {remaining:.0f}s left in the set. "
-                            f"Use the library agent to pick the next track (consider BPM, key, energy), "
-                            f"then use the mixer agent to load it, sync, and transition. "
-                            f"Choose transition duration based on remaining time (max {int(active_remaining - 15)}s)."
+                            f"Time to transition! Current track has {active_remaining:.0f}s remaining on Deck {active_deck}.\n"
+                            f"Current track: {current_title}\n"
+                            f"BPM: {active.get('bpm', '?')}, Key: {active.get('key', '?')}\n"
+                            f"Set mood: {sw.mood}. {remaining:.0f}s left in set.\n"
+                            f"Idle deck: {idle_deck}\n\n"
+                            f"ALREADY PLAYED (DO NOT REPEAT): {played_list}\n\n"
+                            f"Steps:\n"
+                            f"1. Use library agent to find a track that hasn't been played\n"
+                            f"2. Tell mixer agent to load it on deck {idle_deck} (use the full file path!)\n"
+                            f"3. Tell mixer agent to sync deck {idle_deck} and do_transition(to_deck={idle_deck}, duration={min(60, int(active_remaining - 15))})\n"
+                            f"4. Verify with get_dj_status that deck {idle_deck} is playing after transition"
                         )
                         log.info(f"Transition result: {str(result)[:200]}")
-                        sw.record_track(str(result)[:100])
+                        # Record what's actually playing now
+                        new_tinfo = get_track_info(config.mixxx.url, idle_deck)
+                        if new_tinfo and not new_tinfo.get("error"):
+                            sw.record_track(new_tinfo.get("title", f"Deck {idle_deck}"))
+                        else:
+                            sw.record_track(f"Deck {idle_deck} track")
                     except Exception as e:
                         log.error(f"Agent transition error: {e}")
 
-                    # Wait for transition to finish before next check
+                    # Wait for transition to finish, then verify
                     time.sleep(30)
+                    # Safety: make sure something is playing
+                    post_status = get_status(config.mixxx.url)
+                    if post_status:
+                        pd1 = post_status.get("deck1", {})
+                        pd2 = post_status.get("deck2", {})
+                        if not pd1.get("playing") and not pd2.get("playing"):
+                            log.warning("Nothing playing after transition! Starting idle deck")
+                            httpx.post(f"{config.mixxx.url}/api/play", json={"deck": idle_deck}, timeout=3)
+                            xf = 0.0 if idle_deck == 1 else 1.0
+                            httpx.post(f"{config.mixxx.url}/api/crossfade", json={"position": xf}, timeout=3)
                     continue
         except Exception as e:
             log.warning(f"Status check error: {e}")
