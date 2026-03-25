@@ -1,0 +1,466 @@
+#!/usr/bin/env python3
+"""
+DJ Treta CLI — Talk to the DJ, control the decks, feel the music.
+
+Usage:
+    python cli.py              # Interactive mode
+    python cli.py status       # Quick status check
+    python cli.py talk "msg"   # One-shot talk to brain
+"""
+
+import json
+import os
+import readline
+import signal
+import sys
+import threading
+import time
+from pathlib import Path
+
+import httpx
+from rich.console import Console
+from rich.live import Live
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
+from rich.layout import Layout
+from rich.columns import Columns
+from rich.markdown import Markdown
+from rich.rule import Rule
+
+# ── Config ────────────────────────────────────────────────────────────
+
+MIXXX_URL = "http://localhost:7778"
+STATE_FILE = Path("/tmp/dj-treta-state.json")
+COMMAND_FILE = Path("/tmp/dj-treta-command.json")
+DAEMON_LOG = Path("/tmp/dj-treta-daemon.log")
+MUSIC_DIR = Path.home() / "Music" / "DJTreta"
+
+console = Console()
+
+# ── Mixxx Client ──────────────────────────────────────────────────────
+
+def mixxx_get(path: str) -> dict | None:
+    try:
+        r = httpx.get(f"{MIXXX_URL}{path}", timeout=2)
+        return r.json()
+    except Exception:
+        return None
+
+def mixxx_post(path: str, data: dict) -> dict | None:
+    try:
+        r = httpx.post(f"{MIXXX_URL}{path}", json=data, timeout=2)
+        return r.json()
+    except Exception:
+        return None
+
+def read_daemon_state() -> dict | None:
+    try:
+        if STATE_FILE.exists():
+            return json.loads(STATE_FILE.read_text())
+    except Exception:
+        pass
+    return None
+
+# ── Display Helpers ───────────────────────────────────────────────────
+
+KEY_MAP = {
+    1: "C", 2: "Db", 3: "D", 4: "Eb", 5: "E", 6: "F",
+    7: "F#", 8: "G", 9: "Ab", 10: "A", 11: "Bb", 12: "B",
+    13: "Cm", 14: "C#m", 15: "Dm", 16: "Ebm", 17: "Em", 18: "Fm",
+    19: "F#m", 20: "Gm", 21: "G#m", 22: "Am", 23: "Bbm", 24: "Bm",
+}
+
+def format_time(seconds: float) -> str:
+    if seconds <= 0:
+        return "0:00"
+    m, s = divmod(int(seconds), 60)
+    return f"{m}:{s:02d}"
+
+def format_key(key_num: int) -> str:
+    return KEY_MAP.get(key_num, "?")
+
+def energy_bar(energy: float, width: int = 20) -> str:
+    filled = int(energy / 10 * width)
+    return "█" * filled + "░" * (width - filled)
+
+def make_deck_panel(deck: dict, deck_num: int, is_active: bool) -> Panel:
+    if not deck.get("track_loaded"):
+        return Panel("[dim]empty[/dim]", title=f"Deck {deck_num}", border_style="dim")
+
+    bpm = deck.get("bpm", 0)
+    key = format_key(deck.get("key", 0))
+    pos = deck.get("position_seconds", 0)
+    dur = deck.get("duration", 0)
+    remaining = deck.get("remaining_seconds", 0)
+    playing = deck.get("playing", False)
+    synced = deck.get("sync_enabled", False)
+    vol = deck.get("volume", 0)
+
+    # Progress bar
+    progress_pct = pos / dur if dur > 0 else 0
+    bar_width = 30
+    filled = int(progress_pct * bar_width)
+    bar = "━" * filled + "●" + "─" * (bar_width - filled - 1)
+
+    status_icon = "▶" if playing else "⏸"
+    sync_icon = " SYNC" if synced else ""
+    active_marker = " ★" if is_active else ""
+
+    lines = [
+        f"  {status_icon} {format_time(pos)} [{bar}] {format_time(dur)}",
+        f"  BPM: [bold]{bpm:.0f}[/bold]  Key: [bold]{key}[/bold]  Vol: {vol:.0f}%{sync_icon}",
+        f"  Remaining: [bold]{format_time(remaining)}[/bold]",
+    ]
+
+    color = "cyan" if deck_num == 1 else "magenta"
+    if is_active:
+        color = "bold " + color
+
+    return Panel(
+        "\n".join(lines),
+        title=f"Deck {deck_num}{active_marker}",
+        border_style=color,
+    )
+
+def make_crossfader(xf: float) -> str:
+    """Visual crossfader. -1 = Deck 1, +1 = Deck 2."""
+    width = 30
+    pos = int((xf + 1) / 2 * width)
+    pos = max(0, min(width, pos))
+    bar = "─" * pos + "◆" + "─" * (width - pos)
+    return f"  D1 [{bar}] D2"
+
+def make_status_display() -> Panel:
+    status = mixxx_get("/api/status")
+    if not status:
+        return Panel("[red]Mixxx not responding[/red]", title="DJ Treta", border_style="red")
+
+    state = read_daemon_state()
+    d1 = status.get("deck1", {})
+    d2 = status.get("deck2", {})
+    xf = status.get("crossfader", 0)
+
+    # Determine active deck
+    if d1.get("playing") and not d2.get("playing"):
+        active = 1
+    elif d2.get("playing") and not d1.get("playing"):
+        active = 2
+    elif xf < -0.3:
+        active = 1
+    else:
+        active = 2
+
+    deck1_panel = make_deck_panel(d1, 1, active == 1)
+    deck2_panel = make_deck_panel(d2, 2, active == 2)
+    crossfader = make_crossfader(xf)
+
+    # Brain status
+    brain_lines = []
+    if state:
+        phase = state.get("phase", "?")
+        mood = state.get("mood", "?")
+        played = state.get("tracks_played", 0)
+        elapsed = state.get("set_elapsed", 0)
+        remaining = state.get("set_remaining", 0)
+
+        phase_colors = {
+            "playing": "green", "preparing": "yellow",
+            "transitioning": "blue", "recovery": "red",
+            "starting": "yellow", "stopped": "dim",
+        }
+        phase_color = phase_colors.get(phase, "white")
+
+        brain_lines.append(f"  Brain: [{phase_color}]{phase.upper()}[/{phase_color}]  Mood: [bold]{mood}[/bold]")
+        brain_lines.append(f"  Set: {format_time(elapsed)} elapsed, {format_time(remaining)} remaining  Tracks: {played}")
+
+        if state.get("next_track"):
+            nt = state["next_track"]
+            brain_lines.append(f"  Next: [italic]{nt.get('title', '?')}[/italic]")
+
+        last_result = state.get("last_command_result", "")
+        if last_result and last_result != "processing...":
+            # Truncate long results
+            if len(last_result) > 80:
+                last_result = last_result[:80] + "..."
+            brain_lines.append(f"  Last: [dim]{last_result}[/dim]")
+    else:
+        brain_lines.append("  [dim]Brain not running. Start with: /start[/dim]")
+
+    brain_text = "\n".join(brain_lines)
+
+    # Compose
+    content = Table.grid(padding=0)
+    content.add_row(Columns([deck1_panel, deck2_panel], equal=True))
+    content.add_row(Text(crossfader))
+    content.add_row(Text(""))
+    content.add_row(Text.from_markup(brain_text))
+
+    return Panel(content, title="[bold]DJ Treta[/bold]", border_style="bright_white")
+
+# ── Commands ──────────────────────────────────────────────────────────
+
+def send_brain_command(command: str, args: dict = {}) -> str:
+    """Send command to brain daemon and wait for response."""
+    payload = {"command": command, "args": args}
+    COMMAND_FILE.write_text(json.dumps(payload, indent=2))
+
+    # Poll for response
+    for _ in range(120):  # 60 seconds
+        time.sleep(0.5)
+        state = read_daemon_state()
+        if state:
+            result = state.get("last_command_result", "")
+            if state.get("last_command") == command and result and result != "processing...":
+                return result
+    return "No response from brain (timeout)"
+
+def cmd_status():
+    """Show current status."""
+    console.print(make_status_display())
+
+def cmd_talk(message: str):
+    """Talk to the brain."""
+    console.print(f"\n[bold cyan]You:[/bold cyan] {message}")
+    console.print("[dim]thinking...[/dim]", end="\r")
+    response = send_brain_command("talk", {"message": message})
+    # Clear "thinking..."
+    console.print(" " * 40, end="\r")
+    console.print(f"[bold magenta]DJ Treta:[/bold magenta] {response}\n")
+
+def cmd_mood(mood: str):
+    """Change mood."""
+    response = send_brain_command("change_mood", {"mood": mood})
+    console.print(f"[green]{response}[/green]")
+
+def cmd_skip():
+    """Skip current track."""
+    response = send_brain_command("skip", {})
+    console.print(f"[yellow]{response}[/yellow]")
+
+def cmd_play(deck: int = 1):
+    mixxx_post("/api/play", {"deck": deck})
+    console.print(f"[green]▶ Deck {deck}[/green]")
+
+def cmd_pause(deck: int = 1):
+    mixxx_post("/api/pause", {"deck": deck})
+    console.print(f"[yellow]⏸ Deck {deck}[/yellow]")
+
+def cmd_tracks():
+    """List library tracks."""
+    table = Table(title="Track Library", show_lines=False)
+    table.add_column("#", style="dim", width=4)
+    table.add_column("Genre", style="cyan", width=15)
+    table.add_column("Track", style="white")
+
+    i = 1
+    for genre_dir in sorted(MUSIC_DIR.iterdir()):
+        if not genre_dir.is_dir() or genre_dir.name.startswith('.'):
+            continue
+        for f in sorted(genre_dir.iterdir()):
+            if f.suffix.lower() in ('.mp3', '.wav', '.flac', '.ogg', '.m4a'):
+                table.add_row(str(i), genre_dir.name, f.stem)
+                i += 1
+
+    console.print(table)
+
+def cmd_load(deck: int, query: str):
+    """Load a track by partial name match."""
+    query_lower = query.lower()
+    for genre_dir in sorted(MUSIC_DIR.iterdir()):
+        if not genre_dir.is_dir():
+            continue
+        for f in sorted(genre_dir.iterdir()):
+            if query_lower in f.stem.lower():
+                result = mixxx_post("/api/load", {"deck": deck, "track": str(f)})
+                console.print(f"[green]Loaded on Deck {deck}:[/green] {f.stem}")
+                return
+    console.print(f"[red]No track matching '{query}'[/red]")
+
+def cmd_transition(deck: int = 2, technique: str = "blend", duration: int = 60):
+    response = send_brain_command("transition_now", {
+        "technique": technique, "duration": duration
+    })
+    console.print(f"[blue]{response}[/blue]")
+
+def cmd_start_brain(mood: str = "melodic-techno", duration: int = 60):
+    """Start the brain daemon."""
+    import subprocess
+    venv_python = Path(__file__).parent / ".venv" / "bin" / "python3"
+    subprocess.Popen(
+        [str(venv_python), "-m", "agent", "--mood", mood, "--duration", str(duration)],
+        cwd=str(Path(__file__).parent),
+        stdout=open("/tmp/dj-treta-daemon.log", "w"),
+        stderr=subprocess.STDOUT,
+    )
+    console.print(f"[green]Brain started — mood: {mood}, duration: {duration}m[/green]")
+
+def cmd_stop_brain():
+    """Stop the brain daemon."""
+    import subprocess
+    subprocess.run(["pkill", "-f", "python.*-m agent"], capture_output=True)
+    console.print("[yellow]Brain stopped[/yellow]")
+
+def cmd_logs(n: int = 20):
+    """Show recent daemon logs."""
+    if DAEMON_LOG.exists():
+        lines = DAEMON_LOG.read_text().strip().split("\n")
+        # Filter to key events
+        skip = ["LiteLLM", "Wrapper:", "completion() model", "─────", "│", "╭", "╰", "Observations:", "Step ", "Calling tool"]
+        key_lines = []
+        for l in lines:
+            if not any(k in l for k in ["INFO", "WARNING", "ERROR"]):
+                continue
+            if any(s in l for s in skip):
+                continue
+            # Strip ANSI and check if there's actual content after timestamp
+            clean = l.strip()
+            # Skip lines that are just "HH:MM:SS [INFO] " with nothing after
+            parts = clean.split("] ", 1)
+            if len(parts) < 2 or not parts[1].strip():
+                continue
+            key_lines.append(l)
+        for line in key_lines[-n:]:
+            if "ERROR" in line or "WARNING" in line:
+                console.print(f"[red]{line}[/red]")
+            elif "Playing:" in line or "Next:" in line:
+                console.print(f"[green]{line}[/green]")
+            elif "Transition" in line:
+                console.print(f"[blue]{line}[/blue]")
+            else:
+                console.print(f"[dim]{line}[/dim]")
+    else:
+        console.print("[dim]No daemon log found[/dim]")
+
+def cmd_live():
+    """Live updating status display."""
+    console.print("[dim]Live mode — press Ctrl+C to exit[/dim]\n")
+    try:
+        while True:
+            console.clear()
+            console.print(make_status_display())
+            console.print("\n[dim]Live mode — Ctrl+C to exit | refreshing every 2s[/dim]")
+            time.sleep(2)
+    except KeyboardInterrupt:
+        console.print("\n[dim]Exited live mode[/dim]")
+
+def cmd_help():
+    """Show help."""
+    help_text = """
+[bold]DJ Treta CLI[/bold]
+
+[bold cyan]Talk to the DJ:[/bold cyan]
+  [bold]<message>[/bold]              Talk to DJ Treta brain (anything goes)
+
+[bold cyan]Slash Commands:[/bold cyan]
+  [bold]/status[/bold]                Show current deck status
+  [bold]/live[/bold]                  Live updating display (2s refresh)
+  [bold]/mood[/bold] <mood>           Change mood (dark-techno, melodic-techno, deep, progressive, etc.)
+  [bold]/skip[/bold]                  Skip to next track
+  [bold]/tracks[/bold]               List all tracks in library
+  [bold]/load[/bold] <deck> <query>   Load track by name search onto deck
+  [bold]/play[/bold] [deck]           Play deck (default: 1)
+  [bold]/pause[/bold] [deck]          Pause deck (default: 1)
+  [bold]/transition[/bold] [tech] [s] Start transition (blend/bass_swap/filter_sweep, duration)
+  [bold]/start[/bold] [mood] [min]    Start brain daemon
+  [bold]/stop[/bold]                  Stop brain daemon
+  [bold]/logs[/bold] [n]              Show last n daemon log lines
+  [bold]/help[/bold]                  This help
+  [bold]/quit[/bold]                  Exit
+
+[dim]Anything without / is sent to the brain as conversation.[/dim]
+"""
+    console.print(help_text)
+
+# ── Main Loop ─────────────────────────────────────────────────────────
+
+BANNER = """[bold bright_white]
+  ╔══════════════════════════════════════╗
+  ║          [bold cyan]DJ Treta[/bold cyan] [dim]v1.0[/dim]              ║
+  ║    [dim]An AI Being that DJs.[/dim]           ║
+  ╚══════════════════════════════════════╝
+[/bold bright_white]"""
+
+def main():
+    # One-shot commands
+    if len(sys.argv) > 1:
+        cmd = sys.argv[1]
+        if cmd == "status":
+            cmd_status()
+            return
+        elif cmd == "live":
+            cmd_live()
+            return
+        elif cmd == "talk" and len(sys.argv) > 2:
+            cmd_talk(" ".join(sys.argv[2:]))
+            return
+        elif cmd == "logs":
+            n = int(sys.argv[2]) if len(sys.argv) > 2 else 20
+            cmd_logs(n)
+            return
+
+    # Interactive mode
+    console.print(BANNER)
+    cmd_status()
+    console.print()
+    console.print("[dim]Type a message to talk to DJ Treta, or /help for commands[/dim]\n")
+
+    while True:
+        try:
+            user_input = input("\033[1;36m❯ \033[0m").strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[dim]Later.[/dim]")
+            break
+
+        if not user_input:
+            continue
+
+        # Slash commands
+        if user_input.startswith("/"):
+            parts = user_input[1:].split()
+            cmd = parts[0].lower() if parts else ""
+            args = parts[1:]
+
+            if cmd in ("quit", "exit", "q"):
+                console.print("[dim]Later.[/dim]")
+                break
+            elif cmd == "help":
+                cmd_help()
+            elif cmd == "status":
+                cmd_status()
+            elif cmd == "live":
+                cmd_live()
+            elif cmd == "mood" and args:
+                cmd_mood(args[0])
+            elif cmd == "skip":
+                cmd_skip()
+            elif cmd == "tracks":
+                cmd_tracks()
+            elif cmd == "load" and len(args) >= 2:
+                cmd_load(int(args[0]), " ".join(args[1:]))
+            elif cmd == "play":
+                cmd_play(int(args[0]) if args else 1)
+            elif cmd == "pause":
+                cmd_pause(int(args[0]) if args else 1)
+            elif cmd == "transition":
+                tech = args[0] if args else "blend"
+                dur = int(args[1]) if len(args) > 1 else 60
+                cmd_transition(technique=tech, duration=dur)
+            elif cmd == "start":
+                mood = args[0] if args else "melodic-techno"
+                dur = int(args[1]) if len(args) > 1 else 60
+                cmd_start_brain(mood, dur)
+            elif cmd == "stop":
+                cmd_stop_brain()
+            elif cmd == "logs":
+                n = int(args[0]) if args else 20
+                cmd_logs(n)
+            else:
+                console.print(f"[red]Unknown command: /{cmd}[/red] — try /help")
+        else:
+            # Everything else is a message to the brain
+            cmd_talk(user_input)
+
+
+if __name__ == "__main__":
+    main()

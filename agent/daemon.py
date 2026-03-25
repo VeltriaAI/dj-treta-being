@@ -24,7 +24,7 @@ from .brain import DJBrain
 from .executor import TransitionExecutor
 from .perception import PerceptionEngine
 from .selector import scan_library, filter_candidates, suggest_technique
-from .camelot import mixxx_key_to_musical, format_key
+from .camelot import mixxx_key_to_musical, mixxx_key_to_camelot
 
 logging.basicConfig(
     level=logging.INFO,
@@ -430,7 +430,8 @@ class DJDaemon:
             if key_num > 0:
                 musical = mixxx_key_to_musical(key_num)
                 if musical:
-                    self.state.current_track.key = format_key(*musical)
+                    camelot = mixxx_key_to_camelot(key_num)
+                    self.state.current_track.key = f"{musical} ({camelot})" if camelot else musical
             self.state.current_track.duration = deck.get("duration", 0)
             client.close()
         except Exception as e:
@@ -458,7 +459,8 @@ class DJDaemon:
                 if key_num > 0:
                     musical = mixxx_key_to_musical(key_num)
                     if musical:
-                        self.state.next_track.key = format_key(*musical)
+                        camelot = mixxx_key_to_camelot(key_num)
+                        self.state.next_track.key = f"{musical} ({camelot})" if camelot else musical
                 log.info(f"Deck {deck}: {self.state.next_track.bpm} BPM, key {self.state.next_track.key}")
 
         except Exception as e:
