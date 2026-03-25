@@ -40,6 +40,10 @@ class TransitionExecutor:
         outgoing_deck = 2 if incoming_deck == 1 else 1
         start = time.time()
 
+        # ── Pre-flight safety checks ──
+        if not self._verify_deck_ready(incoming_deck):
+            return {"status": "aborted", "error": f"Deck {incoming_deck} not ready (no track loaded or not playing)", "technique": technique}
+
         executors = {
             "blend": self._blend,
             "bass_swap": self._bass_swap,
@@ -54,6 +58,10 @@ class TransitionExecutor:
             elapsed = time.time() - start
             self._reset_eq(incoming_deck)
             self._reset_eq(outgoing_deck)
+
+            # ── Post-flight safety: verify incoming deck is audible ──
+            self._verify_audible(incoming_deck, outgoing_deck)
+
             return {"status": "complete", "technique": technique, "duration": round(elapsed, 1)}
         except Exception as e:
             # Emergency: ensure incoming deck is audible
@@ -185,6 +193,53 @@ class TransitionExecutor:
             self._post("/api/volume", {"deck": in_deck, "volume": 1.0})
             self._post("/api/volume", {"deck": out_deck, "volume": 0.0})
             self._reset_eq(in_deck)
+        except Exception:
+            pass  # best effort
+
+    def _verify_deck_ready(self, deck: int) -> bool:
+        """Pre-flight: ensure deck has a track loaded. Start playback if needed."""
+        try:
+            status = self._client.get("/api/status").json()
+            deck_state = status.get(f"deck{deck}", {})
+
+            if not deck_state.get("track_loaded", False):
+                return False
+
+            # If track loaded but not playing, start it
+            if not deck_state.get("playing", False):
+                self._post("/api/play", {"deck": deck})
+                time.sleep(0.3)
+
+            return True
+        except Exception:
+            return False
+
+    def _verify_audible(self, in_deck: int, out_deck: int):
+        """Post-flight: verify the incoming deck is actually audible after transition."""
+        try:
+            status = self._client.get("/api/status").json()
+            in_state = status.get(f"deck{in_deck}", {})
+            crossfader = status.get("crossfader", 0.0)
+
+            # Check incoming is playing
+            if not in_state.get("playing", False):
+                self._post("/api/play", {"deck": in_deck})
+
+            # Check volume isn't zero
+            if in_state.get("volume", 0) < 0.1:
+                self._post("/api/volume", {"deck": in_deck, "volume": 1.0})
+
+            # Check crossfader is on the right side
+            expected_side = 1.0 if in_deck == 2 else -1.0
+            # If crossfader is more than 60% away from incoming, fix it
+            if in_deck == 2 and crossfader < -0.2:
+                self._post("/api/crossfade", {"position": 1.0})
+            elif in_deck == 1 and crossfader > 0.2:
+                self._post("/api/crossfade", {"position": -1.0})
+
+            # Silence outgoing
+            self._post("/api/volume", {"deck": out_deck, "volume": 0.0})
+
         except Exception:
             pass  # best effort
 

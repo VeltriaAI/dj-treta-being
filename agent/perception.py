@@ -52,7 +52,7 @@ class Perception:
     def emergency(self) -> bool:
         """Is the active track about to end with nothing loaded?"""
         a = self.active
-        return a.playing and 0 < a.remaining_seconds < 15
+        return a.playing and 0 < a.remaining_seconds < 30
 
     def estimate_energy(self) -> float:
         """Rough energy estimate from VU meters (0-10)."""

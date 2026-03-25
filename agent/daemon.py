@@ -202,6 +202,12 @@ class DJDaemon:
             "set_remaining": self.state.set_remaining,
         }
 
+    # ── Safety constants ──
+    MIN_REMAINING_TO_PREPARE = 45   # don't prepare if <45s left, go emergency
+    MIN_TRANSITION_DURATION = 10    # never transition shorter than 10s
+    MAX_TRANSITION_DURATION = 120   # never longer than 120s
+    TRANSITION_BUFFER = 15          # start transition when remaining < duration + buffer
+
     def _tick(self):
         """Single daemon tick — check state and act."""
         # Check for external commands first
@@ -215,26 +221,79 @@ class DJDaemon:
         active = perc.active
         self.state.current_track.remaining = active.remaining_seconds
 
-        if self.state.phase == DJPhase.PLAYING:
-            # Check if we need to prepare next track
-            if perc.transition_ready(self.config.transitions.lookahead_seconds):
-                self.state.phase = DJPhase.PREPARING
-                log.info(f"Track ending in {active.remaining_seconds:.0f}s — preparing next")
-                self._prepare_next()
+        # Safety: if active deck stopped playing unexpectedly, fix crossfader
+        if self.state.phase in (DJPhase.PLAYING, DJPhase.PREPARING):
+            self._ensure_crossfader_on_active(perc)
 
-            elif perc.emergency():
-                log.warning("Emergency! Track ending with nothing ready")
+        if self.state.phase == DJPhase.PLAYING:
+            remaining = active.remaining_seconds
+
+            if remaining <= 0 or not active.playing:
+                # Track ended with nothing ready — emergency
+                log.warning("Track ended unexpectedly!")
                 self._emergency_next()
 
+            elif remaining <= self.MIN_REMAINING_TO_PREPARE:
+                # Too late to ask brain — emergency load
+                log.warning(f"Only {remaining:.0f}s left, too late for brain — emergency")
+                self._emergency_next()
+
+            elif perc.transition_ready(self.config.transitions.lookahead_seconds):
+                self.state.phase = DJPhase.PREPARING
+                log.info(f"Track ending in {remaining:.0f}s — preparing next")
+                self._prepare_next()
+
         elif self.state.phase == DJPhase.PREPARING:
-            # Wait for right moment to transition (remaining < transition duration + buffer)
-            if active.remaining_seconds <= self.state.transition_duration + 10:
+            remaining = active.remaining_seconds
+
+            if remaining <= 0 or not active.playing:
+                # Track ended while preparing — emergency swap to idle deck if loaded
+                log.warning("Track ended during preparation!")
+                if self.state.next_track:
+                    self.state.transition_technique = "hard_cut"
+                    self.state.transition_duration = 5
+                    self.state.phase = DJPhase.TRANSITIONING
+                    self._execute_transition()
+                else:
+                    self._emergency_next()
+
+            elif remaining <= self.state.transition_duration + self.TRANSITION_BUFFER:
+                # Time to transition
                 self.state.phase = DJPhase.TRANSITIONING
                 log.info(f"Starting transition: {self.state.transition_technique}")
                 self._execute_transition()
 
         elif self.state.phase == DJPhase.TRANSITIONING:
             # Transition is handled synchronously by executor
+            pass
+
+    def _ensure_crossfader_on_active(self, perc):
+        """Safety: if crossfader is pointing at an empty/silent deck, fix it."""
+        active_deck = self.state.active_deck
+        idle_deck = self.state.idle_deck
+
+        active_playing = perc.deck1.playing if active_deck == 1 else perc.deck2.playing
+        idle_playing = perc.deck1.playing if idle_deck == 1 else perc.deck2.playing
+
+        if active_playing and not idle_playing:
+            # Active deck has audio, idle doesn't — crossfader must be on active
+            expected_xf = -1.0 if active_deck == 1 else 1.0
+            current_xf = perc.crossfader
+            # If crossfader is more than 60% toward idle deck, force it back
+            if active_deck == 1 and current_xf > 0.2:
+                log.warning(f"Crossfader at {current_xf:.2f} but Deck 2 empty — fixing to Deck 1")
+                self._set_crossfader(-1.0)
+            elif active_deck == 2 and current_xf < -0.2:
+                log.warning(f"Crossfader at {current_xf:.2f} but Deck 1 empty — fixing to Deck 2")
+                self._set_crossfader(1.0)
+
+    def _set_crossfader(self, position: float):
+        """Set crossfader position safely."""
+        try:
+            client = httpx.Client(base_url=self.config.mixxx.url, timeout=2)
+            client.post("/api/crossfade", json={"position": position})
+            client.close()
+        except Exception:
             pass
 
     def _start_first_track(self):
@@ -335,7 +394,14 @@ class DJDaemon:
                 energy=decision.get("energy", 5),
             )
             self.state.transition_technique = decision.get("technique", "blend")
-            self.state.transition_duration = decision.get("duration", self.config.transitions.default_duration)
+            raw_duration = decision.get("duration", self.config.transitions.default_duration)
+            # Clamp duration to safe range
+            self.state.transition_duration = max(
+                self.MIN_TRANSITION_DURATION,
+                min(self.MAX_TRANSITION_DURATION, raw_duration)
+            )
+            if raw_duration != self.state.transition_duration:
+                log.warning(f"Brain wanted {raw_duration}s transition, clamped to {self.state.transition_duration}s")
 
             # Ensure the track is loaded on idle deck
             self._load_on_idle(track_path)
