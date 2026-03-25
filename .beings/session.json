@@ -3,6 +3,15 @@
   "mood": "",
   "set_start": 0.0,
   "set_duration": 0,
-  "tracks_played": [],
-  "saved_at": 1774471990.949148
+  "tracks_played": [
+    {
+      "title": "We Are Ever \uff5c Afro Progressive x Tech House \uff5c 123 BPM",
+      "time": 1774472109.892865
+    },
+    {
+      "title": "ARTBAT Fan - ARTBAT, Dino Lenny - Our Space (Original Mix)",
+      "time": 1774472319.658279
+    }
+  ],
+  "saved_at": 1774472617.81482
 }

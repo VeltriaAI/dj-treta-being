@@ -187,6 +187,104 @@ def get_track_info(deck: int) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# AUDIO PERCEPTION — Hear the music through Gemini
+# ═══════════════════════════════════════════════════════════════════════
+
+@tool
+def hear_music(deck: int = 0, duration: int = 10) -> str:
+    """Listen to what's currently playing. Extracts audio from the track file
+    at the current playback position and analyzes it with Gemini's audio model.
+
+    Returns a description of: mood, energy (1-10), structure (breakdown/buildup/groove/drop),
+    and notable audio elements.
+
+    Args:
+        deck: Deck to listen to (1 or 2). 0 = auto-detect active deck.
+        duration: Seconds of audio to analyze (5-15).
+    """
+    import base64
+    import subprocess as _sp
+
+    duration = max(5, min(15, duration))
+
+    # Get current state
+    status = _mixxx_get("/api/status")
+    if not status:
+        return "Can't hear — Mixxx not responding"
+
+    # Find active deck
+    if deck == 0:
+        d1 = status.get("deck1", {})
+        d2 = status.get("deck2", {})
+        if d1.get("playing"):
+            deck = 1
+        elif d2.get("playing"):
+            deck = 2
+        else:
+            return "Can't hear — nothing playing"
+
+    deck_status = status.get(f"deck{deck}", {})
+    if not deck_status.get("playing"):
+        return f"Can't hear — Deck {deck} not playing"
+
+    pos = deck_status.get("position_seconds", 0)
+
+    # Get file path
+    tinfo = _mixxx_get(f"/api/deck/{deck}/track_info")
+    if not tinfo or tinfo.get("error"):
+        return "Can't hear — no track info"
+
+    file_path = tinfo.get("file_path", "")
+    if not file_path or not Path(file_path).exists():
+        return f"Can't hear — file not found: {file_path}"
+
+    title = tinfo.get("title", Path(file_path).stem)
+
+    # Extract audio snippet with ffmpeg (mono 16kHz wav — small enough for API)
+    snippet = "/tmp/dj-treta-snippet.wav"
+    try:
+        _sp.run(
+            ["ffmpeg", "-y", "-ss", str(max(0, pos - 2)), "-t", str(duration),
+             "-i", file_path, "-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le", snippet],
+            capture_output=True, timeout=10,
+        )
+    except Exception as e:
+        return f"Can't extract audio: {e}"
+
+    if not Path(snippet).exists():
+        return "Audio extraction failed"
+
+    # Send to Gemini
+    try:
+        with open(snippet, "rb") as f:
+            audio_b64 = base64.b64encode(f.read()).decode()
+
+        from litellm import completion as _completion
+        resp = _completion(
+            model=_cfg.llm.model,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": (
+                        f"You are DJ Treta listening to '{title}' at {pos:.0f}s. "
+                        "Describe what you hear in 2-3 sentences: mood, energy level (1-10), "
+                        "structure (breakdown/buildup/groove/drop/intro/outro), "
+                        "and any notable elements (vocals, synths, bass, percussion)."
+                    )},
+                    {"type": "image_url", "image_url": {"url": f"data:audio/wav;base64,{audio_b64}"}},
+                ],
+            }],
+            api_base=_cfg.llm.api_base,
+            api_key=_cfg.llm.api_key,
+            temperature=0.5,
+            timeout=30,
+        )
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        return f"Gemini audio error: {e}"
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # TRANSITIONS — Brain-controlled mixing
 # ═══════════════════════════════════════════════════════════════════════
 

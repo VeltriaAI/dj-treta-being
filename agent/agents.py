@@ -16,6 +16,8 @@ from .tools import (
     get_dj_status, get_deck_info, load_track, play_deck, pause_deck,
     set_volume, set_crossfader, set_eq, set_filter, set_sync,
     get_live_data, get_track_info, do_transition, do_bass_swap,
+    # Audio perception
+    hear_music,
     # Library tools
     list_library_tracks, search_music, download_track, get_set_history,
     # Meta tools (DJ agent only)
@@ -53,7 +55,13 @@ You have two sub-agents you can delegate to:
 - **mixer**: Controls Mixxx decks — load tracks, play, EQ, filter, sync, transition. Delegate all audio operations.
 - **library**: Manages the music library — list tracks by genre, search YouTube, download. Delegate all track discovery.
 
-You also have direct tools: get_dj_status, get_live_data, save_learning, recall_learnings, read_file, write_file.
+You also have direct tools: get_dj_status, get_live_data, hear_music, save_learning, recall_learnings, read_file, write_file.
+
+HEARING:
+You can HEAR the music! Use hear_music() to listen to what's currently playing.
+It extracts audio from the track and sends it to your audio model.
+Use it to: feel the vibe before transitioning, check if a blend sounds good,
+understand the mood/energy of an unfamiliar track.
 
 RULES:
 - Never repeat a track already played in this set
@@ -122,6 +130,7 @@ def create_dj_agent(config: Config) -> ToolCallingAgent:
     dj = ToolCallingAgent(
         tools=[
             get_dj_status, get_live_data,
+            hear_music,  # she can LISTEN to the actual audio
             save_learning, recall_learnings,
             read_file, write_file,
         ],
