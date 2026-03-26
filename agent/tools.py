@@ -411,12 +411,15 @@ def do_transition(to_deck: int, duration: int = 60) -> str:
     out_bpm = out_state.get("file_bpm", 0) or out_state.get("bpm", 0)
 
     technique = "blend"
-    if in_bpm > 0 and out_bpm > 0:
+    if in_bpm <= 0 or out_bpm <= 0:
+        # BPM unknown (long mix/set, unanalyzed) — don't sync, use filter sweep
+        technique = "filter_sweep"
+    elif in_bpm > 0 and out_bpm > 0:
         ratio = max(in_bpm, out_bpm) / min(in_bpm, out_bpm)
         if ratio > 1.15:
-            technique = "filter_sweep"  # too far apart, don't sync
+            technique = "filter_sweep"
         elif ratio > 1.05:
-            technique = "short_blend"   # marginal, sync but keep it short
+            technique = "short_blend"
             duration = min(duration, 30)
 
     # Start incoming
@@ -577,11 +580,29 @@ def search_music(query: str, limit: int = 5) -> list:
 @tool
 def download_track(url: str, genre: str = "deep") -> str:
     """Download a track from YouTube into the music library.
+    IMPORTANT: Only download individual tracks (3-15 minutes), NOT full DJ sets or mixes.
 
     Args:
         url: YouTube URL to download.
         genre: Genre folder to save into (e.g., dark-techno, melodic-techno, deep, minimal, progressive, vocal, psychill).
     """
+    # First check duration — reject full sets/mixes (>15 min)
+    try:
+        info_result = subprocess.run(
+            ["yt-dlp", "--dump-json", "--no-download", url],
+            capture_output=True, text=True, timeout=15,
+        )
+        if info_result.returncode == 0:
+            import json as _json
+            info = _json.loads(info_result.stdout)
+            duration = info.get("duration", 0)
+            if duration > 900:  # >15 minutes
+                return f"SKIPPED: Track is {duration//60} minutes long — too long, looks like a full set/mix. Download individual tracks only (3-15 min)."
+            if duration < 60:  # <1 minute
+                return f"SKIPPED: Track is only {duration}s — too short."
+    except Exception:
+        pass  # proceed anyway if check fails
+
     genre_dir = _MUSIC_DIR / genre
     genre_dir.mkdir(parents=True, exist_ok=True)
 

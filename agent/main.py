@@ -621,35 +621,31 @@ class DJTretaBeing:
             self._transition_thread.start()
 
     def _do_transition(self, active_deck, idle_deck, active_remaining):
-        """Run transition in background thread — agent does its thing."""
+        """Run transition in background thread."""
         played_list = [t.get("title", "?") for t in self.tracks_played]
         current_title = ""
+        active_bpm = 0
         tinfo = get_track_info_api(self.config.mixxx.url, active_deck)
         if tinfo and not tinfo.get("error"):
             current_title = tinfo.get("title", "")
+        status = get_status(self.config.mixxx.url)
+        if status:
+            active_bpm = status.get(f"deck{active_deck}", {}).get("bpm", 0)
 
-        set_remaining = ""
-        if self.set_duration > 0:
-            sr = self.set_duration - (time.time() - self.set_start)
-            set_remaining = f"{sr:.0f}s left in set. "
+        dur = min(45, int(active_remaining - 10))
 
         try:
             result = self.agent.run(
-                f"Time to transition! Deck {active_deck} has {active_remaining:.0f}s remaining.\n"
-                f"Current: {current_title}\n"
-                f"BPM: {active_deck}, Key: ?\n"
-                f"Mood: {self.mood}. {set_remaining}Idle deck: {idle_deck}\n\n"
-                f"ALREADY PLAYED (DO NOT REPEAT): {played_list}\n\n"
-                f"Steps:\n"
-                f"1. hear_music(deck={active_deck}) — LISTEN to current track, feel its vibe and energy\n"
-                f"2. Library agent: find unplayed track for {self.mood} that matches what you heard\n"
-                f"3. Mixer agent: 'Load [FULL PATH] on deck {idle_deck}'\n"
-                f"4. hear_music(deck={idle_deck}) — LISTEN to loaded track, compare with current\n"
-                f"5. Based on what you heard, choose technique:\n"
-                f"   - Similar energy/key → do_transition (smooth blend)\n"
-                f"   - Different energy → do_bass_swap (EQ swap for clean handoff)\n"
-                f"6. Mixer agent: execute do_transition or do_bass_swap(to_deck={idle_deck}, duration={min(45, int(active_remaining - 10))})\n"
-                f"CRITICAL: You MUST call do_transition or do_bass_swap — or music stops."
+                f"TRANSITION NOW. Deck {active_deck} has {active_remaining:.0f}s remaining.\n"
+                f"Current track: {current_title} ({active_bpm:.0f} BPM)\n"
+                f"Mood: {self.mood}. Idle deck: {idle_deck}\n"
+                f"Already played: {played_list}\n\n"
+                f"DO EXACTLY THESE STEPS:\n"
+                f"1. Library agent: find an unplayed individual track (3-10 min, NOT a full set/mix)\n"
+                f"2. Mixer agent: 'Load [FULL PATH] on deck {idle_deck}, then call do_transition(to_deck={idle_deck}, duration={dur})'\n"
+                f"   — do_transition handles EVERYTHING: sync, play, phase align, crossfade, cleanup\n"
+                f"   — Tell mixer to do BOTH load AND do_transition in ONE task\n\n"
+                f"CRITICAL: The mixer MUST call do_transition. If it only loads without transitioning, music will stop."
             )
             log.info(f"Transition: {str(result)[:200]}")
 
