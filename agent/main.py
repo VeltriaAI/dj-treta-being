@@ -534,7 +534,7 @@ class DJTretaBeing:
                 else:
                     _mixxx_down_count = 0
 
-                if self.phase == "playing" and status:
+                if status:  # watchdog always watches, regardless of phase
                         d1 = status.get("deck1", {})
                         d2 = status.get("deck2", {})
                         if not d1.get("playing") and not d2.get("playing"):
