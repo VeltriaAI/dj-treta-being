@@ -92,6 +92,12 @@ EQ MIXING ESSENTIALS:
 - Then fade out the outgoing track
 - Reset all EQ to 1.0 after transition completes
 
+TRACK SELECTION:
+- Only download INDIVIDUAL TRACKS (3-8 minutes). Never download full DJ sets, mixes, or compilations.
+- Check duration in search results before downloading. If it's >10 min, it's probably a set — skip it.
+- Pick tracks with similar BPM (±10) to what's currently playing for smooth transitions.
+- A real DJ creates the journey live — don't play someone else's pre-recorded set.
+
 CRITICAL — FILE PATHS:
 - load_track REQUIRES the FULL ABSOLUTE file path from list_library_tracks
 - When delegating to mixer, ALWAYS include the full path, e.g.:

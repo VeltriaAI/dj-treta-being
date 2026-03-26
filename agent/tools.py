@@ -524,29 +524,11 @@ def search_music(query: str, limit: int = 5) -> list:
 @tool
 def download_track(url: str, genre: str = "deep") -> str:
     """Download a track from YouTube into the music library.
-    IMPORTANT: Only download individual tracks (3-15 minutes), NOT full DJ sets or mixes.
 
     Args:
         url: YouTube URL to download.
         genre: Genre folder to save into (e.g., dark-techno, melodic-techno, deep, minimal, progressive, vocal, psychill).
     """
-    # First check duration — reject full sets/mixes (>15 min)
-    try:
-        info_result = subprocess.run(
-            ["yt-dlp", "--dump-json", "--no-download", url],
-            capture_output=True, text=True, timeout=15,
-        )
-        if info_result.returncode == 0:
-            import json as _json
-            info = _json.loads(info_result.stdout)
-            duration = info.get("duration", 0)
-            if duration > 900:  # >15 minutes
-                return f"SKIPPED: Track is {duration//60} minutes long — too long, looks like a full set/mix. Download individual tracks only (3-15 min)."
-            if duration < 60:  # <1 minute
-                return f"SKIPPED: Track is only {duration}s — too short."
-    except Exception:
-        pass  # proceed anyway if check fails
-
     genre_dir = _MUSIC_DIR / genre
     genre_dir.mkdir(parents=True, exist_ok=True)
 
