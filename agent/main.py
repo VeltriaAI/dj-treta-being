@@ -190,15 +190,12 @@ class DJTretaBeing:
 
             # Figure out active vs idle deck from reality
             status = _get_status(self.config.mixxx.url)
-            active_deck = 0
-            idle_deck = 0
+            active_deck = 1  # default: assume deck 1 active
+            idle_deck = 2
             if status:
                 d1 = status.get("deck1", {})
                 d2 = status.get("deck2", {})
-                if d1.get("playing") and d1.get("remaining_seconds", 0) > 0:
-                    active_deck = 1
-                    idle_deck = 2
-                elif d2.get("playing") and d2.get("remaining_seconds", 0) > 0:
+                if d2.get("playing") and d2.get("remaining_seconds", 0) > 0:
                     active_deck = 2
                     idle_deck = 1
 
