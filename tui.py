@@ -465,7 +465,7 @@ class DJTretaApp(App):
             self.log_widget.write("[yellow]Debug panel ON (Ctrl+D to toggle)[/yellow]")
 
     def poll_debug_log(self) -> None:
-        """Raw unfiltered daemon log for debug panel."""
+        """Filtered debug log — shows agent actions, not framework noise."""
         if not self.query_one("#debug-log").has_class("visible"):
             return
         if not DAEMON_LOG.exists():
@@ -476,44 +476,44 @@ class DJTretaApp(App):
             new_lines = lines[self._debug_log_pos:]
             self._debug_log_pos = len(lines)
 
-            for line in new_lines:
-                if not line.strip():
-                    continue
-                clean = line.strip()
+            # Skip smolagents framework noise
+            noise = [
+                "You're a helpful agent", "You have been submitted",
+                "your manager", "final_answer WILL HAVE", "Task outcome",
+                "extremely detailed", "Additional context", "one-line answer",
+                "Put all these", "argument to final_answer", "will be lost",
+                "LiteLLM", "completion()", "Wrapper:", "provider = openai",
+                "─", "│", "╭", "╰", "━",
+                "New run -", "You're helping",
+            ]
 
-                # Color by type
+            for line in new_lines:
+                clean = line.strip()
+                if not clean or len(clean) < 5:
+                    continue
+
+                # Skip noise
+                if any(n in clean for n in noise):
+                    continue
+
+                # Show useful debug info with colors
                 if "Calling tool:" in clean:
-                    # Extract tool name and args
-                    self.debug_widget.write(f"[bold cyan]  {clean}[/bold cyan]")
-                elif "Observations:" in clean:
-                    # Truncate observations
-                    obs = clean[:150] + "..." if len(clean) > 150 else clean
-                    self.debug_widget.write(f"[dim green]  {obs}[/dim green]")
+                    self.debug_widget.write(f"[bold cyan]  🔧 {clean}[/bold cyan]")
                 elif "Step " in clean and "Duration" in clean:
-                    self.debug_widget.write(f"[yellow]  {clean}[/yellow]")
-                elif "New run" in clean:
-                    self.debug_widget.write(f"[bold magenta]  {clean}[/bold magenta]")
+                    self.debug_widget.write(f"[yellow]  ⏱ {clean}[/yellow]")
                 elif "Final answer:" in clean:
                     ans = clean[:200] + "..." if len(clean) > 200 else clean
-                    self.debug_widget.write(f"[bold green]  {ans}[/bold green]")
-                elif "Initial plan" in clean or "plan" in clean.lower():
-                    self.debug_widget.write(f"[bright_yellow]  {clean}[/bright_yellow]")
-                elif "ERROR" in clean or "error" in clean.lower():
-                    self.debug_widget.write(f"[bold red]  {clean}[/bold red]")
+                    self.debug_widget.write(f"[bold green]  ✓ {ans}[/bold green]")
+                elif "ERROR" in clean:
+                    self.debug_widget.write(f"[bold red]  ✗ {clean}[/bold red]")
                 elif "WARNING" in clean:
-                    self.debug_widget.write(f"[red]  {clean}[/red]")
-                elif "LiteLLM" in clean or "completion()" in clean:
-                    self.debug_widget.write(f"[dim]  {clean}[/dim]")
+                    self.debug_widget.write(f"[red]  ⚠ {clean}[/red]")
+                elif "Agent acted" in clean or "Talk done" in clean:
+                    self.debug_widget.write(f"[green]  {clean}[/green]")
                 elif "INFO" in clean:
                     parts = clean.split("] ", 1)
-                    if len(parts) >= 2:
-                        self.debug_widget.write(f"[dim white]  {parts[1]}[/dim white]")
-                elif "─" in clean or "│" in clean or "╭" in clean or "╰" in clean:
-                    self.debug_widget.write(f"[dim]{clean}[/dim]")
-                else:
-                    if len(clean) > 200:
-                        clean = clean[:200] + "..."
-                    self.debug_widget.write(f"[dim]  {clean}[/dim]")
+                    if len(parts) >= 2 and parts[1].strip():
+                        self.debug_widget.write(f"[dim]  {parts[1]}[/dim]")
         except Exception:
             pass
 
