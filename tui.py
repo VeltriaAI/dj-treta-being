@@ -572,7 +572,9 @@ class DJTretaApp(App):
 
             skip = ["LiteLLM", "Wrapper:", "completion() model", "─", "│", "╭", "╰",
                     "Observations:", "Step ", "Calling tool", "Final answer:", "TRACK:", "TECHNIQUE:", "ENERGY:",
-                    "Talk result", "processing...", "Result: processing"]
+                    "Talk result", "Talk done", "Talk ack", "processing...", "Result: processing",
+                    "Unmapped finish_reason", "malformed_function_call", "TOKENS:", "TokenUsage",
+                    "mixer ←", "dj_treta →", "dj_treta ←", "library ←", "library →", "mixer →"]
 
             for line in new_lines:
                 if not line.strip():
