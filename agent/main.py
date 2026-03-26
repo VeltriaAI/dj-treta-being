@@ -489,14 +489,26 @@ class DJTretaBeing:
                         d1 = status.get("deck1", {})
                         d2 = status.get("deck2", {})
                         if not d1.get("playing") and not d2.get("playing"):
-                            if d1.get("track_loaded"):
-                                log.warning("WATCHDOG: silence! Starting Deck 1")
+                            # Pick the deck that has time remaining
+                            d1_remaining = d1.get("remaining_seconds", 0)
+                            d2_remaining = d2.get("remaining_seconds", 0)
+
+                            if d2_remaining > d1_remaining and d2.get("track_loaded"):
+                                log.warning(f"WATCHDOG: silence! Starting Deck 2 ({d2_remaining:.0f}s remaining)")
+                                httpx.post(f"{self.config.mixxx.url}/api/play", json={"deck": 2}, timeout=3)
+                                httpx.post(f"{self.config.mixxx.url}/api/crossfade", json={"position": 1.0}, timeout=3)
+                            elif d1_remaining > 0 and d1.get("track_loaded"):
+                                log.warning(f"WATCHDOG: silence! Starting Deck 1 ({d1_remaining:.0f}s remaining)")
                                 httpx.post(f"{self.config.mixxx.url}/api/play", json={"deck": 1}, timeout=3)
                                 httpx.post(f"{self.config.mixxx.url}/api/crossfade", json={"position": 0.0}, timeout=3)
                             elif d2.get("track_loaded"):
                                 log.warning("WATCHDOG: silence! Starting Deck 2")
                                 httpx.post(f"{self.config.mixxx.url}/api/play", json={"deck": 2}, timeout=3)
                                 httpx.post(f"{self.config.mixxx.url}/api/crossfade", json={"position": 1.0}, timeout=3)
+                            elif d1.get("track_loaded"):
+                                log.warning("WATCHDOG: silence! Starting Deck 1")
+                                httpx.post(f"{self.config.mixxx.url}/api/play", json={"deck": 1}, timeout=3)
+                                httpx.post(f"{self.config.mixxx.url}/api/crossfade", json={"position": 0.0}, timeout=3)
                             else:
                                 log.warning("WATCHDOG: silence and no tracks loaded!")
             except Exception:
