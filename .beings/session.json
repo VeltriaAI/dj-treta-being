@@ -1,26 +1,9 @@
 {
-  "phase": "playing",
-  "mood": "deep",
-  "set_start": 1774508553.135388,
+  "phase": "idle",
+  "mood": "",
+  "set_start": 0.0,
   "set_duration": 0,
-  "tracks_played": [
-    {
-      "title": "VTX \uff5c DWT-011 \uff5c Solar Resonance \u29f8\u29f8 Shamanic Downtempo & 105 BPM [2K] #shamanic #downtempo",
-      "time": 1774508615.12339
-    },
-    {
-      "title": "Free Your Mind",
-      "time": 1774508988.632441
-    },
-    {
-      "title": "Route84FM \u2013 Neon Cruise \uff5c Retro Melodic Deep House, Night Drive, 100 BPM",
-      "time": 1774509452.687009
-    },
-    {
-      "title": "[SET] DEEP HOUSE 80s\u29f890s Retro (Vintage Culture, Adam K, Eurythmics, Pink Floyd, U2)",
-      "time": 1774509679.86565
-    }
-  ],
+  "tracks_played": [],
   "planned_tracks": [],
-  "saved_at": 1774511494.390548
+  "saved_at": 1774512372.676652
 }

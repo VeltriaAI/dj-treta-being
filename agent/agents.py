@@ -19,7 +19,7 @@ from .tools import (
     get_live_data, get_track_info, do_transition, do_bass_swap,
     set_rate, reset_bpm, align_beats, nudge_track,
     # Audio perception
-    hear_music,
+    hear_music, preview_track,
     # Library tools
     list_library_tracks, search_music, download_track, get_set_history,
     # Meta tools (DJ agent only)
@@ -284,7 +284,7 @@ def create_dj_agent(config: Config) -> ToolCallingAgent:
     dj = ToolCallingAgent(
         tools=[
             get_dj_status, get_live_data,
-            hear_music,  # she can LISTEN to the actual audio
+            hear_music, preview_track,  # she can LISTEN to music
             save_learning, recall_learnings,
             read_file, write_file,
         ],

@@ -374,6 +374,87 @@ def hear_music(deck: int = 0, duration: int = 10) -> str:
         return f"Gemini audio error: {e}"
 
 
+@tool
+def preview_track(track_path: str, position: int = 30, duration: int = 10) -> str:
+    """Preview any track WITHOUT loading it on a deck — like a DJ listening in headphones.
+    Extracts audio from the file and analyzes it with Gemini. Use this to evaluate
+    a track BEFORE deciding to load it.
+
+    Args:
+        track_path: Full file path OR partial name (will search library).
+        position: Position in seconds to start listening from (default: 30s in, past the intro).
+        duration: Seconds of audio to analyze (5-15).
+    """
+    import base64
+    import subprocess as _sp
+
+    # Resolve partial name to full path
+    path = Path(track_path)
+    if not path.is_absolute() or not path.exists():
+        query = track_path.lower()
+        found = None
+        for genre_dir in sorted(_MUSIC_DIR.iterdir()):
+            if not genre_dir.is_dir() or genre_dir.name.startswith('.'):
+                continue
+            for f in sorted(genre_dir.iterdir()):
+                if f.suffix.lower() in ('.mp3', '.wav', '.flac', '.ogg', '.m4a'):
+                    if query in f.stem.lower():
+                        found = f
+                        break
+            if found:
+                break
+        if not found:
+            return f"Track not found: {track_path}"
+        path = found
+
+    title = path.stem
+    duration = max(5, min(15, duration))
+
+    # Extract audio snippet with ffmpeg
+    snippet = "/tmp/dj-treta-preview.wav"
+    try:
+        _sp.run(
+            ["ffmpeg", "-y", "-ss", str(position), "-t", str(duration),
+             "-i", str(path), "-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le", snippet],
+            capture_output=True, timeout=10,
+        )
+    except Exception as e:
+        return f"Can't extract audio: {e}"
+
+    if not Path(snippet).exists():
+        return "Audio extraction failed"
+
+    # Send to Gemini
+    try:
+        with open(snippet, "rb") as f:
+            audio_b64 = base64.b64encode(f.read()).decode()
+
+        from litellm import completion as _completion
+        resp = _completion(
+            model=_cfg.llm.model,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": (
+                        f"You are DJ Treta previewing '{title}' at {position}s. "
+                        "Describe: BPM estimate, key, mood, energy (1-10), genre, "
+                        "structure (intro/groove/breakdown/buildup/drop), "
+                        "notable elements. Would this track work well in a DJ set? "
+                        "2-3 sentences."
+                    )},
+                    {"type": "image_url", "image_url": {"url": f"data:audio/wav;base64,{audio_b64}"}},
+                ],
+            }],
+            api_base=_cfg.llm.api_base,
+            api_key=_cfg.llm.api_key,
+            temperature=0.5,
+            timeout=30,
+        )
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        return f"Preview error: {e}"
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # TRANSITIONS — Brain-controlled mixing
 # ═══════════════════════════════════════════════════════════════════════
