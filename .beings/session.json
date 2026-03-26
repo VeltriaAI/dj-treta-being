@@ -3,7 +3,12 @@
   "mood": "",
   "set_start": 0.0,
   "set_duration": 0,
-  "tracks_played": [],
+  "tracks_played": [
+    {
+      "title": "Solar Fields - Sol (2018 Remaster)",
+      "time": 1774512757.722204
+    }
+  ],
   "planned_tracks": [],
-  "saved_at": 1774512372.676652
+  "saved_at": 1774512817.723068
 }

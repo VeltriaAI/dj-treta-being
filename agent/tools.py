@@ -375,6 +375,107 @@ def hear_music(deck: int = 0, duration: int = 10) -> str:
 
 
 @tool
+def analyze_track(track_path: str) -> str:
+    """Deep analysis of a FULL track — sends entire audio to Gemini.
+    Returns: structure map with timestamps, BPM, key, energy arc,
+    best mix-in/mix-out points, genre, mood, DJ verdict.
+
+    Results are cached — analyzing the same track twice returns cached result instantly.
+
+    Args:
+        track_path: Full file path OR partial name (will search library).
+    """
+    import base64
+    import subprocess as _sp
+
+    # Resolve path
+    path = Path(track_path)
+    if not path.is_absolute() or not path.exists():
+        query = track_path.lower()
+        for genre_dir in sorted(_MUSIC_DIR.iterdir()):
+            if not genre_dir.is_dir() or genre_dir.name.startswith('.'):
+                continue
+            for f in sorted(genre_dir.iterdir()):
+                if f.suffix.lower() in ('.mp3', '.wav', '.flac', '.ogg', '.m4a'):
+                    if query in f.stem.lower():
+                        path = f
+                        break
+            if path.exists() and path != Path(track_path):
+                break
+        if not path.exists():
+            return f"Track not found: {track_path}"
+
+    title = path.stem
+
+    # Check cache
+    cache_dir = _MUSIC_DIR / ".analysis"
+    cache_dir.mkdir(exist_ok=True)
+    cache_file = cache_dir / f"{title}.txt"
+    if cache_file.exists():
+        return cache_file.read_text()
+
+    # Convert full track to low-quality WAV (mono 8kHz — small enough for API)
+    wav_path = "/tmp/dj-treta-full-analysis.wav"
+    try:
+        _sp.run(
+            ["ffmpeg", "-y", "-i", str(path), "-ac", "1", "-ar", "8000",
+             "-acodec", "pcm_s16le", wav_path],
+            capture_output=True, timeout=30,
+        )
+    except Exception as e:
+        return f"Audio conversion failed: {e}"
+
+    if not Path(wav_path).exists():
+        return "Audio conversion failed"
+
+    # Send full track to Gemini
+    try:
+        with open(wav_path, "rb") as f:
+            audio_b64 = base64.b64encode(f.read()).decode()
+
+        from litellm import completion as _completion
+        resp = _completion(
+            model=_cfg.llm.model,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": (
+                        f"Analyze this FULL track: '{title}'. Listen to the ENTIRE track.\n\n"
+                        "Return EXACTLY this format:\n"
+                        "BPM: <number>\n"
+                        "KEY: <key>\n"
+                        "GENRE: <genre>\n"
+                        "ENERGY_PEAK: <1-10>\n"
+                        "MOOD: <2-3 words>\n"
+                        "MIX_IN: <timestamp like 0:45> — <why>\n"
+                        "MIX_OUT: <timestamp like 6:30> — <why>\n"
+                        "STRUCTURE:\n"
+                        "  <start>-<end> <section> (energy X/10)\n"
+                        "  <start>-<end> <section> (energy X/10)\n"
+                        "  ...\n"
+                        "VERDICT: <one sentence — what kind of set does this fit?>\n"
+                        "SIMILAR: <3 similar tracks/artists>"
+                    )},
+                    {"type": "image_url", "image_url": {"url": f"data:audio/wav;base64,{audio_b64}"}},
+                ],
+            }],
+            api_base=_cfg.llm.api_base,
+            api_key=_cfg.llm.api_key,
+            temperature=0.3,
+            timeout=60,
+        )
+
+        analysis = resp.choices[0].message.content.strip()
+
+        # Cache it
+        cache_file.write_text(analysis)
+
+        return analysis
+    except Exception as e:
+        return f"Analysis error: {e}"
+
+
+@tool
 def preview_track(track_path: str, position: int = 30, duration: int = 10) -> str:
     """Preview any track WITHOUT loading it on a deck — like a DJ listening in headphones.
     Extracts audio from the file and analyzes it with Gemini. Use this to evaluate
