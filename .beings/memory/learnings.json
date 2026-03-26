@@ -18,5 +18,15 @@
     "topic": "energy-management-transition",
     "content": "When transitioning from a peak energy tribal acid track (energy 9) to a lower energy hypnotic psytrance track (energy 4), a 45-second do_bass_swap provides a much cleaner handoff than a standard blend. The bass swap preserves the rhythmic pulse while allowing the atmospheric elements of the new track to establish themselves without clashing with the high-intensity synths of the outgoing track.",
     "timestamp": 1774488254.180644
+  },
+  {
+    "topic": "energy-drop-transition",
+    "content": "Transitioned from a high-energy (8/10) Melodic Goa track with rolling triplets into a lower-energy (3/10) atmospheric Psytrance intro. Used a 45-second bass-swap to manage the energy drop. The contrast between the spoken-word purpose vocal of the outgoing track and the cinematic 'Ohm' textures of the incoming track created a deep, immersive shift. Note: Even with a 2:1 BPM sync (70 vs 140), aligning beats and using a long bass-swap keeps the psychedelic flow intact.",
+    "timestamp": 1774490059.3263402
+  },
+  {
+    "topic": "energy-reset-transition",
+    "content": "Transitioned from a high-energy (8/10) driving Psytrance track (Temple of Frequency XVIII) into a mystical, cinematic intro (3/10) of 'Midnight Raga'. Used a 60s bass-swap to allow the atmospheric Indian flute and tabla textures to bleed into the mechanical groove of the outgoing track. This 'energy-drop' transition works well for resetting the vibe before a new build.",
+    "timestamp": 1774491302.1049118
   }
 ]

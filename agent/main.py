@@ -323,6 +323,11 @@ class DJTretaBeing:
 
         log.info("DJ Treta Being alive")
 
+        # Ensure Mixxx is running
+        if not get_status(self.config.mixxx.url):
+            log.info("Mixxx not running — starting it")
+            self._restart_mixxx()
+
         # Create agent
         log.info("Creating DJ agent...")
         self.agent = create_dj_agent(self.config)
@@ -479,13 +484,56 @@ class DJTretaBeing:
         self.phase = "idle"
         return "Set stopped"
 
+    def _restart_mixxx(self) -> bool:
+        """Restart Mixxx if it's down. Returns True if successful."""
+        import subprocess
+        mixxx_bin = Path.home() / "workspace" / "mixxx-treta" / "build" / "mixxx"
+        res_path = Path.home() / "workspace" / "mixxx-treta" / "res"
+        settings_path = Path.home() / "Library" / "Application Support" / "Mixxx"
+
+        if not mixxx_bin.exists():
+            log.error(f"Mixxx binary not found: {mixxx_bin}")
+            return False
+
+        try:
+            subprocess.Popen(
+                [str(mixxx_bin), "--resourcePath", str(res_path), "--settingsPath", str(settings_path)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            log.info("Mixxx launched, waiting for API...")
+            for i in range(30):
+                time.sleep(0.5)
+                if get_status(self.config.mixxx.url):
+                    log.info(f"Mixxx API up after {(i+1)*0.5:.1f}s")
+                    return True
+            log.error("Mixxx started but API not responding after 15s")
+            return False
+        except Exception as e:
+            log.error(f"Failed to launch Mixxx: {e}")
+            return False
+
     def _watchdog_loop(self):
-        """Independent watchdog — catches silence even when agent blocks."""
+        """Independent watchdog — catches silence and Mixxx crashes."""
+        _mixxx_down_count = 0
+
         while self._running:
             try:
-                if self.phase == "playing":
-                    status = get_status(self.config.mixxx.url)
-                    if status:
+                status = get_status(self.config.mixxx.url)
+
+                if not status:
+                    # Mixxx unreachable
+                    _mixxx_down_count += 1
+                    if _mixxx_down_count >= 3:  # 15s of no response
+                        log.warning(f"WATCHDOG: Mixxx down for {_mixxx_down_count * 5}s — restarting")
+                        if self._restart_mixxx():
+                            _mixxx_down_count = 0
+                            # Reload last track if we were playing
+                            if self.phase == "playing" and self.tracks_played:
+                                log.info("WATCHDOG: Mixxx restarted, resuming set")
+                else:
+                    _mixxx_down_count = 0
+
+                if self.phase == "playing" and status:
                         d1 = status.get("deck1", {})
                         d2 = status.get("deck2", {})
                         if not d1.get("playing") and not d2.get("playing"):
@@ -511,6 +559,23 @@ class DJTretaBeing:
                                 httpx.post(f"{self.config.mixxx.url}/api/crossfade", json={"position": 0.0}, timeout=3)
                             else:
                                 log.warning("WATCHDOG: silence and no tracks loaded!")
+
+                        # BPM sanity check — catch half-speed/double-speed bugs
+                        for deck_num, deck in [(1, d1), (2, d2)]:
+                            if deck.get("playing"):
+                                bpm = deck.get("bpm", 0)
+                                file_bpm = deck.get("file_bpm", 0)
+                                if file_bpm > 0 and bpm > 0:
+                                    ratio = bpm / file_bpm
+                                    if ratio < 0.6 or ratio > 1.5:
+                                        log.warning(f"WATCHDOG: BPM mismatch! Deck {deck_num}: {bpm:.0f} BPM vs file {file_bpm:.0f} — resetting")
+                                        try:
+                                            httpx.post(f"{self.config.mixxx.url}/api/control", json={"group": f"[Channel{deck_num}]", "key": "sync_enabled", "value": 0}, timeout=3)
+                                            httpx.post(f"{self.config.mixxx.url}/api/control", json={"group": f"[Channel{deck_num}]", "key": "rate", "value": 0}, timeout=3)
+                                            log.info(f"WATCHDOG: Deck {deck_num} BPM reset to original {file_bpm:.0f}")
+                                        except Exception:
+                                            pass
+
             except Exception:
                 pass
             time.sleep(5)
