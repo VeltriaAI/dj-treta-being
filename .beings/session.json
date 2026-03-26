@@ -1,14 +1,19 @@
 {
-  "phase": "idle",
-  "mood": "",
-  "set_start": 0.0,
+  "phase": "playing",
+  "mood": "melodic",
+  "set_start": 1774513392.746818,
   "set_duration": 0,
   "tracks_played": [
     {
-      "title": "Solar Fields - Sol (2018 Remaster)",
-      "time": 1774512757.722204
+      "title": "Carbon Based Lifeforms - Carbon Based Lifeforms - Interloper (2015 Remaster)",
+      "time": 1774513427.309331
     }
   ],
-  "planned_tracks": [],
-  "saved_at": 1774513354.294167
+  "planned_tracks": [
+    {
+      "title": "To maintain the energy of your current 160 BPM set while staying harmonically locked in A Minor (8A), I\u2019ve selected three driving tracks that bridge the gap between melodic atmosphere and high-intensi",
+      "reason": ""
+    }
+  ],
+  "saved_at": 1774513615.1140742
 }

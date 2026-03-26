@@ -359,8 +359,14 @@ class DJTretaBeing:
             try:
                 self._check_commands()
 
-                if self.phase == "playing":
-                    self._check_transition()
+                # Check transition if music is playing (regardless of Being's phase)
+                status = get_status(self.config.mixxx.url)
+                if status:
+                    d1 = status.get("deck1", {})
+                    d2 = status.get("deck2", {})
+                    if d1.get("playing") or d2.get("playing"):
+                        self.phase = "playing"  # auto-correct phase
+                        self._check_transition()
 
             except Exception as e:
                 log.warning(f"Main loop error: {e}")
@@ -559,7 +565,15 @@ class DJTretaBeing:
                                 httpx.post(f"{self.config.mixxx.url}/api/play", json={"deck": 1}, timeout=3)
                                 httpx.post(f"{self.config.mixxx.url}/api/crossfade", json={"position": 0.0}, timeout=3)
                             else:
-                                log.warning("WATCHDOG: silence and no tracks loaded!")
+                                # Nothing loaded, nothing playing — Being's survival instinct
+                                # Ask the brain to find something and play it
+                                log.warning("WATCHDOG: total silence! Asking brain to find music...")
+                                if self.agent and not (self._transition_thread and self._transition_thread.is_alive()):
+                                    self._transition_thread = threading.Thread(
+                                        target=self._survival_instinct,
+                                        daemon=True,
+                                    )
+                                    self._transition_thread.start()
 
                         # BPM sanity check — catch half-speed/double-speed bugs
                         for deck_num, deck in [(1, d1), (2, d2)]:
@@ -619,6 +633,23 @@ class DJTretaBeing:
                 daemon=True,
             )
             self._transition_thread.start()
+
+    def _survival_instinct(self):
+        """Being's core instinct: silence is wrong. Find music and play it.
+        Called by watchdog when NOTHING is playing and NO tracks are loaded."""
+        try:
+            mood = self.mood or "deep"
+            log.info(f"SURVIVAL: finding {mood} music to play...")
+            self.agent.run(
+                f"URGENT: Nothing is playing! Total silence.\n"
+                f"Mood: {mood}\n\n"
+                f"Find a track using the library agent, load it on deck 1, and play it.\n"
+                f"If library is empty, search YouTube, download a track, then load and play."
+            )
+            self.phase = "playing"
+            log.info("SURVIVAL: music restored")
+        except Exception as e:
+            log.error(f"SURVIVAL failed: {e}")
 
     def _do_transition(self, active_deck, idle_deck, active_remaining):
         """Run transition in background thread."""
