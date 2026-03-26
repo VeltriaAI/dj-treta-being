@@ -2,53 +2,52 @@
 
 ## What This Is
 
-DJ Treta is an autonomous AI DJ Being. It uses smolagents + LiteLLM (Gemini) as the brain, Mixxx (forked with HTTP API) as the audio engine, and the Beings Protocol for identity/memory/goals.
+DJ Treta is an autonomous AI DJ Being. Pure Software 3.0 — the agent decides everything, no deterministic DJ logic.
 
-## Architecture
+## Architecture (v2.0)
 
 ```
-Brain (smolagents ToolCallingAgent + LiteLLM)  →  PLANS
-Daemon (state machine at 2Hz)                  →  ORCHESTRATES
-Executor (deterministic, 20fps)                →  EXECUTES
-Mixxx (C++ DJ software, HTTP API on :7778)     →  PLAYS
+main.py (~200 lines)
+  _pulse() → checks Mixxx reality every 5s → calls agent if action needed
+
+agents.py
+  DJ Agent (manager, smolagents ToolCallingAgent)
+    ├── Mixer Agent (19 tools: deck control, transitions, BPM, EQ)
+    └── Library Agent (4 tools: search, download, list, history)
+
+tools.py (30 tools — hands of the Being)
 ```
+
+No watchdog. No state machine. No executor. Agent decides everything.
 
 ## Key Files
 
-- `agent/daemon.py` — Main loop, state machine
-- `agent/brain.py` — smolagents agent with DJ tools
-- `agent/tools.py` — @tool functions wrapping Mixxx API
-- `agent/executor.py` — Deterministic transition execution (blend, bass_swap, filter_sweep, hard_cut)
-- `agent/perception.py` — Polls Mixxx for real-time state
-- `agent/selector.py` — Two-stage track selection (deterministic filter + LLM ranking)
+- `agent/main.py` — Being daemon. _pulse() heartbeat + command handler
+- `agent/agents.py` — Agent factory. System prompt, managed_agents
+- `agent/tools.py` — 30 @tool functions (DJ, audio, discovery, self-awareness)
 - `agent/camelot.py` — Camelot wheel key compatibility
 - `agent/config.py` — config.yaml loader
-- `agent/state.py` — DJState, DJPhase, TrackState
-- `config.yaml` — All configuration (Mixxx URL, LLM, library, transitions)
+- `tui.py` — Textual TUI (decks, VU meters, debug, chat)
+- `cli.py` — CLI (start/stop/restart/talk/status/tui)
+- `config.yaml` — Mixxx URL, LLM model, library path
+- `.beings/` — SOUL.md, MEMORY.md, GOALS.md, USER.md
 
 ## Running
 
 ```bash
-source .venv/bin/activate
-python -m agent --mood techno-deep --duration 60
+djtreta start                              # start Being + Mixxx
+djtreta talk "play something melodic"      # talk to her
+djtreta tui                                # full terminal UI
+djtreta stop                               # stop
 ```
 
 ## Prerequisites
 
-- Mixxx (VeltriaAI/mixxx fork) running with HTTP API on port 7778
-- SSH tunnel to LiteLLM: `ssh -L 4000:localhost:4000 epadmin@20.235.125.250`
-- Tracks in `~/Music/DJTreta/` organized by genre
-
-## MCP Integration
-
-DJ Treta is controlled via MCP tools in `~/beings/himani/skills/dj/mcp-server/`:
-- `dj_agent_start` — spawn daemon
-- `dj_agent_stop` — graceful shutdown
-- `dj_agent_status` — read state from `/tmp/dj-treta-state.json`
+- Mixxx fork (VeltriaAI/mixxx, branch feature/http-api) — auto-started by Being
+- LiteLLM proxy: `ssh -L 4000:localhost:4000 epadmin@20.235.125.250`
+- Python venv with: smolagents, litellm, httpx, pyyaml, textual, rich
 
 ## Brain Model
 
-Uses `openai/gemini-3-flash` via LiteLLM proxy. To swap models, change `llm.model` in `config.yaml`:
-- `openai/gemini-3-flash` (default, fast)
-- `openai/gemini-3.1-pro` (better reasoning)
-- `anthropic/claude-sonnet` (alternative)
+Gemini Flash via LiteLLM. Change `llm.model` in config.yaml.
+Cost: ~$0.25/hr active mixing, ~$0.00/hr during long tracks.
