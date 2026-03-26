@@ -155,7 +155,7 @@ def send_command(command: str, args: dict = {}) -> str:
     cmd_id = f"{time.time():.6f}"
     payload = {"command": command, "args": args, "id": cmd_id}
     COMMAND_FILE.write_text(json.dumps(payload))
-    for _ in range(120):
+    for _ in range(240):  # 120s timeout (agent can take 60s+ for tool calls)
         time.sleep(0.5)
         state = read_state()
         if state and state.get("last_command_id") == cmd_id:

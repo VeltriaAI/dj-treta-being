@@ -1,27 +1,18 @@
 {
-  "phase": "playing",
-  "mood": "",
-  "set_start": 0.0,
-  "set_duration": 0,
+  "mood": "deep",
   "tracks_played": [
     {
-      "title": "Beatsody - Burning Power - Melodic Techno 2026 Original Mix",
-      "time": 1774514579.481738
-    }
-  ],
-  "planned_tracks": [
-    {
-      "title": "**VINTAGE CULTURE TYPE BEAT \"THIRD\" [SDA]**",
-      "reason": "This is a perfect \"lock-in\" track. It stays in the same key (4A/Fm) and BPM (124), allowing for a seamless long blend. Its rubbery, rolling bassline will maintain the momentum while stripping back the melody to create a focused, driving groove. (energy: 7)"
+      "title": "Afterlife - Argy & Omnya - Aria (Extended Mix)",
+      "time": 1774517088.501516
     },
     {
-      "title": "**goodkidd, STEREO MUNK - First Flight (Original Mix)**",
-      "reason": "We move into a more expansive, atmospheric space here. While the key shifts to Gm (6A), the transition will feel like a natural lift in mood. The shimmering arpeggios and organic percussion provide a lush \"bridge\" that adds emotional depth without losing the rhythmic drive. (energy: 7)"
+      "title": "Miss Monique - Miss Monique, Asher Swissa, Sandhaus - Electric",
+      "time": 1774517347.122991
     },
     {
-      "title": "**Talal - Folkes (Original Mix)**",
-      "reason": "To close this sequence, we'll dip slightly into a deeper, more brooding territory. Moving to Cm (5A) creates a sophisticated harmonic descent. It\u2019s a \"heady\" track with watery synth textures that will reward the listener's focus, perfect for that late-night deep-focus vibe you enjoy. (energy: 6)"
+      "title": "STEYOYOKE TV - Andrewboy - Next To You (Melodic Techno 2024) \uff5c Ethereal & Deep Techno Vibes [Steyoyoke]",
+      "time": 1774517627.055379
     }
   ],
-  "saved_at": 1774514727.830282
+  "saved_at": 1774517867.5663822
 }

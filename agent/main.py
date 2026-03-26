@@ -302,8 +302,10 @@ class DJTretaBeing:
             classify = completion(
                 model=self.config.llm.model,
                 messages=[{"role": "user", "content":
-                    f'Does this message need DJ tools (play, load, skip, EQ, download, etc.)? '
-                    f'Answer ONLY "tools" or "chat".\nMessage: "{message}"'}],
+                    f'Is this message a REQUEST to DO something (play a track, skip, change EQ, download, adjust BPM) '
+                    f'or just a QUESTION/CONVERSATION (asking about plans, chatting, asking what\'s playing)?\n'
+                    f'Answer ONLY "tools" if it\'s a request to take action, or "chat" if it\'s conversation.\n'
+                    f'Message: "{message}"'}],
                 api_base=self.config.llm.api_base,
                 api_key=self.config.llm.api_key,
                 temperature=0, timeout=10,
