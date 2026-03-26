@@ -380,12 +380,10 @@ def hear_music(deck: int = 0, duration: int = 10) -> str:
 
 @tool
 def do_transition(to_deck: int, duration: int = 60) -> str:
-    """Execute a smooth crossfade transition to a deck.
-    Uses Mixxx's C++ engine (20fps S-curve). After transition completes,
-    the outgoing deck is paused and EQ/volume reset.
-
-    IMPORTANT: The incoming deck must have a track loaded before calling this.
-    Enable sync first with set_sync.
+    """Execute a transition to a deck. Automatically chooses technique based on BPM compatibility:
+    - Compatible BPM (±5%): sync + S-curve crossfade blend
+    - Marginal BPM (5-15%): sync + short transition
+    - Incompatible BPM (>15%): NO sync, filter sweep (avoids time-stretch distortion)
 
     Args:
         to_deck: Deck to transition TO (1 or 2).
@@ -395,45 +393,87 @@ def do_transition(to_deck: int, duration: int = 60) -> str:
 
     duration = max(10, min(120, duration))
     out_deck = 1 if to_deck == 2 else 2
+    fps = 10
 
     # Pre-flight: ABORT if incoming deck has no track loaded
     status = _mixxx_get("/api/status")
-    if status:
-        deck_state = status.get(f"deck{to_deck}", {})
-        if not deck_state.get("track_loaded", False):
-            return f"ABORTED: Deck {to_deck} has no track loaded! Load a track first with load_track."
+    if not status:
+        return "ABORTED: Mixxx not responding"
 
-    # Ensure incoming is playing + synced + phase aligned
-    _mixxx_post("/api/sync", {"deck": to_deck})
+    in_state = status.get(f"deck{to_deck}", {})
+    out_state = status.get(f"deck{out_deck}", {})
+
+    if not in_state.get("track_loaded", False):
+        return f"ABORTED: Deck {to_deck} has no track loaded!"
+
+    # BPM compatibility check
+    in_bpm = in_state.get("file_bpm", 0) or in_state.get("bpm", 0)
+    out_bpm = out_state.get("file_bpm", 0) or out_state.get("bpm", 0)
+
+    technique = "blend"
+    if in_bpm > 0 and out_bpm > 0:
+        ratio = max(in_bpm, out_bpm) / min(in_bpm, out_bpm)
+        if ratio > 1.15:
+            technique = "filter_sweep"  # too far apart, don't sync
+        elif ratio > 1.05:
+            technique = "short_blend"   # marginal, sync but keep it short
+            duration = min(duration, 30)
+
+    # Start incoming
     _mixxx_post("/api/play", {"deck": to_deck})
     _time.sleep(0.3)
-    # Phase align — snap beats to the other deck's grid
-    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "beatsync_phase", "value": 1})
-    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "quantize", "value": 1})
-    _time.sleep(0.1)
 
-    # Verify it actually started playing
-    status2 = _mixxx_get("/api/status")
-    if status2:
-        deck_state2 = status2.get(f"deck{to_deck}", {})
-        if not deck_state2.get("playing", False):
-            return f"ABORTED: Deck {to_deck} failed to start playing. Track may not be loaded correctly."
+    if technique == "filter_sweep":
+        # INCOMPATIBLE BPM — no sync, filter sweep
+        # Each track plays at its native BPM
+        total = int(duration * fps)
+        _mixxx_post("/api/filter", {"deck": to_deck, "value": 0.0})  # start with HPF
 
-    # Use Mixxx's server-side transition (C++, 20fps, non-blocking)
-    _mixxx_post("/api/transition", {"deck": to_deck, "duration": duration})
+        for i in range(total + 1):
+            t = i / total
+            # Open filter on incoming: 0.0 (HPF) → 0.5 (neutral)
+            _mixxx_post("/api/filter", {"deck": to_deck, "value": round(t * 0.5, 3)})
+            # Fade out outgoing in second half
+            if t > 0.5:
+                fade = 1.0 - ((t - 0.5) / 0.5)
+                _mixxx_post("/api/volume", {"deck": out_deck, "volume": round(fade, 2)})
+            _time.sleep(1.0 / fps)
 
-    # Wait for it to complete
-    _time.sleep(duration + 2)
+        _mixxx_post("/api/filter", {"deck": to_deck, "value": 0.5})
+        result_msg = f"Filter sweep to Deck {to_deck} ({duration}s, no sync — BPM gap {in_bpm:.0f} vs {out_bpm:.0f})"
+
+    else:
+        # COMPATIBLE BPM — sync + crossfade blend
+        _mixxx_post("/api/sync", {"deck": to_deck})
+        _time.sleep(0.2)
+        _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "beatsync_phase", "value": 1})
+        _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "quantize", "value": 1})
+        _time.sleep(0.1)
+
+        # Verify playing
+        status2 = _mixxx_get("/api/status")
+        if status2 and not status2.get(f"deck{to_deck}", {}).get("playing", False):
+            return f"ABORTED: Deck {to_deck} failed to start playing."
+
+        # Mixxx S-curve transition
+        _mixxx_post("/api/transition", {"deck": to_deck, "duration": duration})
+        _time.sleep(duration + 2)
+
+        result_msg = f"{'Short blend' if technique == 'short_blend' else 'Blend'} to Deck {to_deck} ({duration}s, synced {in_bpm:.0f}↔{out_bpm:.0f} BPM)"
 
     # Post-flight cleanup
+    xf = 0.0 if to_deck == 1 else 1.0
+    _mixxx_post("/api/crossfade", {"position": xf})
     _mixxx_post("/api/pause", {"deck": out_deck})
     _mixxx_post("/api/volume", {"deck": out_deck, "volume": 1.0})
+    _mixxx_post("/api/volume", {"deck": to_deck, "volume": 1.0})
     for band in ["hi", "mid", "lo"]:
         _mixxx_post("/api/eq", {"deck": out_deck, band: 1.0})
+        _mixxx_post("/api/eq", {"deck": to_deck, band: 1.0})
     _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5})
     _mixxx_post("/api/filter", {"deck": to_deck, "value": 0.5})
 
-    return f"Transitioned to Deck {to_deck} over {duration}s. Deck {out_deck} paused and cleaned up."
+    return f"{result_msg}. Deck {out_deck} paused."
 
 
 @tool
@@ -451,6 +491,16 @@ def do_bass_swap(to_deck: int, duration: int = 60) -> str:
     out_deck = 1 if to_deck == 2 else 2
     fps = 10
     total = int(duration * fps)
+
+    # BPM check — bass swap needs compatible BPMs
+    status = _mixxx_get("/api/status")
+    if status:
+        in_bpm = status.get(f"deck{to_deck}", {}).get("file_bpm", 0)
+        out_bpm = status.get(f"deck{out_deck}", {}).get("file_bpm", 0)
+        if in_bpm > 0 and out_bpm > 0:
+            ratio = max(in_bpm, out_bpm) / min(in_bpm, out_bpm)
+            if ratio > 1.15:
+                return do_transition(to_deck, duration)  # fall back to filter sweep
 
     # Sync + play incoming with bass killed
     _mixxx_post("/api/sync", {"deck": to_deck})
