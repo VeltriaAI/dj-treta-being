@@ -253,9 +253,10 @@ class DJTretaBeing:
         self.tracks_played: list[dict] = []
         self.planned_tracks: list[dict] = []
         self._last_command = ""
+        self._last_command_id = ""
         self._last_result = ""
-        self._transition_thread = None  # background thread for agent transitions
-        self._talk_lock = threading.Lock()  # prevent concurrent agent.run calls
+        self._transition_thread = None
+        self._talk_lock = threading.Lock()
 
     def _save_session(self):
         """Persist session state to disk — survives restarts."""
@@ -672,9 +673,11 @@ class DJTretaBeing:
 
         cmd = raw.get("command", "")
         args = raw.get("args", {})
+        cmd_id = raw.get("id", "")
         log.info(f"Command: {cmd}")
 
         self._last_command = cmd
+        self._last_command_id = cmd_id
         self._last_result = "processing..."
         self._write_state()
 
@@ -710,6 +713,8 @@ class DJTretaBeing:
                 return f"Starting {mood} set — searching for tracks..."
 
             # Smart routing: 1 quick LLM call decides if tools needed
+            _cmd_id = self._last_command_id  # capture for closure
+
             def _talk_bg():
                 try:
                     from litellm import completion
@@ -770,10 +775,12 @@ class DJTretaBeing:
                         result = resp.choices[0].message.content.strip()
 
                     self._last_command = cmd
+                    self._last_command_id = _cmd_id
                     self._last_result = result
                     self._write_state()
-                    log.info(f"Talk result ({'tools' if needs_tools else 'chat'}): {result[:200]}")
+                    log.info(f"Talk done: {result[:200]}")
                 except Exception as e:
+                    self._last_command_id = _cmd_id
                     self._last_result = f"Error: {e}"
                     self._write_state()
 
@@ -844,6 +851,7 @@ class DJTretaBeing:
                 "set_remaining": round(remaining) if self.set_duration > 0 else "infinite",
                 "consecutive_errors": 0,
                 "last_command": self._last_command,
+                "last_command_id": self._last_command_id,
                 "last_command_result": self._last_result,
                 "current_track": current,
                 "next_track": None,

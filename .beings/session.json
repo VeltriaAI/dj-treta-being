@@ -3,7 +3,29 @@
   "mood": "deep",
   "set_start": 1774508553.135388,
   "set_duration": 0,
-  "tracks_played": [],
-  "planned_tracks": [],
-  "saved_at": 1774508563.7125492
+  "tracks_played": [
+    {
+      "title": "VTX \uff5c DWT-011 \uff5c Solar Resonance \u29f8\u29f8 Shamanic Downtempo & 105 BPM [2K] #shamanic #downtempo",
+      "time": 1774508615.12339
+    },
+    {
+      "title": "Free Your Mind",
+      "time": 1774508988.632441
+    }
+  ],
+  "planned_tracks": [
+    {
+      "title": "**Fulltone",
+      "reason": "\"Kairo\"**"
+    },
+    {
+      "title": "**Viken Arman",
+      "reason": "\"Sireli\"**"
+    },
+    {
+      "title": "**Be Svendsen",
+      "reason": "\"Nabia\"**"
+    }
+  ],
+  "saved_at": 1774509059.493383
 }

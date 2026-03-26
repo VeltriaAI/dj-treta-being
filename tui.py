@@ -152,11 +152,13 @@ def knob_display(value: float, label: str, neutral: float = 1.0) -> str:
         return f"[bold cyan]{label}↓{value:.1f}[/bold cyan]"
 
 def send_command(command: str, args: dict = {}) -> str:
-    COMMAND_FILE.write_text(json.dumps({"command": command, "args": args}))
+    cmd_id = f"{time.time():.6f}"
+    payload = {"command": command, "args": args, "id": cmd_id}
+    COMMAND_FILE.write_text(json.dumps(payload))
     for _ in range(120):
         time.sleep(0.5)
         state = read_state()
-        if state and state.get("last_command") == command:
+        if state and state.get("last_command_id") == cmd_id:
             result = state.get("last_command_result", "")
             if result and result != "processing...":
                 return result
@@ -386,17 +388,6 @@ Screen {
     padding: 0 1;
 }
 
-#thinking-log {
-    height: 1fr;
-    border-top: solid $success;
-    padding: 0 1;
-    display: none;
-}
-
-#thinking-log.visible {
-    display: block;
-}
-
 #debug-log {
     height: 1fr;
     border-top: solid $warning;
@@ -430,7 +421,6 @@ class DJTretaApp(App):
         Binding("ctrl+q", "quit", "Quit"),
         Binding("ctrl+s", "skip", "Skip"),
         Binding("f2", "toggle_debug", "Debug"),
-        Binding("f3", "toggle_thinking", "Thinking"),
         Binding("f4", "show_tracks", "Tracks"),
         Binding("f5", "show_set", "Set"),
     ]
@@ -445,14 +435,12 @@ class DJTretaApp(App):
         yield MixerWidget(id="mixer")
         yield BrainWidget(id="brain")
         yield RichLog(id="conversation", highlight=True, markup=True, wrap=True)
-        yield RichLog(id="thinking-log", highlight=True, markup=True, wrap=True)
         yield RichLog(id="debug-log", highlight=True, markup=True, wrap=True)
         yield Input(placeholder="Talk to DJ Treta... (or /help)", id="prompt-input")
         yield Footer()
 
     def on_mount(self) -> None:
         self.log_widget = self.query_one("#conversation", RichLog)
-        self.thinking_widget = self.query_one("#thinking-log", RichLog)
         self.debug_widget = self.query_one("#debug-log", RichLog)
         self.log_widget.write("[dim]DJ Treta Console. Type anything to talk, /help for commands.[/dim]\n")
         self.set_interval(1.0, self.refresh_status)
@@ -461,17 +449,9 @@ class DJTretaApp(App):
         self._log_mtime = 0.0
         self._debug_log_pos = 0
         self._thinking_pos = 0
-        self.show_thinking = True  # thinking shows in main panel by default
         self.set_interval(3.0, self.poll_daemon_log)
         self.set_interval(1.0, self.poll_debug_log)
         self.set_interval(1.0, self.poll_thinking_log)
-
-    def action_toggle_thinking(self) -> None:
-        self.show_thinking = not self.show_thinking
-        if self.show_thinking:
-            self.log_widget.write("[green]Thinking ON — you'll see 💭 why she makes decisions[/green]")
-        else:
-            self.log_widget.write("[dim]Thinking OFF[/dim]")
 
     def action_toggle_debug(self) -> None:
         debug_log = self.query_one("#debug-log")
@@ -591,7 +571,8 @@ class DJTretaApp(App):
             self._log_pos = len(lines)
 
             skip = ["LiteLLM", "Wrapper:", "completion() model", "─", "│", "╭", "╰",
-                    "Observations:", "Step ", "Calling tool", "Final answer:", "TRACK:", "TECHNIQUE:", "ENERGY:"]
+                    "Observations:", "Step ", "Calling tool", "Final answer:", "TRACK:", "TECHNIQUE:", "ENERGY:",
+                    "Talk result", "processing...", "Result: processing"]
 
             for line in new_lines:
                 if not line.strip():
@@ -625,10 +606,10 @@ class DJTretaApp(App):
             pass
 
     def poll_thinking_log(self) -> None:
-        """Agent internal thinking — reasoning in main panel, technical in debug."""
+        """Agent internal thinking — all goes to debug panel."""
         debug_visible = self.query_one("#debug-log").has_class("visible")
 
-        if not self.show_thinking and not debug_visible:
+        if not debug_visible:
             return
         if not THINKING_LOG.exists():
             return
@@ -643,14 +624,11 @@ class DJTretaApp(App):
                     continue
 
                 if line.startswith("[THINK:"):
-                    # Reasoning → MAIN panel (always, if show_thinking)
-                    if self.show_thinking:
-                        agent = line.split("]")[0].split(":")[1]
-                        thought = line.split("] ", 1)[1] if "] " in line else line
-                        # Truncate very long thoughts
-                        if len(thought) > 300:
-                            thought = thought[:300] + "..."
-                        self.log_widget.write(f"[dim]💭 {agent}:[/dim] [italic dim]{thought}[/italic dim]")
+                    agent = line.split("]")[0].split(":")[1]
+                    thought = line.split("] ", 1)[1] if "] " in line else line
+                    if len(thought) > 300:
+                        thought = thought[:300] + "..."
+                    self.debug_widget.write(f"[bold bright_white]  💭 {agent}:[/bold bright_white] [italic]{thought}[/italic]")
 
                 elif line.startswith("[CALL:"):
                     # Tool calls → DEBUG panel only
@@ -734,8 +712,6 @@ class DJTretaApp(App):
             self.stop_brain()
         elif cmd == "cost":
             self.show_cost()
-        elif cmd in ("thinking", "mind"):
-            self.action_toggle_thinking()
         elif cmd == "debug":
             self.action_toggle_debug()
         elif cmd == "set":
