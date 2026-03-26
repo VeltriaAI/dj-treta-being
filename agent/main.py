@@ -187,16 +187,31 @@ class DJTretaBeing:
         """Agent looks at reality and does what a DJ should do."""
         try:
             played_list = [t.get("title", "?") for t in self.tracks_played]
+
+            # Figure out active vs idle deck from reality
+            status = _get_status(self.config.mixxx.url)
+            active_deck = 0
+            idle_deck = 0
+            if status:
+                d1 = status.get("deck1", {})
+                d2 = status.get("deck2", {})
+                if d1.get("playing") and d1.get("remaining_seconds", 0) > 0:
+                    active_deck = 1
+                    idle_deck = 2
+                elif d2.get("playing") and d2.get("remaining_seconds", 0) > 0:
+                    active_deck = 2
+                    idle_deck = 1
+
             result = self.agent.run(
                 f"{context}\n\n"
+                f"ACTIVE deck: {active_deck} (this is playing, leave it alone until transition)\n"
+                f"IDLE deck: {idle_deck} (load next track HERE)\n"
                 f"Already played: {played_list}\n\n"
-                f"You are DJing. Look at the state and do what's needed:\n"
-                f"- If NOTHING is playing: find a track, load on deck 1, play it\n"
-                f"- If a track is ending (<2 min): find next track, load on idle deck, do_transition\n"
-                f"- If library is empty: search YouTube, download tracks, then play\n"
-                f"- Pick individual tracks (3-8 min), not full sets\n"
-                f"- Use do_transition for smooth crossfade\n"
-                f"Go."
+                f"Do ONE thing:\n"
+                f"- If nothing playing: find a track, load on deck 1, play it\n"
+                f"- If active track ending: tell mixer ONE command — 'Load [PATH] on deck {idle_deck}, then do_transition(to_deck={idle_deck}, duration=45)'\n"
+                f"- If library empty: search and download first\n"
+                f"Remember: ONE mixer task. do_transition handles everything. Done after that."
             )
             log.info(f"Agent acted: {str(result)[:200]}")
 
