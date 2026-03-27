@@ -427,6 +427,21 @@ def _daemon_cmd(action):
         console.print("[dim]Talk to her: djtreta talk 'play something melodic'[/dim]")
 
 
+def cmd_logs_follow():
+    """Tail -f the daemon log — full raw output, no filtering."""
+    log_file = Path("/tmp/dj-treta-daemon.log")
+    if not log_file.exists():
+        console.print("[dim]No daemon log found[/dim]")
+        return
+
+    console.print("[dim]Following daemon log (Ctrl+C to stop)...[/dim]\n")
+    try:
+        import subprocess
+        subprocess.run(["tail", "-f", str(log_file)])
+    except KeyboardInterrupt:
+        console.print("\n[dim]Stopped[/dim]")
+
+
 BANNER = """[bold bright_white]
   ╔══════════════════════════════════════╗
   ║          [bold cyan]DJ Treta[/bold cyan] [dim]v1.0[/dim]              ║
@@ -452,8 +467,12 @@ def main():
             cmd_talk(" ".join(sys.argv[2:]))
             return
         elif cmd == "logs":
-            n = int(sys.argv[2]) if len(sys.argv) > 2 else 20
-            cmd_logs(n)
+            args = sys.argv[2:]
+            if args and args[0] in ("-f", "--follow", "follow", "tail"):
+                cmd_logs_follow()
+            else:
+                n = int(args[0]) if args else 20
+                cmd_logs(n)
             return
         elif cmd == "start":
             _daemon_cmd("start")
