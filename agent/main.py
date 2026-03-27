@@ -52,6 +52,38 @@ def _check_single_instance():
     PID_FILE.write_text(str(os.getpid()))
 
 
+def _ensure_litellm(config):
+    """Start local LiteLLM if not running."""
+    try:
+        httpx.get(f"{config.llm.api_base}/health", timeout=2)
+        return  # already running
+    except Exception:
+        pass
+
+    log.info("LiteLLM not running — starting locally")
+    config_file = Path(__file__).parent.parent / "litellm_config.yaml"
+    if not config_file.exists():
+        log.warning("No litellm_config.yaml found — skipping LiteLLM auto-start")
+        return
+
+    venv_python = Path(__file__).parent.parent / ".venv" / "bin" / "litellm"
+    subprocess.Popen(
+        [str(venv_python), "--config", str(config_file), "--port", "4000"],
+        stdout=open("/tmp/litellm-local.log", "w"),
+        stderr=subprocess.STDOUT,
+        cwd=str(Path(__file__).parent.parent),
+    )
+    for i in range(20):
+        time.sleep(0.5)
+        try:
+            httpx.get(f"{config.llm.api_base}/health", timeout=2)
+            log.info(f"LiteLLM up after {(i+1)*0.5:.1f}s")
+            return
+        except Exception:
+            pass
+    log.warning("LiteLLM failed to start")
+
+
 def _ensure_mixxx(url: str):
     """Start Mixxx if not running."""
     try:
@@ -125,6 +157,7 @@ class DJTretaBeing:
 
         log.info("DJ Treta Being alive")
 
+        _ensure_litellm(self.config)
         _ensure_mixxx(self.config.mixxx.url)
         self._restore_session()
 
