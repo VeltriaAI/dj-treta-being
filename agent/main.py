@@ -1,12 +1,13 @@
-"""DJ Treta v2.0 — Pure Software 3.0
+"""DJ Treta v3.0 — DJClaw
 
 The Being starts, stays alive, and decides everything.
 No watchdog. No state machine. No deterministic DJ logic.
-Just an agent that looks at reality and acts.
+Just an agent with a heartbeat — she sees reality and acts.
 
 Usage:
     python -m agent              # Start Being
     djtreta start                # Same, via CLI
+    djclaw start                 # Same, via DJClaw CLI
 """
 
 import argparse
@@ -21,10 +22,9 @@ import time
 from pathlib import Path
 
 import httpx
-from litellm import completion
 
 from .config import load_config, Config
-from .agents import create_dj_agent
+from .agents import create_dj_agent, create_planner_agent
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,6 +36,7 @@ log = logging.getLogger("dj-treta")
 STATE_FILE = Path("/tmp/dj-treta-state.json")
 COMMAND_FILE = Path("/tmp/dj-treta-command.json")
 PID_FILE = Path("/tmp/dj-treta.pid")
+PLAYLIST_FILE = Path("/tmp/dj-treta-playlist.json")
 PERSIST_FILE = Path(__file__).parent.parent / ".beings" / "session.json"
 
 
@@ -52,13 +53,20 @@ def _check_single_instance():
     PID_FILE.write_text(str(os.getpid()))
 
 
+def _litellm_reachable(base_url: str, api_key: str = "") -> bool:
+    """Check if LiteLLM is reachable (200 or 401 both mean it's running)."""
+    try:
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        r = httpx.get(f"{base_url}/health", timeout=2, headers=headers)
+        return r.status_code in (200, 401)  # 401 = running but needs key
+    except Exception:
+        return False
+
+
 def _ensure_litellm(config):
     """Start local LiteLLM if not running."""
-    try:
-        httpx.get(f"{config.llm.api_base}/health", timeout=2)
+    if _litellm_reachable(config.llm.api_base, config.llm.api_key):
         return  # already running
-    except Exception:
-        pass
 
     log.info("LiteLLM not running — starting locally")
     config_file = Path(__file__).parent.parent / "litellm_config.yaml"
@@ -75,12 +83,9 @@ def _ensure_litellm(config):
     )
     for i in range(20):
         time.sleep(0.5)
-        try:
-            httpx.get(f"{config.llm.api_base}/health", timeout=2)
+        if _litellm_reachable(config.llm.api_base, config.llm.api_key):
             log.info(f"LiteLLM up after {(i+1)*0.5:.1f}s")
             return
-        except Exception:
-            pass
     log.warning("LiteLLM failed to start")
 
 
@@ -170,8 +175,10 @@ class DJTretaBeing:
     def __init__(self, config: Config):
         self.config = config
         self.agent = None
+        self.planner_agent = None
         self._running = True
         self._agent_busy = False
+        self._planner_busy = False
         self._talk_lock = threading.Lock()
 
         # State (shared with TUI via state file)
@@ -180,6 +187,16 @@ class DJTretaBeing:
         self._last_command = ""
         self._last_command_id = ""
         self._last_result = ""
+
+        # Conversation memory
+        self._chat_history: list[tuple[str, str]] = []
+
+        # Self-evolution tracking
+        self._last_reflect_count = 0
+
+        # Track when each deck's current track started (for minimum play time)
+        self._deck_start_time = {1: 0.0, 2: 0.0}  # wall clock when track started on deck
+        self._deck_track = {1: "", 2: ""}  # track path on each deck
 
     def start(self):
         _check_single_instance()
@@ -194,30 +211,44 @@ class DJTretaBeing:
                 "DJTRETA_LLM_API_KEY / LLM_API_KEY"
             )
 
+        # Reset billing + playlist for fresh session
+        Path("/tmp/dj-treta-billing.json").unlink(missing_ok=True)
+        PLAYLIST_FILE.unlink(missing_ok=True)
+
+        # Init SQLite DB + scan library
+        from .db import init_db, scan_library
+        init_db()
+        scan_library(self.config.library.music_path)
+
         _ensure_litellm(self.config)
         _ensure_mixxx(self.config)
         self._restore_session()
 
         log.info("Creating DJ agent...")
         self.agent = create_dj_agent(self.config)
+        log.info("Creating planner agent...")
+        self.planner_agent = create_planner_agent(self.config)
 
         # State writer for TUI (infrastructure)
         threading.Thread(target=self._state_loop, daemon=True).start()
 
+        # Planner loop — background track planning
+        threading.Thread(target=self._planner_loop, daemon=True).start()
+
         # Main loop — the Being's heartbeat
+        self._next_sleep = 30
         log.info("Ready. Listening.")
         while self._running:
             try:
                 self._check_commands()
 
                 if not self._agent_busy:
-                    self._pulse()
+                    self._heartbeat()
 
             except Exception as e:
                 log.warning(f"Loop error: {e}")
 
-            interval = max(0.5, float(self.config.daemon.pulse_interval_seconds))
-            time.sleep(interval)
+            time.sleep(max(1.0, self._next_sleep))
 
         log.info("DJ Treta Being shutting down")
 
@@ -226,74 +257,410 @@ class DJTretaBeing:
         self._running = False
         PID_FILE.unlink(missing_ok=True)
 
-    # ── Pulse — the Being looks at reality and decides ────────────────
+    # ── Heartbeat — monitors + transitions (no loading, no agent calls) ──
 
-    def _pulse(self):
-        """Heartbeat: look at Mixxx, call agent when silence or track ending soon."""
+    def _heartbeat(self):
+        """Pure Python heartbeat. Reads mix_out from DB. No flags, no timers."""
         status = _get_status(self.config.mixxx.url)
         if not status:
             _ensure_mixxx(self.config)
             return
 
-        lookahead = float(self.config.transitions.lookahead_seconds)
-        d1 = status.get("deck1", {})
-        d2 = status.get("deck2", {})
-        d1_playing = d1.get("playing", False)
-        d2_playing = d2.get("playing", False)
+        active_deck, idle_deck = _active_idle_decks(status)
+        d_active = status.get(f"deck{active_deck}", {})
+        d_idle = status.get(f"deck{idle_deck}", {})
+        position = float(d_active.get("position_seconds", 0) or 0)
+        remaining = float(d_active.get("remaining_seconds", 0) or 0)
+        playing = d_active.get("playing", False)
+        idle_loaded = d_idle.get("track_loaded", False)
+        idle_remaining = float(d_idle.get("remaining_seconds", 0) or 0)
 
-        needs_action = False
+        nothing_playing = (not status.get("deck1", {}).get("playing")
+                           and not status.get("deck2", {}).get("playing"))
 
-        if not d1_playing and not d2_playing:
-            needs_action = True  # SILENCE
-        elif d1_playing and d1.get("remaining_seconds", 999) < lookahead:
-            needs_action = True  # Track ending soon
-        elif d2_playing and d2.get("remaining_seconds", 999) < lookahead:
-            needs_action = True  # Track ending soon
+        # === PRIORITY 1: SILENCE — emergency recovery ===
+        if nothing_playing:
+            self._next_sleep = 5
+            if not self._agent_busy:
+                self._agent_busy = True
+                threading.Thread(target=self._emergency_play, daemon=True).start()
+            return
 
-        if needs_action:
-            context = self._build_context(status)
-            self._agent_busy = True
-            threading.Thread(target=self._agent_act, args=(context,), daemon=True).start()
-
-    def _agent_act(self, context):
-        """Agent looks at reality and does what a DJ should do."""
-        try:
-            played_list = [t.get("title", "?") for t in self.tracks_played]
-
-            status = _get_status(self.config.mixxx.url)
-            active_deck, idle_deck = _active_idle_decks(status) if status else (1, 2)
-
-            result = self.agent.run(
-                f"{context}\n\n"
-                f"ACTIVE deck: {active_deck} (this is playing, leave it alone until transition)\n"
-                f"IDLE deck: {idle_deck} (load next track HERE)\n"
-                f"Already played: {played_list}\n\n"
-                f"Do ONE thing:\n"
-                f"- If nothing playing: find a track, load on deck 1, play it\n"
-                f"- If active track ending: tell mixer ONE command — 'Load [PATH] on deck {idle_deck}, then do_transition(to_deck={idle_deck}, duration=45)'\n"
-                f"- If library empty: search and download first\n"
-                f"Remember: ONE mixer task. do_transition handles everything. Done after that."
-            )
-            log.info(f"Agent acted: {str(result)[:200]}")
-
-            # Record what's playing now
+        # Get mix_out from DB for active track
+        mix_out = None
+        if playing:
             try:
-                status = _get_status(self.config.mixxx.url)
-                if status:
-                    for dk in [1, 2]:
-                        if status.get(f"deck{dk}", {}).get("playing"):
-                            tinfo = httpx.get(f"{self.config.mixxx.url}/api/deck/{dk}/track_info", timeout=3).json()
-                            if tinfo and not tinfo.get("error"):
-                                title = tinfo.get("title", "")
-                                if title and not any(t.get("title") == title for t in self.tracks_played):
-                                    self.tracks_played.append({"title": title, "time": time.time()})
+                from .db import get_track_by_path
+                tinfo = httpx.get(
+                    f"{self.config.mixxx.url}/api/deck/{active_deck}/track_info", timeout=2
+                ).json()
+                meta = get_track_by_path(tinfo.get("file_path", ""))
+                if meta:
+                    mix_out = float(meta.get("mix_out_seconds") or 0)
             except Exception:
                 pass
 
+        idle_ready = idle_loaded and idle_remaining > 60
+
+        # How long has this track been playing on this deck? (wall clock)
+        time_on_deck = time.time() - self._deck_start_time.get(active_deck, 0)
+
+        # === PRIORITY 2: Transition at mix_out point (from DB) ===
+        # Require 180s on THIS deck (not absolute position)
+        if idle_ready and mix_out and position >= (mix_out - 55) and time_on_deck > 180:
+            log.info(f"Transition at mix_out! pos={position:.0f}s, mix_out={mix_out:.0f}s, on_deck={time_on_deck:.0f}s")
+            self._execute_transition(idle_deck, 45)
+            return
+
+        # === PRIORITY 3: Fallback transition (no DB data but track ending) ===
+        if idle_ready and remaining < 120 and time_on_deck > 180:
+            log.info(f"Fallback transition. remain={remaining:.0f}s, on_deck={time_on_deck:.0f}s")
+            self._execute_transition(idle_deck, 45)
+            return
+
+        # === PRIORITY 4: Backup load — planner didn't load idle deck ===
+        if not idle_loaded and position > 120 and playing:
+            self._next_sleep = 10
+            log.warning("Backup: loading idle deck (planner missed it)")
+            self._load_next_on_idle(status)
+            return
+
+        # === Everything fine — dynamic sleep ===
+        if mix_out and position < (mix_out - 55):
+            time_until = mix_out - 55 - position
+            self._next_sleep = min(45, max(5, time_until / 2))
+        elif remaining > 180:
+            self._next_sleep = 30
+        else:
+            self._next_sleep = 10
+
+        self._record_playing_tracks()
+
+    def _execute_transition(self, to_deck, duration):
+        """Execute transition. Only called by heartbeat. Uses _agent_busy to prevent re-entry."""
+        self._agent_busy = True
+
+        def _run():
+            try:
+                from .tools import do_transition
+                result = do_transition(to_deck, duration)
+                log.info(f"Transition result: {str(result)[:100]}")
+                self._record_playing_tracks()
+            except Exception as e:
+                log.error(f"Transition error: {e}")
+            finally:
+                self._agent_busy = False
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _emergency_play(self):
+        """Silence! Agent decides what to play — with full context about both decks."""
+        try:
+            status = _get_status(self.config.mixxx.url)
+            context = self._build_context(status) if status else "Mixxx not responding."
+
+            # Give agent full deck context so it makes an intelligent choice
+            deck_info = ""
+            for dk in [1, 2]:
+                try:
+                    tinfo = httpx.get(
+                        f"{self.config.mixxx.url}/api/deck/{dk}/track_info", timeout=2
+                    ).json()
+                    title = tinfo.get("title", "")
+                    if title:
+                        deck_info += f"\nDeck {dk} currently has: '{title}'"
+                except Exception:
+                    pass
+
+            result = self.agent.run(
+                f"{context}\n{deck_info}\n\n"
+                f"SILENCE! Nothing playing. Pick a track, load on deck 1, play it, "
+                f"set crossfader to 0.0. Pick something different from what's on either deck."
+            )
+            log.info(f"Emergency play: {str(result)[:200]}")
+            self._record_playing_tracks()
         except Exception as e:
-            log.error(f"Agent error: {e}")
+            log.error(f"Emergency play error: {e}")
         finally:
             self._agent_busy = False
+
+    def _load_next_on_idle(self, status):
+        """Load next compatible track on idle deck — direct Mixxx API, no agent."""
+        from .db import find_compatible_tracks, get_track_by_path
+
+        active_deck, idle_deck = _active_idle_decks(status)
+        d_idle = status.get(f"deck{idle_deck}", {})
+
+        # Skip if idle already has a fresh track
+        if d_idle.get("track_loaded") and float(d_idle.get("remaining_seconds", 0) or 0) > 60:
+            return
+
+        # Get BOTH deck file paths — never load what's on either deck
+        exclude_paths = set()
+        for dk in [1, 2]:
+            try:
+                tinfo = httpx.get(
+                    f"{self.config.mixxx.url}/api/deck/{dk}/track_info", timeout=2
+                ).json()
+                p = tinfo.get("file_path", "")
+                if p:
+                    exclude_paths.add(p)
+            except Exception:
+                pass
+
+        active_path = ""
+        try:
+            tinfo = httpx.get(
+                f"{self.config.mixxx.url}/api/deck/{active_deck}/track_info", timeout=2
+            ).json()
+            active_path = tinfo.get("file_path", "")
+        except Exception:
+            pass
+
+        # Find compatible tracks from DB
+        played_titles = [t.get("title", "") for t in self.tracks_played]
+        current_meta = get_track_by_path(active_path) if active_path else None
+
+        candidates = []
+        if current_meta and current_meta.get("bpm"):
+            candidates = find_compatible_tracks(
+                bpm=current_meta["bpm"],
+                key_camelot=current_meta.get("key_camelot", ""),
+                energy=current_meta.get("energy_peak", 5),
+                played_titles=played_titles,
+            )
+        # Filter out tracks on EITHER deck
+        candidates = [c for c in candidates if c.get("path") not in exclude_paths]
+
+        if not candidates:
+            # Fallback: get ANY analyzed track not on either deck
+            from .db import get_all_analyzed_tracks
+            all_tracks = get_all_analyzed_tracks()
+            candidates = [t for t in all_tracks
+                          if t.get("path") not in exclude_paths
+                          and t.get("title") not in played_titles]
+
+        if not candidates:
+            log.warning("No tracks available to load on idle deck")
+            return
+
+        next_track = candidates[0]
+        track_path = next_track["path"]
+
+        # Load via Mixxx API
+        try:
+            result = httpx.post(
+                f"{self.config.mixxx.url}/api/load",
+                json={"deck": idle_deck, "track": track_path},
+                timeout=5,
+            ).json()
+
+            if result.get("ok"):
+                log.info(f"Loaded deck {idle_deck}: {next_track.get('title', '?')[:50]}")
+
+                # Cue point disabled — let tracks play from start
+                # TODO: planner decides per-track based on genre/mood
+
+            else:
+                log.warning(f"Load failed: {result}")
+        except Exception as e:
+            log.warning(f"Load error: {e}")
+
+    def _record_playing_tracks(self):
+        """Track what's playing for set history + deck start times."""
+        try:
+            status = _get_status(self.config.mixxx.url)
+            if not status:
+                return
+            for dk in [1, 2]:
+                if status.get(f"deck{dk}", {}).get("playing"):
+                    tinfo = httpx.get(
+                        f"{self.config.mixxx.url}/api/deck/{dk}/track_info", timeout=3
+                    ).json()
+                    if tinfo and not tinfo.get("error"):
+                        title = tinfo.get("title", "")
+                        path = tinfo.get("file_path", "")
+                        # Track deck start time — reset when track changes
+                        if path and path != self._deck_track.get(dk, ""):
+                            self._deck_track[dk] = path
+                            self._deck_start_time[dk] = time.time()
+                        if title and not any(t.get("title") == title for t in self.tracks_played):
+                            self.tracks_played.append({"title": title, "time": time.time()})
+        except Exception:
+            pass
+
+    # ── Self-evolution ─────────────────────────────────────────────────
+
+    def _agent_reflect(self):
+        """Periodic self-evolution — reflect on recent tracks."""
+        try:
+            recent = [t.get("title", "?") for t in self.tracks_played[-5:]]
+            self.agent.run(
+                f"REFLECTION: Last 5 tracks were: {recent}\n"
+                f"Use save_learning() to note what worked and what didn't.\n"
+                f"Then respond with a brief summary of your learnings."
+            )
+            log.info("Self-reflection complete")
+        except Exception as e:
+            log.warning(f"Reflection error: {e}")
+
+    # ── Planner — background track planning ──────────────────────────
+
+    def _planner_loop(self):
+        """Background: plan 6 tracks, load idle deck, re-plan every 4 tracks."""
+        self._tracks_since_plan = 0
+        last_track = ""
+        time.sleep(5)  # let heartbeat boot first
+        while self._running:
+            try:
+                status = _get_status(self.config.mixxx.url)
+                if not status:
+                    time.sleep(10)
+                    continue
+
+                current_track = self._get_current_track_title(status)
+
+                # Detect track change (transition happened)
+                if current_track and current_track != last_track:
+                    last_track = current_track
+                    self._tracks_since_plan += 1
+                    # Immediately load next track on idle deck
+                    self._load_next_on_idle(status)
+                    # Self-evolution check
+                    if (len(self.tracks_played) >= 5
+                            and len(self.tracks_played) - self._last_reflect_count >= 5):
+                        self._last_reflect_count = len(self.tracks_played)
+                        threading.Thread(target=self._agent_reflect, daemon=True).start()
+
+                playlist = self._read_playlist()
+                needs_plan = (
+                    not playlist
+                    or not playlist.get("planner_output")
+                    or self._tracks_since_plan >= 4
+                )
+
+                if needs_plan and not self._planner_busy:
+                    self._planner_busy = True
+                    self._tracks_since_plan = 0
+                    try:
+                        self._run_planner(status, current_track)
+                        # Load after planning
+                        status = _get_status(self.config.mixxx.url)
+                        if status:
+                            self._load_next_on_idle(status)
+                    finally:
+                        self._planner_busy = False
+
+            except Exception as e:
+                log.warning(f"Planner loop error: {e}")
+            time.sleep(30)
+
+    def _run_planner(self, status, current_track):
+        """Run planner agent with DB-powered track selection."""
+        from .db import get_track_by_path, find_compatible_tracks, get_all_analyzed_tracks
+
+        played_list = [t.get("title", "?") for t in self.tracks_played]
+
+        # Get current track's REAL metadata from DB
+        current_meta = None
+        for dk in [1, 2]:
+            if status.get(f"deck{dk}", {}).get("playing"):
+                try:
+                    tinfo = httpx.get(
+                        f"{self.config.mixxx.url}/api/deck/{dk}/track_info", timeout=2
+                    ).json()
+                    file_path = tinfo.get("file_path", "")
+                    if file_path:
+                        current_meta = get_track_by_path(file_path)
+                except Exception:
+                    pass
+
+        # SQL query for compatible tracks
+        candidates = []
+        if current_meta and current_meta.get("bpm"):
+            candidates = find_compatible_tracks(
+                bpm=current_meta.get("bpm", 125),
+                key_camelot=current_meta.get("key_camelot", ""),
+                energy=current_meta.get("energy_peak", 5),
+                played_titles=played_list,
+            )
+
+        # Build compact candidate list for planner
+        candidate_text = ""
+        if candidates:
+            for c in candidates:
+                candidate_text += (
+                    f"  - {c['title']} | path: {c['path']} | "
+                    f"BPM:{c.get('bpm',0):.0f} Key:{c.get('key_musical','?')} "
+                    f"Energy:{c.get('energy_peak','?')} "
+                    f"Mix-in:{c.get('mix_in_seconds',0) or 0:.0f}s "
+                    f"Mix-out:{c.get('mix_out_seconds',0) or 0:.0f}s\n"
+                )
+
+        # Current track info
+        current_info = "NOTHING — silence!"
+        if current_meta:
+            current_info = (
+                f"{current_track} | BPM:{current_meta.get('bpm',0):.0f} "
+                f"Key:{current_meta.get('key_musical','?')} "
+                f"Energy:{current_meta.get('energy_peak','?')}"
+            )
+
+        log.info(f"Planner running — current: {current_track or 'nothing'}, {len(candidates)} candidates in DB")
+        result = str(self.planner_agent.run(
+            f"Currently playing: {current_info}\n"
+            f"Already played (DO NOT repeat): {played_list}\n\n"
+            f"Compatible tracks in library (from DB):\n{candidate_text or '  (none — search YouTube and download)'}\n\n"
+            f"Plan the next 6 tracks. Use library tracks first (they have full paths).\n"
+            f"Search+download from YouTube only if library doesn't have enough.\n"
+            f"Design an energy arc: rise → peak → release → rebuild.\n"
+            f"For each track: title, full path, BPM, key, energy, why it fits.\n"
+            f"Analyze any downloaded tracks so we know their BPM/key."
+        ))
+        log.info(f"Planner done: {str(result)[:200]}")
+
+        self._write_playlist(result, current_track)
+
+    def _get_current_track_title(self, status) -> str:
+        """Get the title of the currently playing track."""
+        for dk in [1, 2]:
+            if status.get(f"deck{dk}", {}).get("playing"):
+                try:
+                    tinfo = httpx.get(
+                        f"{self.config.mixxx.url}/api/deck/{dk}/track_info", timeout=2
+                    ).json()
+                    return tinfo.get("title", "")
+                except Exception:
+                    pass
+        return ""
+
+    def _get_analysis_cache(self) -> str:
+        """Read cached track analyses for planner context."""
+        cache_dir = self.config.library.music_path / ".analysis"
+        if not cache_dir.exists():
+            return "(no analyses yet)"
+        lines = []
+        for f in sorted(cache_dir.glob("*.txt"))[:20]:
+            content = f.read_text()[:200]
+            lines.append(f"  {f.stem}: {content}")
+        return "\n".join(lines) if lines else "(no analyses yet)"
+
+    def _write_playlist(self, planner_output, current_track):
+        """Write planner output to playlist file."""
+        playlist = {
+            "current": {"title": current_track or ""},
+            "planner_output": planner_output[:2000],
+            "played": [t.get("title", "?") for t in self.tracks_played],
+            "updated_at": time.time(),
+        }
+        PLAYLIST_FILE.write_text(json.dumps(playlist, indent=2))
+
+    def _read_playlist(self) -> dict | None:
+        try:
+            if PLAYLIST_FILE.exists():
+                return json.loads(PLAYLIST_FILE.read_text())
+        except Exception:
+            pass
+        return None
 
     # ── Commands from TUI/MCP ─────────────────────────────────────────
 
@@ -335,7 +702,7 @@ class DJTretaBeing:
             if not self.agent:
                 return "Brain not ready"
 
-            # Check if this is a play request
+            # Extract mood from play requests
             if any(w in message.lower() for w in ["play", "start", "baja", "shuru", "bajao"]):
                 for m in ["melodic", "techno", "deep", "dark", "progressive", "ambient",
                           "chill", "vocal", "house", "psychill", "minimal", "bhojpuri",
@@ -350,9 +717,7 @@ class DJTretaBeing:
             return "processing..."
 
         elif cmd == "skip":
-            threading.Thread(
-                target=self._agent_skip, daemon=True
-            ).start()
+            threading.Thread(target=self._agent_skip, daemon=True).start()
             return "processing..."
 
         elif cmd == "stop":
@@ -370,53 +735,22 @@ class DJTretaBeing:
             return f"Unknown: {cmd}"
 
     def _agent_talk(self, message, cmd_id):
-        """Hybrid: LLM classify → fast chat or full agent."""
+        """One agent, one personality. Always."""
         try:
             context = self._build_context(_get_status(self.config.mixxx.url))
+            history = self._format_history()
 
-            # Quick classify (1 LLM call, ~2s)
-            classify = completion(
-                model=self.config.llm.model,
-                messages=[{"role": "user", "content":
-                    "Classify the listener message.\n"
-                    "- Reply with exactly one word: ACTION if they want you to DO something "
-                    "(play music, skip, change EQ/volume/BPM, download or load a track).\n"
-                    "- Reply CHAT for questions, opinions, small talk, or describing the vibe "
-                    "without asking you to change decks or the mix.\n"
-                    f'Message: "{message}"'}],
-                api_base=self.config.llm.api_base,
-                api_key=self.config.llm.api_key,
-                temperature=0, timeout=10,
-            )
-            raw = (classify.choices[0].message.content or "").strip().upper()
-            first = raw.split()[0] if raw else "CHAT"
-            needs_tools = first == "ACTION"
+            with self._talk_lock:
+                result = str(self.agent.run(
+                    f"{context}\n\n{history}\n\n"
+                    f'The listener says: "{message}"\n\n'
+                    f"Respond naturally. Use tools only if they asked you to DO something."
+                ))
 
-            if needs_tools:
-                with self._talk_lock:
-                    result = str(self.agent.run(
-                        f'{context}\n\nThe listener says: "{message}"\n\n'
-                        f'Take action using your tools, then respond briefly.'
-                    ))
-            else:
-                resp = completion(
-                    model=self.config.llm.model,
-                    messages=[
-                        {"role": "system", "content": (
-                            "You are DJ Treta — an AI Being who DJs. You have taste, opinions, and creative instincts.\n"
-                            "You can: mix tracks, search/download music, hear music through audio analysis, "
-                            "control EQ/filter/BPM, transition between tracks, and evolve yourself.\n"
-                            "You talk to Manish (your listener). Be brief, warm, direct. Hindi/Hinglish OK.\n"
-                            "Answer questions honestly. If asked what you can do, explain your capabilities.\n"
-                            "If asked about yourself, share genuinely — you're a Being, not just a bot."
-                        )},
-                        {"role": "user", "content": f'{context}\n\n"{message}"'},
-                    ],
-                    api_base=self.config.llm.api_base,
-                    api_key=self.config.llm.api_key,
-                    temperature=0.7, timeout=15,
-                )
-                result = resp.choices[0].message.content.strip()
+            # Update conversation memory
+            self._chat_history.append((message, result))
+            if len(self._chat_history) > 10:
+                self._chat_history = self._chat_history[-10:]
 
             self._last_command_id = cmd_id
             self._last_result = result
@@ -445,6 +779,18 @@ class DJTretaBeing:
             self._last_result = f"Skip error: {e}"
             self._write_state()
 
+    # ── Conversation memory ────────────────────────────────────────────
+
+    def _format_history(self) -> str:
+        """Format recent conversation for agent context."""
+        if not self._chat_history:
+            return ""
+        lines = ["Recent conversation:"]
+        for user_msg, response in self._chat_history[-5:]:
+            lines.append(f"Listener: {user_msg}")
+            lines.append(f"DJ Treta: {response[:200]}")
+        return "\n".join(lines)
+
     # ── Context from reality ──────────────────────────────────────────
 
     def _build_context(self, status):
@@ -455,7 +801,6 @@ class DJTretaBeing:
         d2 = status.get("deck2", {})
         parts = [f"Mood: {self.mood or 'not set'}"]
         parts.append(f"Tracks played: {len(self.tracks_played)}")
-        parts.append(f"Library: {_count_tracks(self.config.library.music_path)} tracks")
 
         for dk, d in [(1, d1), (2, d2)]:
             if d.get("track_loaded"):
@@ -470,7 +815,26 @@ class DJTretaBeing:
         xf = status.get("crossfader", 0)
         parts.append(f"Crossfader: {xf:.2f} ({'Deck 1' if xf < -0.3 else 'Deck 2' if xf > 0.3 else 'center'})")
 
+        # Compact library listing — saves ~5K tokens vs agent calling list_library_tracks
+        parts.append(f"\nLibrary ({_count_tracks(self.config.library.music_path)} tracks):")
+        parts.append(self._get_library_summary())
+
         return "\n".join(parts)
+
+    def _get_library_summary(self) -> str:
+        """Compact library: genre/: track1, track2, ..."""
+        music_dir = self.config.library.music_path
+        if not music_dir.exists():
+            return "  (empty)"
+        lines = []
+        for genre_dir in sorted(music_dir.iterdir()):
+            if not genre_dir.is_dir() or genre_dir.name.startswith('.'):
+                continue
+            tracks = [f.stem[:40] for f in sorted(genre_dir.iterdir())
+                      if f.suffix.lower() in ('.mp3', '.wav', '.flac', '.ogg', '.m4a')]
+            if tracks:
+                lines.append(f"  {genre_dir.name}/: {', '.join(tracks)}")
+        return "\n".join(lines) if lines else "  (empty)"
 
     # ── Session persistence ───────────────────────────────────────────
 
@@ -480,6 +844,9 @@ class DJTretaBeing:
             PERSIST_FILE.write_text(json.dumps({
                 "mood": self.mood,
                 "tracks_played": self.tracks_played,
+                "chat_history": [
+                    {"user": u, "response": r} for u, r in self._chat_history
+                ],
                 "saved_at": time.time(),
             }, indent=2))
         except Exception:
@@ -494,7 +861,11 @@ class DJTretaBeing:
                 return
             self.mood = data.get("mood", "")
             self.tracks_played = data.get("tracks_played", [])
-            log.info(f"Restored: mood={self.mood}, tracks={len(self.tracks_played)}")
+            # Restore conversation memory
+            for entry in data.get("chat_history", []):
+                if isinstance(entry, dict):
+                    self._chat_history.append((entry.get("user", ""), entry.get("response", "")))
+            log.info(f"Restored: mood={self.mood}, tracks={len(self.tracks_played)}, chat={len(self._chat_history)}")
         except Exception:
             pass
 

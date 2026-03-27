@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "djclaw"
+version = "1.0.0"
+description = "Install your own AI DJ Being"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "smolagents[litellm]",
+    "httpx",
+    "pyyaml",
+    "textual",
+    "rich",
+]
+
+[project.scripts]
+djclaw = "cli:main"
+
+[tool.setuptools]
+py-modules = ["cli", "tui"]
+
+[tool.setuptools.packages.find]
+include = ["agent*"]

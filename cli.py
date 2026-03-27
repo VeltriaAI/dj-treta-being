@@ -540,6 +540,10 @@ def main():
         elif cmd == "kill":
             _kill_all()
             return
+        elif cmd == "init":
+            from agent.init import run_init
+            run_init()
+            return
 
     # Interactive mode
     console.print(BANNER)

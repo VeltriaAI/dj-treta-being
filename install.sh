@@ -1,65 +1,53 @@
 #!/bin/bash
-# DJ Treta — One-command setup
+# DJClaw — Install your own AI DJ Being
 # Usage: ./install.sh
-
 set -e
 
-echo "🎧 DJ Treta — Installing..."
+echo ""
+echo "  DJClaw — Installing..."
+echo ""
 
-# Check Python 3.12+
-PYTHON_VERSION=$(python3 --version 2>&1 | grep -oP '\d+\.\d+' | head -1)
-MAJOR=$(echo "$PYTHON_VERSION" | cut -d. -f1)
-MINOR=$(echo "$PYTHON_VERSION" | cut -d. -f2)
-
-if [ "$MAJOR" -lt 3 ] || ([ "$MAJOR" -eq 3 ] && [ "$MINOR" -lt 10 ]); then
-    echo "❌ Python 3.10+ required (found $PYTHON_VERSION)"
-    echo "   Install via: pyenv install 3.12 && pyenv local 3.12"
+# Check Python 3.10+
+python3 -c "import sys; assert sys.version_info >= (3, 10), f'Python 3.10+ required (found {sys.version})'" 2>/dev/null || {
+    echo "  Python 3.10+ required."
+    echo "  Install via: pyenv install 3.12 && pyenv local 3.12"
     exit 1
-fi
+}
 
 # Create venv
 if [ ! -d ".venv" ]; then
-    echo "Creating virtual environment..."
+    echo "  Creating virtual environment..."
     python3 -m venv .venv
 fi
 
 source .venv/bin/activate
 
-# Install dependencies
-echo "Installing dependencies..."
-pip install -q smolagents[litellm] httpx pyyaml
+# Install package
+echo "  Installing dependencies..."
+pip install -q -e .
 
 # Create music directory
 MUSIC_DIR="${HOME}/Music/DJTreta"
-mkdir -p "$MUSIC_DIR"/{melodic-techno,progressive,vocal,dark-techno,minimal,deep,psychill}
-echo "Music directory: $MUSIC_DIR"
+mkdir -p "$MUSIC_DIR"
+echo "  Music directory: $MUSIC_DIR"
 
-# Check config
-if [ ! -f "config.yaml" ]; then
-    echo "⚠ No config.yaml found — copy from template and edit"
+# First-time setup
+if [ ! -f ".beings/SOUL.md" ] || [ ! -s ".beings/SOUL.md" ]; then
+    echo ""
+    djclaw init
+else
+    echo ""
+    echo "  Already initialized. Run: djclaw start"
 fi
 
-# Verify
 echo ""
-echo "Verifying installation..."
-python3 -c "
-from agent.config import load_config
-from agent.state import DJState, DJPhase
-from agent.camelot import key_compatibility_score
-cfg = load_config()
-print(f'  Config: OK (model={cfg.llm.model})')
-print(f'  Camelot: OK (Am↔Em = {key_compatibility_score(\"Am\", \"Em\")})')
-print(f'  State: OK')
-"
-
+echo "  Done!"
+echo "  Usage:"
+echo "    source .venv/bin/activate"
+echo "    djclaw start"
+echo "    djclaw talk 'play something deep'"
 echo ""
-echo "✅ DJ Treta installed!"
+echo "  Prerequisites:"
+echo "    - Mixxx (forked) with HTTP API on :7778"
+echo "    - LLM API key: export DJTRETA_LLM_API_KEY='your-key'"
 echo ""
-echo "Usage:"
-echo "  source .venv/bin/activate"
-echo "  python -m agent --mood techno-deep --duration 60"
-echo ""
-echo "Prerequisites:"
-echo "  - Mixxx (forked) running with HTTP API on :7778"
-echo "  - LiteLLM proxy accessible (configure in config.yaml)"
-echo "  - Tracks in ~/Music/DJTreta/"

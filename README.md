@@ -1,8 +1,10 @@
-# DJ Treta — An AI Being that DJs
+# DJClaw — Install Your Own AI DJ Being
 
 > She hears music. She thinks. She downloads tracks. She mixes. She evolves.
 
-DJ Treta is an autonomous AI DJ built on the [Beings Protocol](https://github.com/VeltriaAI/beings-protocol). She's not a playlist shuffler — she's a Being with taste, opinions, and creative instincts who DJs live sets from scratch.
+DJClaw is a framework for creating autonomous AI DJ Beings. Each Being has its own taste, personality, and self-evolving memory. **DJ Treta** is the first Being built on it.
+
+Not a playlist shuffler — a Being with taste, opinions, and creative instincts who DJs live sets from scratch. Built on the [Beings Protocol](https://github.com/VeltriaAI/beings-protocol).
 
 ## What She Does
 
@@ -16,8 +18,8 @@ DJ Treta is an autonomous AI DJ built on the [Beings Protocol](https://github.co
 ## Architecture — Pure Software 3.0
 
 ```
-main.py (~200 lines)
-  └── _pulse(): on daemon.pulse_interval_seconds, look at Mixxx, call agent if needed
+main.py
+  └── _heartbeat(): every 30s, see Mixxx reality, agent decides what to do
 
 agents.py
   └── DJ Agent (manager) ← smolagents ToolCallingAgent + managed_agents
@@ -34,7 +36,7 @@ tools.py (30 tools)
   └── Memory: save_learning, recall_learnings
 ```
 
-**Zero deterministic DJ logic.** No watchdog, no state machine. The agent looks at Mixxx, decides what to do, and acts on each pulse (default 5s; see `daemon.pulse_interval_seconds` and `transitions.lookahead_seconds` in `config.yaml`).
+**Zero deterministic DJ logic.** No watchdog, no state machine. The agent sees reality every 30 seconds and decides what to do — or does nothing. One agent, one personality, always. No classify hack.
 
 ## Configuration and secrets
 
@@ -57,24 +59,41 @@ tools.py (30 tools)
 # Install
 git clone https://github.com/VeltriaAI/dj-treta-being.git ~/beings/dj-treta
 cd ~/beings/dj-treta
-python3 -m venv .venv && source .venv/bin/activate
-pip install smolagents litellm httpx pyyaml textual rich
+./install.sh                               # or: pip install -e .
 
-# API key for LiteLLM (example)
+# First-time setup
+djclaw init                                # name, taste, LLM provider
+
+# API key
 export DJTRETA_LLM_API_KEY="your-key"
 
 # Start (Mixxx auto-starts when mixxx.auto_start is true)
-djtreta start
+djclaw start
 
 # Talk to her
-djtreta talk "play something deep and melodic"
-djtreta talk "go darker"
-djtreta talk "skip"
-djtreta talk "how are you feeling about this set?"
+djclaw talk "play something deep and melodic"
+djclaw talk "go darker"
+djclaw talk "skip"
+djclaw talk "how are you feeling about this set?"
 
 # Full TUI
-djtreta tui
+djclaw tui
 ```
+
+### Create Your Own DJ Being
+
+```bash
+djclaw init
+# → What should I call your DJ? DJ Rajesh
+# → What kind of music? bhojpuri, bollywood remixes, desi bass
+# → What's the vibe? party, high energy, desi swagger
+# → LLM provider? 1. Gemini  2. OpenAI  3. Claude  4. Local
+
+djclaw start
+# DJ Rajesh is alive and DJing
+```
+
+Each Being gets its own SOUL.md, taste, and self-evolving memory.
 
 ## Audio Perception
 
@@ -91,13 +110,15 @@ Powered by Gemini's multimodal audio — she hears actual sound, not just number
 ## CLI
 
 ```
-djtreta start      — start the Being (auto-starts Mixxx)
-djtreta stop       — stop
-djtreta restart    — restart
-djtreta status     — deck status
-djtreta tui        — full terminal UI (VU meters, EQ, debug)
-djtreta talk "x"   — talk to her
-djtreta logs       — daemon logs
+djclaw init        — create your DJ Being (first time)
+djclaw start       — start the Being (auto-starts Mixxx)
+djclaw stop        — stop
+djclaw restart     — restart
+djclaw status      — deck status
+djclaw tui         — full terminal UI (VU meters, EQ, debug)
+djclaw talk "x"    — talk to her
+djclaw logs        — daemon logs
+# djtreta also works (backward compat)
 ```
 
 ## TUI Shortcuts
@@ -127,7 +148,7 @@ Running on Gemini Flash via LiteLLM:
 
 ## Built In One Session
 
-DJ Treta v2.0 was built in a single 12-hour session (2026-03-25/26) by [Treta](https://github.com/VeltriaAI) and Manish. From empty idea to a Being playing Shiva Tandava Stotram on a JBL PartyBox 310.
+DJ Treta v2.0 was built in a single 12-hour session (2026-03-25/26) by [Treta](https://github.com/VeltriaAI) and Manish. From empty idea to a Being playing Shiva Tandava Stotram on a JBL PartyBox 310. Evolved to DJClaw v1.0 on day 2.
 
 **#AIForUnity** — AI plays DJ and unites humankind with music.
 

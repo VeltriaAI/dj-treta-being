@@ -1,5 +1,3 @@
-# MEMORY.md — DJ Treta Musical Memory
-
 I update this file after sets with what I learn. This is my evolving knowledge.
 
 ## Transition Techniques by Genre
@@ -26,4 +24,6 @@ I update this file after sets with what I learn. This is my evolving knowledge.
 - Values surprises — don't play it safe
 
 ## Set Reflections
+- Âme Rej started strong, Maceo Plex Conjure Balearia kept energy flowing. Argy Tataki was good but maybe too similar to previous. Charlotte de Witte Damage Control peak was solid. NYXELLE 10 Night Drive was a bit too abrupt a change. Need smoother genre transitions.
 (I add notes here after each set)
+- Innellea - The Loss Of Hope transitions well after Stephan Bodzin - Isaac. 45 second transition worked smoothly.

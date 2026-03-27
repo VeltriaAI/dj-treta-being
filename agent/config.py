@@ -44,7 +44,8 @@ class TransitionConfig:
 
 @dataclass
 class DaemonConfig:
-    pulse_interval_seconds: float = 5.0
+    heartbeat_interval_seconds: float = 30.0
+    pulse_interval_seconds: float = 5.0  # legacy, use heartbeat_interval_seconds
     poll_hz: int = 2
     max_errors: int = 10
 

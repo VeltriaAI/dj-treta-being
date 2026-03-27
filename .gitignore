@@ -5,3 +5,7 @@ __pycache__/
 .beings/session.json
 config.local.yaml
 .env
+djtreta.db
+djtreta.db-shm
+djtreta.db-wal
+djclaw.egg-info/

@@ -1,14 +1,15 @@
-# CLAUDE.md — DJ Treta
+# CLAUDE.md — DJClaw / DJ Treta
 
 ## What This Is
 
-DJ Treta is an autonomous AI DJ Being. Pure Software 3.0 — the agent decides everything, no deterministic DJ logic.
+DJClaw — install your own AI DJ Being. DJ Treta is the first Being built on it.
+Pure Software 3.0 — the agent decides everything, no deterministic DJ logic.
 
-## Architecture (v2.0)
+## Architecture (v3.0)
 
 ```
-main.py (~200 lines)
-  _pulse() → checks Mixxx reality every 5s → calls agent if action needed
+main.py
+  _heartbeat() → sees Mixxx reality every 30s → agent decides what to do
 
 agents.py
   DJ Agent (manager, smolagents ToolCallingAgent)
@@ -18,7 +19,8 @@ agents.py
 tools.py (30 tools — hands of the Being)
 ```
 
-No watchdog. No state machine. No executor. Agent decides everything.
+No watchdog. No state machine. No classify hack. One agent, one personality.
+Heartbeat every 30s — agent sees reality and acts (or does nothing).
 
 ## Key Files
 
@@ -35,10 +37,12 @@ No watchdog. No state machine. No executor. Agent decides everything.
 ## Running
 
 ```bash
-djtreta start                              # start Being + Mixxx
-djtreta talk "play something melodic"      # talk to her
-djtreta tui                                # full terminal UI
-djtreta stop                               # stop
+djclaw init                                # first-time setup wizard
+djclaw start                               # start Being + Mixxx
+djclaw talk "play something melodic"       # talk to her
+djclaw tui                                 # full terminal UI
+djclaw stop                                # stop
+# djtreta also works (backward compat)
 ```
 
 ## Prerequisites
@@ -52,3 +56,13 @@ djtreta stop                               # stop
 
 Gemini Flash via LiteLLM. Change `llm.model` in config.yaml.
 Cost: ~$0.25/hr active mixing, ~$0.00/hr during long tracks.
+
+## DJClaw: Create Your Own DJ Being
+
+```bash
+./install.sh           # or: pip install -e .
+djclaw init            # wizard: name, taste, LLM provider
+djclaw start           # your DJ Being is alive
+```
+
+Each Being gets its own SOUL.md, taste, and self-evolving memory.

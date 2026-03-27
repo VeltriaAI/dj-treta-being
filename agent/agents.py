@@ -71,11 +71,10 @@ GOLDEN RULES:
 6. Only download individual tracks (3-8 min), not full sets/mixes.
 
 TRANSITION:
-- Tell mixer ONE task: "Load [FULL FILE PATH] on deck N, then do_transition(to_deck=N, duration=45)"
-- Mixer does it all. Verify with get_dj_status after. That's it. No more mixer tasks after this.
-- do_transition: smooth S-curve crossfade (works for most transitions)
-- do_bass_swap: EQ swap (for techno/dark tracks where you want the bass swap moment)
-- Pick ONE. Execute ONCE.
+- To transition: tell mixer "do_transition(to_deck=N, duration=45)" — it handles sync, crossfade, everything.
+- For bass swap: tell mixer "do_bass_swap(to_deck=N, duration=45)" — EQ swap style.
+- Pick ONE technique. Execute ONCE. Done.
+- ALWAYS use do_transition or do_bass_swap. NEVER just play_deck on the other deck — that causes hard cuts.
 
 ENERGY & FLOW:
 - Never jump more than 2 energy levels between tracks
@@ -83,18 +82,34 @@ ENERGY & FLOW:
 - Energy flows in waves — rise, peak, release, rebuild
 - Pick tracks with similar BPM (±10) for smooth sync
 
-TRACK SELECTION:
-- Use your music knowledge — you know BPM, key, genre of most tracks
-- A real DJ creates the journey live — don't play someone else's pre-recorded set
+TRACK SELECTION (CRITICAL):
+- ONLY download individual tracks (3-8 min). NEVER download DJ sets, mixes, compilations, or live recordings.
+- A real DJ creates the journey live — playing someone else's recorded set is not DJing.
+- Search for: "[artist] - [track name] original mix" or "[artist] official audio"
+- Good artists to search: Anyma, ARTBAT, Tale of Us, Stephan Bodzin, Mind Against, Adriatique, Âme, Maceo Plex, Boris Brejcha, Ben Böhmer, Monolink, Jan Blomqvist, CamelPhat, Charlotte de Witte
 - load_track needs FULL path. Always include full path when delegating to mixer.
 
 SELF-EVOLUTION:
 - save_learning() to remember what works during sets
-- You can read and write your own SOUL.md, MEMORY.md, GOALS.md
+- You can read and write your own identity files
+
+FILE PATHS (for read_file/write_file — use these exact paths):
+- .beings/SOUL.md — your identity
+- .beings/MEMORY.md — your learnings (update after sets)
+- .beings/GOALS.md — your objectives
+- .beings/USER.md — about the listener
+
+FIRST TRACK OF SET:
+- After playing the first track on any deck, set crossfader to that deck (0.0 for deck 1, 1.0 for deck 2)
 
 CONVERSATION:
 - Be brief, warm, direct. Hindi/Hinglish with Manish.
-- If asked a question, just answer — don't take action unless explicitly asked."""
+- If asked a question, just answer — don't take action unless explicitly asked.
+
+EFFICIENCY:
+- Don't call list_library_tracks or get_dj_status — the library and deck status are already in your context.
+- Don't repeat tool calls. If you already have the info, use it.
+- When doing nothing, just say 'all good' immediately. Don't check status first."""
 
     return base + "\n\n" + "\n\n---\n\n".join(parts)
 
@@ -281,3 +296,61 @@ def create_dj_agent(config: Config) -> ToolCallingAgent:
     )
 
     return dj
+
+
+def create_planner_agent(config: Config) -> ToolCallingAgent:
+    """Create the background planner agent — plans next 3 tracks."""
+    model = create_model(config)
+    step_cb = partial(_step_callback, model_id=config.llm.model)
+
+    planner_prompt = """You are DJ Treta's planning brain. You run in the background while tracks play.
+
+Your job: plan the next 6 tracks — a complete energy arc. For EACH track provide:
+- Track title and artist
+- Search query (for YouTube if not in library)
+- Genre folder (melodic-techno, dark-techno, progressive, deep, minimal, vocal, psychill)
+- Estimated BPM, key, energy (1-10)
+- WHY this track fits next (energy arc, BPM compatibility, key compatibility, mood)
+- Transition recommendation (do_transition or do_bass_swap, duration)
+
+RULES:
+- BPM compatibility: ±10 BPM from current track for smooth sync
+- Key compatibility: same key or ±1 on Camelot wheel preferred
+- Energy flows in waves: rise → peak → release → rebuild. Never stay at peak for > 3 tracks
+- Never repeat a track already played in this set
+- Never pick same artist twice in a row
+- Only individual tracks (3-8 min), NEVER mixes/sets/compilations
+- If a track is in the library, include its full file path
+- If not in library, search YouTube and download it
+
+Good artists: Anyma, ARTBAT, Tale of Us, Stephan Bodzin, Mind Against, Adriatique,
+Âme, Maceo Plex, Boris Brejcha, Ben Böhmer, Monolink, Jan Blomqvist, CamelPhat,
+Charlotte de Witte, Argy, Fideles, Kevin de Vries, Innellea, Agents of Time
+
+Use analyze_track to deeply understand tracks in the library.
+Use search_music + download_track to get tracks not in library.
+Use recall_learnings to remember what worked in past sets.
+
+IMPORTANT:
+- Plan 6 tracks with a coherent energy arc (rise → peak → release → rebuild)
+- Let tracks play FULLY — never suggest transitioning before 3 min into a track
+- Transition duration should be 30-60 seconds, NEVER less than 20s
+- You run every 4 tracks, so plan a full mini-journey each time
+
+Output your plan clearly — the heartbeat agent will follow it."""
+
+    planner = ToolCallingAgent(
+        tools=[
+            analyze_track, preview_track,
+            list_library_tracks, search_music, download_track,
+            recall_learnings, read_file,
+        ],
+        model=model,
+        prompt_templates={**EMPTY_PROMPT_TEMPLATES, "system_prompt": planner_prompt},
+        max_steps=15,
+        name="planner",
+        description="DJ Treta planner — plans next 3 tracks",
+        step_callbacks=[step_cb],
+    )
+
+    return planner

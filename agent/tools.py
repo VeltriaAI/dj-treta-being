@@ -12,6 +12,7 @@ import json
 import os
 import re
 import subprocess
+import unicodedata
 from pathlib import Path
 
 import httpx
@@ -53,6 +54,14 @@ def _resolve_tool_path(cfg: Config, file_path: str) -> Path | None:
     if not _is_under_allowed_roots(cfg, path):
         return None
     return path
+
+
+def _normalize_for_search(s: str) -> str:
+    """Normalize unicode for fuzzy matching — strip emoji, normalize dashes/special chars."""
+    s = ''.join(c for c in s if unicodedata.category(c) not in ('So', 'Sk', 'Sm'))
+    s = s.replace('–', '-').replace('—', '-').replace('｜', '|').replace('：', ':')
+    s = unicodedata.normalize('NFKC', s)
+    return s.lower().strip()
 
 
 def _mixxx_failed(d: dict) -> str | None:
@@ -133,14 +142,14 @@ def load_track(deck: int, track_path: str) -> str:
 
     # If not a valid absolute path, search the library
     if not path.is_absolute() or not path.exists():
-        query = track_path.lower()
+        query = _normalize_for_search(track_path)
         found = None
         for genre_dir in sorted(_music_dir().iterdir()):
             if not genre_dir.is_dir() or genre_dir.name.startswith('.'):
                 continue
             for f in sorted(genre_dir.iterdir()):
                 if f.suffix.lower() in ('.mp3', '.wav', '.flac', '.ogg', '.m4a'):
-                    if query in f.stem.lower() or query in f.name.lower():
+                    if query in _normalize_for_search(f.stem) or query in _normalize_for_search(f.name):
                         found = str(f)
                         break
             if found:
@@ -442,27 +451,28 @@ def hear_music(deck: int = 0, duration: int = 10) -> str:
 @tool
 def analyze_track(track_path: str) -> str:
     """Deep analysis of a FULL track — sends entire audio to Gemini.
-    Returns: structure map with timestamps, BPM, key, energy arc,
-    best mix-in/mix-out points, genre, mood, DJ verdict.
-
-    Results are cached — analyzing the same track twice returns cached result instantly.
+    Returns structured JSON: BPM, key, energy, timeline, mix points.
+    Results cached in SQLite DB — analyzing twice returns cached instantly.
 
     Args:
         track_path: Full file path OR partial name (will search library).
     """
     import base64
     import subprocess as _sp
+    import time as _time
+
+    from .db import get_track_by_path, upsert_track
 
     # Resolve path
     path = Path(track_path)
     if not path.is_absolute() or not path.exists():
-        query = track_path.lower()
+        query = _normalize_for_search(track_path)
         for genre_dir in sorted(_music_dir().iterdir()):
             if not genre_dir.is_dir() or genre_dir.name.startswith('.'):
                 continue
             for f in sorted(genre_dir.iterdir()):
                 if f.suffix.lower() in ('.mp3', '.wav', '.flac', '.ogg', '.m4a'):
-                    if query in f.stem.lower():
+                    if query in _normalize_for_search(f.stem):
                         path = f
                         break
             if path.exists() and path != Path(track_path):
@@ -472,14 +482,19 @@ def analyze_track(track_path: str) -> str:
 
     title = path.stem
 
-    # Check cache
-    cache_dir = _music_dir() / ".analysis"
-    cache_dir.mkdir(exist_ok=True)
-    cache_file = cache_dir / f"{title}.txt"
-    if cache_file.exists():
-        return cache_file.read_text()
+    # Check DB cache
+    existing = get_track_by_path(str(path))
+    if existing and existing.get("analyzed_at"):
+        return json.dumps({
+            "title": existing.get("title"), "bpm": existing.get("bpm"),
+            "key": existing.get("key_musical"), "energy_peak": existing.get("energy_peak"),
+            "mood": existing.get("mood"), "mix_in_seconds": existing.get("mix_in_seconds"),
+            "mix_out_seconds": existing.get("mix_out_seconds"),
+            "timeline": existing.get("timeline"), "verdict": existing.get("verdict"),
+            "similar": existing.get("similar"),
+        }, indent=2)
 
-    # Convert full track to low-quality WAV (mono 8kHz — small enough for API)
+    # Convert full track to low-quality WAV (mono 8kHz — small for API)
     wav_path = "/tmp/dj-treta-full-analysis.wav"
     try:
         _sp.run(
@@ -493,7 +508,7 @@ def analyze_track(track_path: str) -> str:
     if not Path(wav_path).exists():
         return "Audio conversion failed"
 
-    # Send full track to Gemini
+    # Send full track to Gemini — ask for JSON (Flash is great at structured output)
     try:
         with open(wav_path, "rb") as f:
             audio_b64 = base64.b64encode(f.read()).decode()
@@ -506,21 +521,14 @@ def analyze_track(track_path: str) -> str:
                 "role": "user",
                 "content": [
                     {"type": "text", "text": (
-                        f"Analyze this FULL track: '{title}'. Listen to the ENTIRE track.\n\n"
-                        "Return EXACTLY this format:\n"
-                        "BPM: <number>\n"
-                        "KEY: <key>\n"
-                        "GENRE: <genre>\n"
-                        "ENERGY_PEAK: <1-10>\n"
-                        "MOOD: <2-3 words>\n"
-                        "MIX_IN: <timestamp like 0:45> — <why>\n"
-                        "MIX_OUT: <timestamp like 6:30> — <why>\n"
-                        "STRUCTURE:\n"
-                        "  <start>-<end> <section> (energy X/10)\n"
-                        "  <start>-<end> <section> (energy X/10)\n"
-                        "  ...\n"
-                        "VERDICT: <one sentence — what kind of set does this fit?>\n"
-                        "SIMILAR: <3 similar tracks/artists>"
+                        f"Analyze this track: '{title}'. Listen to the ENTIRE track.\n"
+                        "Return JSON only, no other text:\n"
+                        '{"bpm": <number>, "key": "<Dm/Am/etc>", "energy_peak": <1-10>, '
+                        '"mood": "<2-3 words>", "genre": "<genre>", '
+                        '"mix_in_seconds": <best time to start mixing in>, '
+                        '"mix_out_seconds": <best time to start mixing out>, '
+                        '"timeline": [{"start": 0, "end": 45, "section": "intro", "energy": 3}, ...], '
+                        '"verdict": "<one sentence>", "similar": "<3 artists>"}'
                     )},
                     {"type": "image_url", "image_url": {"url": f"data:audio/wav;base64,{audio_b64}"}},
                 ],
@@ -531,12 +539,59 @@ def analyze_track(track_path: str) -> str:
             timeout=60,
         )
 
-        analysis = resp.choices[0].message.content.strip()
+        raw = resp.choices[0].message.content.strip()
 
-        # Cache it
-        cache_file.write_text(analysis)
+        # Parse JSON from Gemini response (may have markdown code fences)
+        json_str = raw
+        if "```" in raw:
+            # Extract JSON from code block
+            lines = raw.split("\n")
+            in_block = False
+            json_lines = []
+            for line in lines:
+                if line.strip().startswith("```"):
+                    in_block = not in_block
+                    continue
+                if in_block:
+                    json_lines.append(line)
+            json_str = "\n".join(json_lines)
 
-        return analysis
+        try:
+            data = json.loads(json_str)
+        except json.JSONDecodeError:
+            # Fallback: store raw text
+            upsert_track(
+                path=str(path), title=title,
+                analysis_text=raw, analyzed_at=_time.time()
+            )
+            return raw
+
+        # Parse key to Camelot
+        from .camelot import KEY_TO_CAMELOT
+        key_musical = data.get("key", "")
+        key_camelot = KEY_TO_CAMELOT.get(key_musical, "")
+
+        # Store in DB
+        timeline_json = json.dumps(data.get("timeline", []))
+        upsert_track(
+            path=str(path), title=title,
+            bpm=data.get("bpm"),
+            key_musical=key_musical,
+            key_camelot=key_camelot,
+            energy_peak=data.get("energy_peak"),
+            mood=data.get("mood"),
+            mix_in_seconds=data.get("mix_in_seconds"),
+            mix_out_seconds=data.get("mix_out_seconds"),
+            duration_seconds=data.get("duration_seconds"),
+            timeline=timeline_json,
+            analysis_text=raw,
+            similar=data.get("similar"),
+            verdict=data.get("verdict"),
+            genre=data.get("genre"),
+            analyzed_at=_time.time(),
+        )
+
+        return json.dumps(data, indent=2)
     except Exception as e:
         return f"Analysis error: {e}"
 
@@ -644,7 +699,7 @@ def do_transition(to_deck: int, duration: int = 60) -> str:
     duration = max(10, min(120, duration))
     out_deck = 1 if to_deck == 2 else 2
 
-    # Pre-flight: ABORT if incoming deck has no track loaded
+    # Pre-flight: ABORT if incoming deck has no playable track
     status = _mixxx_get("/api/status")
     if err := _mixxx_failed(status):
         return f"ABORTED: cannot reach Mixxx: {err}"
@@ -652,6 +707,9 @@ def do_transition(to_deck: int, duration: int = 60) -> str:
         deck_state = status.get(f"deck{to_deck}", {})
         if not deck_state.get("track_loaded", False):
             return f"ABORTED: Deck {to_deck} has no track loaded! Load a track first with load_track."
+        remaining = float(deck_state.get("remaining_seconds", 0) or 0)
+        if remaining < 30:
+            return f"ABORTED: Deck {to_deck} track has only {remaining:.0f}s left — load a fresh track first."
 
     # Sync + play + phase align
     _mixxx_post("/api/sync", {"deck": to_deck})
@@ -702,6 +760,19 @@ def do_bass_swap(to_deck: int, duration: int = 60) -> str:
 
     duration = max(20, min(120, duration))
     out_deck = 1 if to_deck == 2 else 2
+
+    # Pre-flight: ABORT if incoming deck has no playable track
+    status = _mixxx_get("/api/status")
+    if err := _mixxx_failed(status):
+        return f"ABORTED: cannot reach Mixxx: {err}"
+    if status:
+        deck_state = status.get(f"deck{to_deck}", {})
+        if not deck_state.get("track_loaded", False):
+            return f"ABORTED: Deck {to_deck} has no track loaded! Load a track first."
+        remaining = float(deck_state.get("remaining_seconds", 0) or 0)
+        if remaining < 30:
+            return f"ABORTED: Deck {to_deck} track has only {remaining:.0f}s left — load a fresh track first."
+
     fps = 10
     total = int(duration * fps)
 
@@ -742,12 +813,15 @@ def do_bass_swap(to_deck: int, duration: int = 60) -> str:
 # ═══════════════════════════════════════════════════════════════════════
 
 @tool
-def search_music(query: str, limit: int = 5) -> list:
-    """Search YouTube for music tracks. Returns titles, URLs, and durations.
+def search_music(query: str, limit: int = 10) -> list:
+    """Search YouTube for individual music tracks (NOT mixes or DJ sets).
+
+    Returns only tracks between 2-10 minutes. Longer results (mixes, sets, compilations)
+    are automatically filtered out.
 
     Args:
-        query: Search query — artist name, track title, genre, anything.
-        limit: Number of results to return (1-20).
+        query: Search query — artist name, track title, genre. Add 'official' or 'original mix' for better results.
+        limit: Number of raw results to fetch before filtering (1-20).
     """
     result = subprocess.run(
         ["yt-dlp", f"ytsearch{limit}:{query}", "--dump-json", "--no-download", "--flat-playlist"],
@@ -762,15 +836,40 @@ def search_music(query: str, limit: int = 5) -> list:
             continue
         try:
             info = json.loads(line)
+            dur = info.get("duration", 0) or 0
+            title = info.get("title", "Unknown")
+
+            # Skip mixes, sets, compilations, non-music, tutorials
+            skip_words = ["mix 20", "full set", "compilation", "hour mix", "live set",
+                          "dj set", "mixtape", "nonstop", "megamix", "interview",
+                          "podcast", "test", "quiz", "reaction", "how to", "tutorial",
+                          "copyright free", "royalty free", "free download", "free music",
+                          "top 10", "best of", "playlist", "radio", "review",
+                          "unboxing", "vlog", "behind the scene"]
+            title_lower = title.lower()
+            if any(w in title_lower for w in skip_words):
+                continue
+
+            # Only individual tracks: 2-10 minutes
+            if dur < 120 or dur > 600:
+                continue
+
+            mins = int(dur // 60)
+            secs = int(dur % 60)
             results.append({
-                "title": info.get("title", "Unknown"),
+                "title": title,
                 "url": info.get("url", info.get("webpage_url", "")),
                 "id": info.get("id", ""),
-                "duration": info.get("duration", 0),
+                "duration": f"{mins}:{secs:02d}",
+                "duration_seconds": dur,
                 "uploader": info.get("uploader", info.get("channel", "Unknown")),
             })
         except json.JSONDecodeError:
             continue
+
+    if not results:
+        return [{"info": "No individual tracks found (2-10 min). Try searching with artist name + 'original mix' or 'official audio'."}]
+
     return results
 
 
@@ -785,6 +884,9 @@ def download_track(url: str, genre: str = "deep") -> str:
     genre_dir = _music_dir() / genre
     genre_dir.mkdir(parents=True, exist_ok=True)
 
+    # Track files before download to find what was added
+    before = set(genre_dir.glob("*.mp3"))
+
     result = subprocess.run(
         ["yt-dlp", "-x", "--audio-format", "mp3", "--audio-quality", "320",
          "-o", str(genre_dir / "%(uploader)s - %(title)s.%(ext)s"),
@@ -793,6 +895,30 @@ def download_track(url: str, genre: str = "deep") -> str:
     )
     if result.returncode != 0:
         return f"Download failed: {result.stderr[:200]}"
+
+    # Find the actual downloaded file (yt-dlp may change chars in filename)
+    after = set(genre_dir.glob("*.mp3"))
+    new_files = after - before
+    if new_files:
+        actual_path = next(iter(new_files))
+
+        # Insert into DB + auto-analyze in background
+        from .db import upsert_track
+        upsert_track(path=str(actual_path), title=actual_path.stem, genre=genre)
+
+        import threading
+        def _bg_analyze():
+            try:
+                analyze_track(str(actual_path))
+            except Exception:
+                pass
+        threading.Thread(target=_bg_analyze, daemon=True).start()
+
+        return f"Downloaded: {actual_path}"
+
+    # No new file — yt-dlp skipped (already exists)
+    if "--no-overwrites" in result.stdout or "has already been downloaded" in result.stdout:
+        return "ALREADY EXISTS: This track was already downloaded. Search for a DIFFERENT track."
 
     return f"Downloaded to {genre}/ folder"
 
@@ -925,26 +1051,9 @@ def save_learning(topic: str, content: str) -> str:
         topic: Short topic name (e.g., 'transition-timing', 'track-pairing', 'eq-technique').
         content: What you learned.
     """
-    memory_dir = _SELF_DIR / ".beings" / "memory"
-    memory_dir.mkdir(parents=True, exist_ok=True)
-
-    memory_file = memory_dir / "learnings.json"
-    learnings = []
-    if memory_file.exists():
-        try:
-            learnings = json.loads(memory_file.read_text())
-        except json.JSONDecodeError:
-            learnings = []
-
-    import time
-    learnings.append({
-        "topic": topic,
-        "content": content,
-        "timestamp": time.time(),
-    })
-
-    memory_file.write_text(json.dumps(learnings, indent=2))
-    return f"Saved learning about '{topic}'. Total learnings: {len(learnings)}"
+    from .db import save_learning_db
+    save_learning_db(topic, content)
+    return f"Saved learning about '{topic}'."
 
 
 @tool
@@ -954,17 +1063,5 @@ def recall_learnings(topic: str = "") -> list:
     Args:
         topic: Optional topic filter (matches substring). Empty = return all.
     """
-    memory_file = _SELF_DIR / ".beings" / "memory" / "learnings.json"
-    if not memory_file.exists():
-        return []
-
-    try:
-        learnings = json.loads(memory_file.read_text())
-    except json.JSONDecodeError:
-        return []
-
-    if topic:
-        learnings = [l for l in learnings if topic.lower() in l.get("topic", "").lower()
-                     or topic.lower() in l.get("content", "").lower()]
-
-    return learnings[-20:]  # last 20
+    from .db import recall_learnings_db
+    return recall_learnings_db(topic)

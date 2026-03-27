@@ -2,21 +2,19 @@ mixxx:
   url: "http://localhost:7778"
   timeout: 5
   auto_start: true
-  # Leave empty to use defaults: ~/workspace/mixxx-treta/build/mixxx (macOS)
   binary: ""
   resource_path: ""
   settings_path: ""
 
 llm:
-  model: "openai/gemini-3-flash"
-  api_base: "http://localhost:4000"
-  # Prefer env: DJTRETA_LLM_API_KEY or LLM_API_KEY (overrides this field)
+  model: "{llm_model}"
+  api_base: "{llm_api_base}"
   api_key: ""
   temperature: 0.7
   timeout: 30
 
 library:
-  music_dir: "~/Music/DJTreta"
+  music_dir: "~/Music/{dj_name_slug}"
 
 transitions:
   lookahead_seconds: 120
@@ -25,15 +23,14 @@ transitions:
 
 daemon:
   heartbeat_interval_seconds: 30.0
-  pulse_interval_seconds: 5.0  # legacy
+  pulse_interval_seconds: 5.0
   poll_hz: 2
   max_errors: 10
 
 capabilities:
-  # Set true only on a trusted machine; agent can run arbitrary shell commands when enabled
   allow_shell: false
 
 set:
-  default_mood: "techno-deep"
+  default_mood: "{default_mood}"
   energy_max_jump: 2
   peak_max_consecutive: 3
