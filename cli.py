@@ -427,6 +427,16 @@ def _daemon_cmd(action):
         console.print("[dim]Talk to her: djtreta talk 'play something melodic'[/dim]")
 
 
+def _kill_all():
+    """Kill everything — daemon, Mixxx, LiteLLM."""
+    import subprocess
+    subprocess.run(["pkill", "-f", "python.*agent"], capture_output=True)
+    subprocess.run(["pkill", "-f", "mixxx"], capture_output=True)
+    subprocess.run(["pkill", "-f", "litellm"], capture_output=True)
+    Path("/tmp/dj-treta.pid").unlink(missing_ok=True)
+    console.print("[yellow]Killed: daemon, Mixxx, LiteLLM[/yellow]")
+
+
 def _reset():
     """Full reset — kill everything, clean library, clear all state."""
     import shutil
@@ -526,6 +536,9 @@ def main():
             return
         elif cmd == "reset":
             _reset()
+            return
+        elif cmd == "kill":
+            _kill_all()
             return
 
     # Interactive mode
