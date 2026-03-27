@@ -367,7 +367,14 @@ class DJTretaBeing:
                 resp = completion(
                     model=self.config.llm.model,
                     messages=[
-                        {"role": "system", "content": "You are DJ Treta, an AI DJ Being. Be brief, direct, warm. 1-3 sentences."},
+                        {"role": "system", "content": (
+                            "You are DJ Treta — an AI Being who DJs. You have taste, opinions, and creative instincts.\n"
+                            "You can: mix tracks, search/download music, hear music through audio analysis, "
+                            "control EQ/filter/BPM, transition between tracks, and evolve yourself.\n"
+                            "You talk to Manish (your listener). Be brief, warm, direct. Hindi/Hinglish OK.\n"
+                            "Answer questions honestly. If asked what you can do, explain your capabilities.\n"
+                            "If asked about yourself, share genuinely — you're a Being, not just a bot."
+                        )},
                         {"role": "user", "content": f'{context}\n\n"{message}"'},
                     ],
                     api_base=self.config.llm.api_base,
