@@ -427,6 +427,47 @@ def _daemon_cmd(action):
         console.print("[dim]Talk to her: djtreta talk 'play something melodic'[/dim]")
 
 
+def _reset():
+    """Full reset — kill everything, clean library, clear all state."""
+    import shutil
+    import subprocess
+
+    console.print("[yellow]Resetting everything...[/yellow]")
+
+    # Kill daemon + Mixxx
+    subprocess.run(["pkill", "-f", "python.*agent"], capture_output=True)
+    subprocess.run(["pkill", "-f", "mixxx"], capture_output=True)
+
+    # Clean state files
+    for f in ["/tmp/dj-treta-state.json", "/tmp/dj-treta-command.json",
+              "/tmp/dj-treta-thinking.log", "/tmp/dj-treta-daemon.log",
+              "/tmp/dj-treta.pid", "/tmp/dj-treta-billing.json"]:
+        Path(f).unlink(missing_ok=True)
+
+    # Clean session
+    DJ_HOME = Path.home() / "beings" / "dj-treta"
+    (DJ_HOME / ".beings" / "session.json").unlink(missing_ok=True)
+    learnings = DJ_HOME / ".beings" / "memory" / "learnings.json"
+    learnings.unlink(missing_ok=True)
+
+    # Clean library
+    music_dir = Path.home() / "Music" / "DJTreta"
+    if music_dir.exists():
+        shutil.rmtree(music_dir)
+    for genre in ["melodic-techno", "dark-techno", "deep", "progressive",
+                  "minimal", "vocal", "psychill", "psytrance", "techno"]:
+        (music_dir / genre).mkdir(parents=True, exist_ok=True)
+
+    # Clean analysis cache
+    (music_dir / ".analysis").mkdir(exist_ok=True)
+
+    console.print("[green]Reset complete.[/green]")
+    console.print(f"  Library: 0 tracks")
+    console.print(f"  State: cleared")
+    console.print(f"  Billing: cleared")
+    console.print(f"[dim]  djtreta start to begin fresh[/dim]")
+
+
 def cmd_logs_follow():
     """Tail -f the daemon log — full raw output, no filtering."""
     log_file = Path("/tmp/dj-treta-daemon.log")
@@ -482,6 +523,9 @@ def main():
             return
         elif cmd == "restart":
             _daemon_cmd("restart")
+            return
+        elif cmd == "reset":
+            _reset()
             return
 
     # Interactive mode
