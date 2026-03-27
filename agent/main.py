@@ -123,7 +123,8 @@ def _ensure_mixxx(config: Config):
         time.sleep(0.5)
         try:
             httpx.get(f"{url}/api/status", timeout=2)
-            log.info(f"Mixxx up after {(i+1)*0.5:.1f}s")
+            log.info(f"Mixxx up after {(i+1)*0.5:.1f}s — waiting for audio engine...")
+            time.sleep(15)  # audio engine needs time after HTTP API is ready
             return
         except Exception:
             pass
@@ -353,30 +354,41 @@ class DJTretaBeing:
         threading.Thread(target=_run, daemon=True).start()
 
     def _emergency_play(self):
-        """Silence! Agent decides what to play — with full context about both decks."""
+        """Silence! Direct API play first (fast + reliable), agent fallback for empty library."""
         try:
-            status = _get_status(self.config.mixxx.url)
-            context = self._build_context(status) if status else "Mixxx not responding."
+            url = self.config.mixxx.url
 
-            # Give agent full deck context so it makes an intelligent choice
-            deck_info = ""
-            for dk in [1, 2]:
-                try:
-                    tinfo = httpx.get(
-                        f"{self.config.mixxx.url}/api/deck/{dk}/track_info", timeout=2
-                    ).json()
-                    title = tinfo.get("title", "")
-                    if title:
-                        deck_info += f"\nDeck {dk} currently has: '{title}'"
-                except Exception:
-                    pass
+            # Try direct API first — pick any track from library, load, play
+            import glob
+            tracks = glob.glob(str(self.config.library.music_path / "**/*.mp3"), recursive=True)
+            if tracks:
+                import random
+                track = random.choice(tracks)
+                # Load with retry — Mixxx may not be ready right after boot
+                for attempt in range(3):
+                    httpx.post(f"{url}/api/load", json={"deck": 1, "track": track}, timeout=5)
+                    time.sleep(2)
+                    st = _get_status(url)
+                    if st and st.get("deck1", {}).get("track_loaded"):
+                        break
+                    log.warning(f"Emergency load attempt {attempt+1} — not loaded yet")
+                    time.sleep(3)
 
+                httpx.post(f"{url}/api/play", json={"deck": 1}, timeout=3)
+                httpx.post(f"{url}/api/crossfade", json={"position": 0.0}, timeout=3)
+                time.sleep(2)
+                log.info(f"Emergency play: {Path(track).stem[:50]}")
+                self._record_playing_tracks()
+                return
+
+            # Empty library — agent searches + downloads
+            context = self._build_context(_get_status(url))
             result = self.agent.run(
-                f"{context}\n{deck_info}\n\n"
-                f"SILENCE! Nothing playing. Pick a track, load on deck 1, play it, "
-                f"set crossfader to 0.0. Pick something different from what's on either deck."
+                f"{context}\n\n"
+                f"SILENCE! Empty library. Search YouTube, download a melodic techno track, "
+                f"load on deck 1, play it, set crossfader to 0.0."
             )
-            log.info(f"Emergency play: {str(result)[:200]}")
+            log.info(f"Emergency play (agent): {str(result)[:200]}")
             self._record_playing_tracks()
         except Exception as e:
             log.error(f"Emergency play error: {e}")
