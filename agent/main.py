@@ -84,24 +84,34 @@ def _ensure_litellm(config):
     log.warning("LiteLLM failed to start")
 
 
-def _ensure_mixxx(url: str):
-    """Start Mixxx if not running."""
+def _ensure_mixxx(config: Config):
+    """Start Mixxx if not running (when mixxx.auto_start is true)."""
+    url = config.mixxx.url
     try:
         httpx.get(f"{url}/api/status", timeout=2)
         return  # already running
     except Exception:
         pass
 
+    if not config.mixxx.auto_start:
+        log.warning("Mixxx not reachable — auto_start is false; start Mixxx manually")
+        return
+
     log.info("Mixxx not running — starting it")
-    mixxx_bin = Path.home() / "workspace" / "mixxx-treta" / "build" / "mixxx"
+    default_bin = Path.home() / "workspace" / "mixxx-treta" / "build" / "mixxx"
+    default_res = Path.home() / "workspace" / "mixxx-treta" / "res"
+    default_settings = Path.home() / "Library" / "Application Support" / "Mixxx"
+
+    mixxx_bin = Path(config.mixxx.binary).expanduser() if config.mixxx.binary.strip() else default_bin
+    resource = Path(config.mixxx.resource_path).expanduser() if config.mixxx.resource_path.strip() else default_res
+    settings = Path(config.mixxx.settings_path).expanduser() if config.mixxx.settings_path.strip() else default_settings
+
     if not mixxx_bin.exists():
         log.error(f"Mixxx not found: {mixxx_bin}")
         return
 
     subprocess.Popen(
-        [str(mixxx_bin),
-         "--resourcePath", str(Path.home() / "workspace" / "mixxx-treta" / "res"),
-         "--settingsPath", str(Path.home() / "Library" / "Application Support" / "Mixxx")],
+        [str(mixxx_bin), "--resourcePath", str(resource), "--settingsPath", str(settings)],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     for i in range(30):
@@ -120,6 +130,27 @@ def _get_status(url: str) -> dict | None:
         return httpx.get(f"{url}/api/status", timeout=2).json()
     except Exception:
         return None
+
+
+def _active_idle_decks(status: dict) -> tuple[int, int]:
+    """Which deck is primary on-air vs free to load the next track."""
+    d1 = status.get("deck1", {})
+    d2 = status.get("deck2", {})
+    xf = float(status.get("crossfader", 0))
+    p1, p2 = d1.get("playing"), d2.get("playing")
+    r1 = float(d1.get("remaining_seconds", 0) or 0)
+    r2 = float(d2.get("remaining_seconds", 0) or 0)
+    if p1 and not p2:
+        return 1, 2
+    if p2 and not p1:
+        return 2, 1
+    if p1 and p2:
+        if xf < -0.2:
+            return 1, 2
+        if xf > 0.2:
+            return 2, 1
+        return (1, 2) if r1 >= r2 else (2, 1)
+    return 1, 2
 
 
 def _count_tracks(music_dir: Path) -> int:
@@ -157,8 +188,14 @@ class DJTretaBeing:
 
         log.info("DJ Treta Being alive")
 
+        if not (self.config.llm.api_key or "").strip():
+            log.warning(
+                "LLM api_key is empty — set llm.api_key in config.yaml or export "
+                "DJTRETA_LLM_API_KEY / LLM_API_KEY"
+            )
+
         _ensure_litellm(self.config)
-        _ensure_mixxx(self.config.mixxx.url)
+        _ensure_mixxx(self.config)
         self._restore_session()
 
         log.info("Creating DJ agent...")
@@ -179,7 +216,8 @@ class DJTretaBeing:
             except Exception as e:
                 log.warning(f"Loop error: {e}")
 
-            time.sleep(5)
+            interval = max(0.5, float(self.config.daemon.pulse_interval_seconds))
+            time.sleep(interval)
 
         log.info("DJ Treta Being shutting down")
 
@@ -191,12 +229,13 @@ class DJTretaBeing:
     # ── Pulse — the Being looks at reality and decides ────────────────
 
     def _pulse(self):
-        """Every 5s: look at Mixxx, decide if action needed, call agent if yes."""
+        """Heartbeat: look at Mixxx, call agent when silence or track ending soon."""
         status = _get_status(self.config.mixxx.url)
         if not status:
-            _ensure_mixxx(self.config.mixxx.url)
+            _ensure_mixxx(self.config)
             return
 
+        lookahead = float(self.config.transitions.lookahead_seconds)
         d1 = status.get("deck1", {})
         d2 = status.get("deck2", {})
         d1_playing = d1.get("playing", False)
@@ -206,9 +245,9 @@ class DJTretaBeing:
 
         if not d1_playing and not d2_playing:
             needs_action = True  # SILENCE
-        elif d1_playing and d1.get("remaining_seconds", 999) < 120:
+        elif d1_playing and d1.get("remaining_seconds", 999) < lookahead:
             needs_action = True  # Track ending soon
-        elif d2_playing and d2.get("remaining_seconds", 999) < 120:
+        elif d2_playing and d2.get("remaining_seconds", 999) < lookahead:
             needs_action = True  # Track ending soon
 
         if needs_action:
@@ -221,16 +260,8 @@ class DJTretaBeing:
         try:
             played_list = [t.get("title", "?") for t in self.tracks_played]
 
-            # Figure out active vs idle deck from reality
             status = _get_status(self.config.mixxx.url)
-            active_deck = 1  # default: assume deck 1 active
-            idle_deck = 2
-            if status:
-                d1 = status.get("deck1", {})
-                d2 = status.get("deck2", {})
-                if d2.get("playing") and d2.get("remaining_seconds", 0) > 0:
-                    active_deck = 2
-                    idle_deck = 1
+            active_deck, idle_deck = _active_idle_decks(status) if status else (1, 2)
 
             result = self.agent.run(
                 f"{context}\n\n"
@@ -347,15 +378,19 @@ class DJTretaBeing:
             classify = completion(
                 model=self.config.llm.model,
                 messages=[{"role": "user", "content":
-                    f'Is this message a REQUEST to DO something (play a track, skip, change EQ, download, adjust BPM) '
-                    f'or just a QUESTION/CONVERSATION (asking about plans, chatting, asking what\'s playing)?\n'
-                    f'Answer ONLY "tools" if it\'s a request to take action, or "chat" if it\'s conversation.\n'
+                    "Classify the listener message.\n"
+                    "- Reply with exactly one word: ACTION if they want you to DO something "
+                    "(play music, skip, change EQ/volume/BPM, download or load a track).\n"
+                    "- Reply CHAT for questions, opinions, small talk, or describing the vibe "
+                    "without asking you to change decks or the mix.\n"
                     f'Message: "{message}"'}],
                 api_base=self.config.llm.api_base,
                 api_key=self.config.llm.api_key,
                 temperature=0, timeout=10,
             )
-            needs_tools = "tool" in classify.choices[0].message.content.lower()
+            raw = (classify.choices[0].message.content or "").strip().upper()
+            first = raw.split()[0] if raw else "CHAT"
+            needs_tools = first == "ACTION"
 
             if needs_tools:
                 with self._talk_lock:
@@ -395,10 +430,13 @@ class DJTretaBeing:
     def _agent_skip(self):
         """Agent decides skip — she picks track and technique."""
         try:
-            context = self._build_context(_get_status(self.config.mixxx.url))
+            status = _get_status(self.config.mixxx.url)
+            context = self._build_context(status)
+            active, idle = _active_idle_decks(status) if status else (1, 2)
             result = self.agent.run(
                 f"{context}\n\n"
-                f"SKIP NOW. Find a new track, load it on the idle deck, "
+                f"ACTIVE deck: {active}, IDLE deck: {idle}. "
+                f"SKIP NOW. Find a new track, load it on deck {idle}, "
                 f"and do_transition quickly (20s). Go."
             )
             self._last_result = f"Skipped: {str(result)[:150]}"

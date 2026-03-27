@@ -16,6 +16,8 @@
 
 ## Ask First (need explicit approval)
 - Delete tracks from library
-- Modify config.yaml
-- Start/stop Mixxx
+- Modify config.yaml (except Being-owned `.beings/*.md` and learnings)
 - Share set recordings externally
+
+## Mixxx process
+The Being may **auto-start Mixxx** on daemon start when `mixxx.auto_start: true` in `config.yaml`. Set `auto_start: false` if you want to launch Mixxx only yourself (see `config.yaml` → `mixxx`).

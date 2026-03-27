@@ -17,25 +17,82 @@ from pathlib import Path
 import httpx
 from smolagents import tool
 
-from .config import load_config
+from .config import Config, load_config
 
-_cfg = load_config()
-_MIXXX = _cfg.mixxx.url
-_MUSIC_DIR = _cfg.library.music_path
-_TIMEOUT = _cfg.mixxx.timeout
-_SELF_DIR = Path(__file__).parent.parent  # ~/beings/dj-treta
+_SELF_DIR = Path(__file__).parent.parent
+
+
+def _music_dir() -> Path:
+    return load_config().library.music_path
+
+
+def _roots(cfg: Config) -> list[Path]:
+    return [_SELF_DIR.resolve(), cfg.library.music_path.expanduser().resolve()]
+
+
+def _is_under_allowed_roots(cfg: Config, path: Path) -> bool:
+    try:
+        rp = path.resolve()
+    except OSError:
+        return False
+    for root in _roots(cfg):
+        try:
+            rp.relative_to(root.resolve())
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _resolve_tool_path(cfg: Config, file_path: str) -> Path | None:
+    raw = Path(file_path).expanduser()
+    if not raw.is_absolute():
+        path = (_SELF_DIR / raw).resolve()
+    else:
+        path = raw.resolve()
+    if not _is_under_allowed_roots(cfg, path):
+        return None
+    return path
+
+
+def _mixxx_failed(d: dict) -> str | None:
+    if d.get("_request_failed"):
+        return d.get("_detail", "Mixxx request failed")
+    return None
 
 
 def _mixxx_get(path: str) -> dict:
-    resp = httpx.get(f"{_MIXXX}{path}", timeout=_TIMEOUT)
-    resp.raise_for_status()
-    return resp.json()
+    cfg = load_config()
+    try:
+        r = httpx.get(f"{cfg.mixxx.url}{path}", timeout=cfg.mixxx.timeout)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        return {"_request_failed": True, "_detail": str(e)}
 
 
 def _mixxx_post(path: str, data: dict | None = None) -> dict:
-    resp = httpx.post(f"{_MIXXX}{path}", json=data or {}, timeout=_TIMEOUT)
-    resp.raise_for_status()
-    return resp.json()
+    cfg = load_config()
+    try:
+        r = httpx.post(f"{cfg.mixxx.url}{path}", json=data or {}, timeout=cfg.mixxx.timeout)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        return {"_request_failed": True, "_detail": str(e)}
+
+
+def _dj_get(path: str) -> dict:
+    r = _mixxx_get(path)
+    if err := _mixxx_failed(r):
+        return {"error": err}
+    return r
+
+
+def _dj_post(path: str, data: dict | None = None) -> dict:
+    r = _mixxx_post(path, data)
+    if err := _mixxx_failed(r):
+        return {"error": err}
+    return r
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -45,7 +102,10 @@ def _mixxx_post(path: str, data: dict | None = None) -> dict:
 @tool
 def get_dj_status() -> dict:
     """Get full DJ status — both decks, crossfader, BPM, key, remaining time, what's playing."""
-    return _mixxx_get("/api/status")
+    data = _mixxx_get("/api/status")
+    if err := _mixxx_failed(data):
+        return {"error": err, "_request_failed": True}
+    return data
 
 
 @tool
@@ -56,6 +116,8 @@ def get_deck_info(deck: int) -> dict:
         deck: The deck number, either 1 or 2.
     """
     status = _mixxx_get("/api/status")
+    if err := _mixxx_failed(status):
+        return {"error": err}
     return status[f"deck{deck}"]
 
 
@@ -73,7 +135,7 @@ def load_track(deck: int, track_path: str) -> str:
     if not path.is_absolute() or not path.exists():
         query = track_path.lower()
         found = None
-        for genre_dir in sorted(_MUSIC_DIR.iterdir()):
+        for genre_dir in sorted(_music_dir().iterdir()):
             if not genre_dir.is_dir() or genre_dir.name.startswith('.'):
                 continue
             for f in sorted(genre_dir.iterdir()):
@@ -90,6 +152,8 @@ def load_track(deck: int, track_path: str) -> str:
         track_path = found
 
     result = _mixxx_post("/api/load", {"deck": deck, "track": track_path})
+    if err := _mixxx_failed(result):
+        return f"ERROR: Mixxx load failed: {err}"
     if result and result.get("ok"):
         return f"Loaded on Deck {deck}: {Path(track_path).stem}"
     return f"ERROR: Mixxx rejected load: {result}"
@@ -102,7 +166,7 @@ def play_deck(deck: int) -> dict:
     Args:
         deck: The deck number to play, either 1 or 2.
     """
-    return _mixxx_post("/api/play", {"deck": deck})
+    return _dj_post("/api/play", {"deck": deck})
 
 
 @tool
@@ -112,7 +176,7 @@ def pause_deck(deck: int) -> dict:
     Args:
         deck: The deck number to pause, either 1 or 2.
     """
-    return _mixxx_post("/api/pause", {"deck": deck})
+    return _dj_post("/api/pause", {"deck": deck})
 
 
 @tool
@@ -123,7 +187,7 @@ def set_volume(deck: int, volume: float) -> dict:
         deck: The deck number, either 1 or 2.
         volume: Volume level from 0.0 (silent) to 1.0 (full).
     """
-    return _mixxx_post("/api/volume", {"deck": deck, "volume": volume})
+    return _dj_post("/api/volume", {"deck": deck, "volume": volume})
 
 
 @tool
@@ -135,7 +199,7 @@ def set_crossfader(position: float) -> dict:
     """
     # Clamp to valid range
     position = max(0.0, min(1.0, position))
-    return _mixxx_post("/api/crossfade", {"position": position})
+    return _dj_post("/api/crossfade", {"position": position})
 
 
 @tool
@@ -147,7 +211,7 @@ def set_eq(deck: int, band: str, value: float) -> dict:
         band: EQ band name — 'hi', 'mid', or 'lo'.
         value: EQ value from 0.0 (cut) to 4.0 (boost), 1.0 is neutral.
     """
-    return _mixxx_post("/api/eq", {"deck": deck, "band": band, "value": value})
+    return _dj_post("/api/eq", {"deck": deck, "band": band, "value": value})
 
 
 @tool
@@ -158,7 +222,7 @@ def set_filter(deck: int, value: float) -> dict:
         deck: The deck number, either 1 or 2.
         value: Filter from 0.0 (full high-pass) through 0.5 (neutral) to 1.0 (full low-pass).
     """
-    return _mixxx_post("/api/filter", {"deck": deck, "value": value})
+    return _dj_post("/api/filter", {"deck": deck, "value": value})
 
 
 @tool
@@ -169,13 +233,13 @@ def set_sync(deck: int, enabled: bool) -> dict:
         deck: The deck number, either 1 or 2.
         enabled: True to enable sync, False to disable.
     """
-    return _mixxx_post("/api/sync", {"deck": deck, "enabled": enabled})
+    return _dj_post("/api/sync", {"deck": deck, "enabled": enabled})
 
 
 @tool
 def get_live_data() -> dict:
     """Get real-time data — VU meters, beat position, crossfader. For feeling the music."""
-    return _mixxx_get("/api/live")
+    return _dj_get("/api/live")
 
 
 @tool
@@ -185,7 +249,7 @@ def get_track_info(deck: int) -> dict:
     Args:
         deck: The deck number, either 1 or 2.
     """
-    return _mixxx_get(f"/api/deck/{deck}/track_info")
+    return _dj_get(f"/api/deck/{deck}/track_info")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -212,7 +276,7 @@ def set_rate(deck: int, rate: float = 0.0) -> str:
 
     # Read back actual BPM
     status = _mixxx_get("/api/status")
-    if status:
+    if status and not _mixxx_failed(status):
         bpm = status.get(f"deck{deck}", {}).get("bpm", 0)
         file_bpm = status.get(f"deck{deck}", {}).get("file_bpm", 0)
         return f"Deck {deck}: rate={rate}, BPM now {bpm:.1f} (file: {file_bpm:.0f})"
@@ -231,7 +295,7 @@ def reset_bpm(deck: int) -> str:
     _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "rate_set_default", "value": 1})
 
     status = _mixxx_get("/api/status")
-    if status:
+    if status and not _mixxx_failed(status):
         bpm = status.get(f"deck{deck}", {}).get("bpm", 0)
         file_bpm = status.get(f"deck{deck}", {}).get("file_bpm", 0)
         return f"Deck {deck}: BPM reset to original {file_bpm:.0f} (was {bpm:.1f})"
@@ -299,7 +363,7 @@ def hear_music(deck: int = 0, duration: int = 10) -> str:
 
     # Get current state
     status = _mixxx_get("/api/status")
-    if not status:
+    if not status or _mixxx_failed(status):
         return "Can't hear — Mixxx not responding"
 
     # Find active deck
@@ -321,7 +385,7 @@ def hear_music(deck: int = 0, duration: int = 10) -> str:
 
     # Get file path
     tinfo = _mixxx_get(f"/api/deck/{deck}/track_info")
-    if not tinfo or tinfo.get("error"):
+    if not tinfo or _mixxx_failed(tinfo) or tinfo.get("error"):
         return "Can't hear — no track info"
 
     file_path = tinfo.get("file_path", "")
@@ -349,9 +413,10 @@ def hear_music(deck: int = 0, duration: int = 10) -> str:
         with open(snippet, "rb") as f:
             audio_b64 = base64.b64encode(f.read()).decode()
 
+        cfg = load_config()
         from litellm import completion as _completion
         resp = _completion(
-            model=_cfg.llm.model,
+            model=cfg.llm.model,
             messages=[{
                 "role": "user",
                 "content": [
@@ -364,8 +429,8 @@ def hear_music(deck: int = 0, duration: int = 10) -> str:
                     {"type": "image_url", "image_url": {"url": f"data:audio/wav;base64,{audio_b64}"}},
                 ],
             }],
-            api_base=_cfg.llm.api_base,
-            api_key=_cfg.llm.api_key,
+            api_base=cfg.llm.api_base,
+            api_key=cfg.llm.api_key,
             temperature=0.5,
             timeout=30,
         )
@@ -392,7 +457,7 @@ def analyze_track(track_path: str) -> str:
     path = Path(track_path)
     if not path.is_absolute() or not path.exists():
         query = track_path.lower()
-        for genre_dir in sorted(_MUSIC_DIR.iterdir()):
+        for genre_dir in sorted(_music_dir().iterdir()):
             if not genre_dir.is_dir() or genre_dir.name.startswith('.'):
                 continue
             for f in sorted(genre_dir.iterdir()):
@@ -408,7 +473,7 @@ def analyze_track(track_path: str) -> str:
     title = path.stem
 
     # Check cache
-    cache_dir = _MUSIC_DIR / ".analysis"
+    cache_dir = _music_dir() / ".analysis"
     cache_dir.mkdir(exist_ok=True)
     cache_file = cache_dir / f"{title}.txt"
     if cache_file.exists():
@@ -433,9 +498,10 @@ def analyze_track(track_path: str) -> str:
         with open(wav_path, "rb") as f:
             audio_b64 = base64.b64encode(f.read()).decode()
 
+        cfg = load_config()
         from litellm import completion as _completion
         resp = _completion(
-            model=_cfg.llm.model,
+            model=cfg.llm.model,
             messages=[{
                 "role": "user",
                 "content": [
@@ -459,8 +525,8 @@ def analyze_track(track_path: str) -> str:
                     {"type": "image_url", "image_url": {"url": f"data:audio/wav;base64,{audio_b64}"}},
                 ],
             }],
-            api_base=_cfg.llm.api_base,
-            api_key=_cfg.llm.api_key,
+            api_base=cfg.llm.api_base,
+            api_key=cfg.llm.api_key,
             temperature=0.3,
             timeout=60,
         )
@@ -494,7 +560,7 @@ def preview_track(track_path: str, position: int = 30, duration: int = 10) -> st
     if not path.is_absolute() or not path.exists():
         query = track_path.lower()
         found = None
-        for genre_dir in sorted(_MUSIC_DIR.iterdir()):
+        for genre_dir in sorted(_music_dir().iterdir()):
             if not genre_dir.is_dir() or genre_dir.name.startswith('.'):
                 continue
             for f in sorted(genre_dir.iterdir()):
@@ -530,9 +596,10 @@ def preview_track(track_path: str, position: int = 30, duration: int = 10) -> st
         with open(snippet, "rb") as f:
             audio_b64 = base64.b64encode(f.read()).decode()
 
+        cfg = load_config()
         from litellm import completion as _completion
         resp = _completion(
-            model=_cfg.llm.model,
+            model=cfg.llm.model,
             messages=[{
                 "role": "user",
                 "content": [
@@ -546,8 +613,8 @@ def preview_track(track_path: str, position: int = 30, duration: int = 10) -> st
                     {"type": "image_url", "image_url": {"url": f"data:audio/wav;base64,{audio_b64}"}},
                 ],
             }],
-            api_base=_cfg.llm.api_base,
-            api_key=_cfg.llm.api_key,
+            api_base=cfg.llm.api_base,
+            api_key=cfg.llm.api_key,
             temperature=0.5,
             timeout=30,
         )
@@ -579,6 +646,8 @@ def do_transition(to_deck: int, duration: int = 60) -> str:
 
     # Pre-flight: ABORT if incoming deck has no track loaded
     status = _mixxx_get("/api/status")
+    if err := _mixxx_failed(status):
+        return f"ABORTED: cannot reach Mixxx: {err}"
     if status:
         deck_state = status.get(f"deck{to_deck}", {})
         if not deck_state.get("track_loaded", False):
@@ -594,6 +663,8 @@ def do_transition(to_deck: int, duration: int = 60) -> str:
 
     # Verify it actually started playing
     status2 = _mixxx_get("/api/status")
+    if err2 := _mixxx_failed(status2):
+        return f"ABORTED: lost Mixxx during transition prep: {err2}"
     if status2:
         deck_state2 = status2.get(f"deck{to_deck}", {})
         if not deck_state2.get("playing", False):
@@ -711,7 +782,7 @@ def download_track(url: str, genre: str = "deep") -> str:
         url: YouTube URL to download.
         genre: Genre folder to save into (e.g., dark-techno, melodic-techno, deep, minimal, progressive, vocal, psychill).
     """
-    genre_dir = _MUSIC_DIR / genre
+    genre_dir = _music_dir() / genre
     genre_dir.mkdir(parents=True, exist_ok=True)
 
     result = subprocess.run(
@@ -734,7 +805,7 @@ def download_track(url: str, genre: str = "deep") -> str:
 def list_library_tracks() -> list:
     """List all tracks in the music library with file path, filename, and genre folder."""
     tracks = []
-    for genre_dir in sorted(_MUSIC_DIR.iterdir()):
+    for genre_dir in sorted(_music_dir().iterdir()):
         if not genre_dir.is_dir() or genre_dir.name.startswith('.'):
             continue
         genre = genre_dir.name
@@ -764,14 +835,15 @@ def get_set_history() -> list:
 
 @tool
 def read_file(file_path: str) -> str:
-    """Read any file — your own code, config, identity files, DJ knowledge, anything.
+    """Read a file under the DJ Treta repo or configured music library only.
 
     Args:
-        file_path: Path relative to ~/beings/dj-treta/ (e.g., 'agent/brain.py', 'config.yaml', '.beings/SOUL.md') or absolute path.
+        file_path: Path relative to the repo (e.g. 'config.yaml', '.beings/SOUL.md') or absolute path under those roots.
     """
-    path = Path(file_path)
-    if not path.is_absolute():
-        path = _SELF_DIR / file_path
+    cfg = load_config()
+    path = _resolve_tool_path(cfg, file_path)
+    if path is None:
+        return "ERROR: Path not allowed (must be under the DJ Treta repo or library.music_dir)."
     if not path.exists():
         return f"File not found: {path}"
     content = path.read_text()
@@ -782,15 +854,16 @@ def read_file(file_path: str) -> str:
 
 @tool
 def write_file(file_path: str, content: str) -> str:
-    """Write to a file — update your own code, config, save learnings, create new files.
+    """Write a file under the DJ Treta repo or configured music library only.
 
     Args:
-        file_path: Path relative to ~/beings/dj-treta/ (e.g., 'agent/tools.py', '.beings/MEMORY.md') or absolute path.
+        file_path: Path relative to the repo or absolute under allowed roots.
         content: The full content to write.
     """
-    path = Path(file_path)
-    if not path.is_absolute():
-        path = _SELF_DIR / file_path
+    cfg = load_config()
+    path = _resolve_tool_path(cfg, file_path)
+    if path is None:
+        return "ERROR: Path not allowed (must be under the DJ Treta repo or library.music_dir)."
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
     return f"Written {len(content)} chars to {path}"
@@ -798,26 +871,34 @@ def write_file(file_path: str, content: str) -> str:
 
 @tool
 def list_files(directory: str = ".") -> list:
-    """List files in a directory. Defaults to ~/beings/dj-treta/.
+    """List files in a directory under the repo or music library.
 
     Args:
-        directory: Path relative to ~/beings/dj-treta/ or absolute.
+        directory: Path relative to the repo or absolute under allowed roots.
     """
-    path = Path(directory)
-    if not path.is_absolute():
-        path = _SELF_DIR / directory
+    cfg = load_config()
+    path = _resolve_tool_path(cfg, directory)
+    if path is None:
+        return ["ERROR: Path not allowed (must be under the DJ Treta repo or library.music_dir)."]
     if not path.exists():
         return [f"Directory not found: {path}"]
+    if not path.is_dir():
+        return [f"Not a directory: {path}"]
     return [str(f.relative_to(path)) for f in sorted(path.iterdir()) if not f.name.startswith('.')]
 
 
 @tool
 def run_shell(command: str) -> str:
-    """Run a shell command. Use for: git, pip install, checking processes, anything system-level.
+    """Run a shell command (disabled unless capabilities.allow_shell is true in config).
 
     Args:
         command: Shell command to execute.
     """
+    if not load_config().capabilities.allow_shell:
+        return (
+            "ERROR: Shell is disabled. Set capabilities.allow_shell: true in config.yaml "
+            "(trusted machines only)."
+        )
     try:
         result = subprocess.run(
             command, shell=True, capture_output=True, text=True,

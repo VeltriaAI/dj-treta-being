@@ -1,8 +1,8 @@
 """Run DJ Treta Being.
 
-Always alive:  python -m agent
-Play on start: python -m agent --play melodic-techno
-With duration: python -m agent --play melodic-techno --duration 60
+  python -m agent
+  python -m agent --config /path/to/config.yaml
 """
 from .main import run
+
 run()

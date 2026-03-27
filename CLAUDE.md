@@ -43,9 +43,10 @@ djtreta stop                               # stop
 
 ## Prerequisites
 
-- Mixxx fork (VeltriaAI/mixxx, branch feature/http-api) — auto-started by Being
-- LiteLLM proxy: `ssh -L 4000:localhost:4000 epadmin@20.235.125.250`
+- Mixxx fork (VeltriaAI/mixxx, branch feature/http-api) — auto-started when `mixxx.auto_start: true`
+- LiteLLM proxy: `ssh -L 4000:localhost:4000 epadmin@20.235.125.250` (or local LiteLLM)
 - Python venv with: smolagents, litellm, httpx, pyyaml, textual, rich
+- LLM key: `DJTRETA_LLM_API_KEY` or `LLM_API_KEY` (or `llm.api_key` in `config.yaml`)
 
 ## Brain Model
 

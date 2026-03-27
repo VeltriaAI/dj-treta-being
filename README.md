@@ -17,7 +17,7 @@ DJ Treta is an autonomous AI DJ built on the [Beings Protocol](https://github.co
 
 ```
 main.py (~200 lines)
-  └── _pulse(): every 5s, look at Mixxx reality, call agent if action needed
+  └── _pulse(): on daemon.pulse_interval_seconds, look at Mixxx, call agent if needed
 
 agents.py
   └── DJ Agent (manager) ← smolagents ToolCallingAgent + managed_agents
@@ -30,11 +30,18 @@ tools.py (30 tools)
   ├── Beat control: set_rate, reset_bpm, align_beats, nudge_track
   ├── Audio perception: hear_music, analyze_track, preview_track
   ├── Discovery: search_music, download_track
-  ├── Self-awareness: read_file, write_file, run_shell
+  ├── Self-awareness: read_file, write_file (sandboxed), run_shell (off unless config)
   └── Memory: save_learning, recall_learnings
 ```
 
-**Zero deterministic DJ logic.** No watchdog, no state machine, no timers. The agent looks at Mixxx, decides what to do, and acts. Every 5 seconds.
+**Zero deterministic DJ logic.** No watchdog, no state machine. The agent looks at Mixxx, decides what to do, and acts on each pulse (default 5s; see `daemon.pulse_interval_seconds` and `transitions.lookahead_seconds` in `config.yaml`).
+
+## Configuration and secrets
+
+- **`DJTRETA_LLM_API_KEY`** or **`LLM_API_KEY`**: if set, overrides `llm.api_key` in `config.yaml` (recommended so keys are not committed).  
+- Optional gitignored **`config.local.yaml`**: copy from `config.yaml` and adjust; merge support can be added later — for now use env or edit `config.yaml` locally.  
+- **`capabilities.allow_shell`**: keep `false` unless you trust the machine; the agent’s shell tool is disabled otherwise.  
+- **`mixxx.auto_start`**, **`mixxx.binary`**: control auto-launch and paths (defaults match the usual macOS `mixxx-treta` layout).
 
 ## Three Components
 
@@ -53,7 +60,10 @@ cd ~/beings/dj-treta
 python3 -m venv .venv && source .venv/bin/activate
 pip install smolagents litellm httpx pyyaml textual rich
 
-# Start (Mixxx auto-starts)
+# API key for LiteLLM (example)
+export DJTRETA_LLM_API_KEY="your-key"
+
+# Start (Mixxx auto-starts when mixxx.auto_start is true)
 djtreta start
 
 # Talk to her

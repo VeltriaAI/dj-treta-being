@@ -11,6 +11,10 @@ import yaml
 class MixxxConfig:
     url: str = "http://localhost:7778"
     timeout: int = 5
+    auto_start: bool = True
+    binary: str = ""
+    resource_path: str = ""
+    settings_path: str = ""
 
 
 @dataclass
@@ -40,6 +44,7 @@ class TransitionConfig:
 
 @dataclass
 class DaemonConfig:
+    pulse_interval_seconds: float = 5.0
     poll_hz: int = 2
     max_errors: int = 10
 
@@ -52,6 +57,11 @@ class SetConfig:
 
 
 @dataclass
+class CapabilitiesConfig:
+    allow_shell: bool = False
+
+
+@dataclass
 class Config:
     mixxx: MixxxConfig = field(default_factory=MixxxConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
@@ -59,6 +69,12 @@ class Config:
     transitions: TransitionConfig = field(default_factory=TransitionConfig)
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
     set: SetConfig = field(default_factory=SetConfig)
+    capabilities: CapabilitiesConfig = field(default_factory=CapabilitiesConfig)
+
+
+def _pick_fields(d: dict, cls: type) -> dict:
+    fields = getattr(cls, "__dataclass_fields__", {})
+    return {k: v for k, v in d.items() if k in fields}
 
 
 def load_config(path: str | Path | None = None) -> Config:
@@ -68,23 +84,33 @@ def load_config(path: str | Path | None = None) -> Config:
     path = Path(path)
 
     if not path.exists():
-        return Config()
+        cfg = Config()
+        env_key = os.environ.get("DJTRETA_LLM_API_KEY") or os.environ.get("LLM_API_KEY")
+        if env_key:
+            cfg.llm.api_key = env_key
+        return cfg
 
     with open(path) as f:
         raw = yaml.safe_load(f) or {}
 
     cfg = Config()
     if "mixxx" in raw:
-        cfg.mixxx = MixxxConfig(**raw["mixxx"])
+        cfg.mixxx = MixxxConfig(**_pick_fields(raw["mixxx"], MixxxConfig))
     if "llm" in raw:
-        cfg.llm = LLMConfig(**raw["llm"])
+        cfg.llm = LLMConfig(**_pick_fields(raw["llm"], LLMConfig))
     if "library" in raw:
-        cfg.library = LibraryConfig(**raw["library"])
+        cfg.library = LibraryConfig(**_pick_fields(raw["library"], LibraryConfig))
     if "transitions" in raw:
-        cfg.transitions = TransitionConfig(**raw["transitions"])
+        cfg.transitions = TransitionConfig(**_pick_fields(raw["transitions"], TransitionConfig))
     if "daemon" in raw:
-        cfg.daemon = DaemonConfig(**raw["daemon"])
+        cfg.daemon = DaemonConfig(**_pick_fields(raw["daemon"], DaemonConfig))
     if "set" in raw:
-        cfg.set = SetConfig(**raw["set"])
+        cfg.set = SetConfig(**_pick_fields(raw["set"], SetConfig))
+    if "capabilities" in raw:
+        cfg.capabilities = CapabilitiesConfig(**_pick_fields(raw["capabilities"], CapabilitiesConfig))
+
+    env_key = os.environ.get("DJTRETA_LLM_API_KEY") or os.environ.get("LLM_API_KEY")
+    if env_key:
+        cfg.llm.api_key = env_key
 
     return cfg

@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 .DS_Store
 .beings/session.json
+config.local.yaml
+.env

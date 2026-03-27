@@ -6,6 +6,8 @@ DJ Agent (manager) delegates to:
 """
 
 import json
+import time
+from functools import partial
 from pathlib import Path
 
 from smolagents import ToolCallingAgent, LiteLLMModel
@@ -109,6 +111,16 @@ MODEL_PRICING = {
 }
 
 
+def _pricing_for_model(model_id: str) -> dict:
+    mid = model_id.lower()
+    for name, rates in MODEL_PRICING.items():
+        if name == "default":
+            continue
+        if name in mid:
+            return rates
+    return MODEL_PRICING["default"]
+
+
 def _load_billing() -> dict:
     try:
         if BILLING_FILE.exists():
@@ -126,10 +138,7 @@ def _save_billing(data: dict):
         pass
 
 
-import time
-
-
-def _step_callback(step, agent=None):
+def _step_callback(step, agent=None, model_id: str = ""):
     """Captures agent thinking after each step — written to file for TUI."""
     try:
         lines = []
@@ -179,7 +188,7 @@ def _step_callback(step, agent=None):
                 billing["calls"] += 1
 
                 # Calculate cost
-                pricing = MODEL_PRICING.get("default")
+                pricing = _pricing_for_model(model_id) if model_id else MODEL_PRICING["default"]
                 cost = (inp / 1_000_000 * pricing["input"]) + (out / 1_000_000 * pricing["output"])
                 billing["total_cost_usd"] += cost
 
@@ -220,6 +229,7 @@ def create_model(config: Config) -> LiteLLMModel:
 def create_dj_agent(config: Config) -> ToolCallingAgent:
     """Create the full multi-agent DJ system."""
     model = create_model(config)
+    step_cb = partial(_step_callback, model_id=config.llm.model)
 
     mixer = ToolCallingAgent(
         tools=[
@@ -233,7 +243,7 @@ def create_dj_agent(config: Config) -> ToolCallingAgent:
         name="mixer",
         description="Controls Mixxx DJ decks — load tracks, play, pause, EQ, filter, sync, volume, crossfade, and execute transitions (smooth blend or bass swap). IMPORTANT: load_track requires the FULL ABSOLUTE file path (e.g. /Users/.../Music/DJTreta/genre/file.mp3). Use list_library_tracks to find paths.",
         max_steps=10,
-        step_callbacks=[_step_callback],
+        step_callbacks=[step_cb],
     )
 
     library = ToolCallingAgent(
@@ -244,7 +254,7 @@ def create_dj_agent(config: Config) -> ToolCallingAgent:
         name="library",
         description="Manages the DJ music library — list available tracks by genre folder, search YouTube for new music, download tracks, check what's been played in this set. Use for ALL track discovery.",
         max_steps=8,
-        step_callbacks=[_step_callback],
+        step_callbacks=[step_cb],
     )
 
     # Clear thinking log on new agent creation
@@ -267,7 +277,7 @@ def create_dj_agent(config: Config) -> ToolCallingAgent:
         planning_interval=5,
         name="dj_treta",
         description="DJ Treta — autonomous AI DJ",
-        step_callbacks=[_step_callback],
+        step_callbacks=[step_cb],
     )
 
     return dj
