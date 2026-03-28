@@ -573,8 +573,9 @@ class DJTretaBeing:
                 resp = completion(
                     model=cfg.llm.model,
                     messages=[{"role": "user", "content":
-                        f"Name this DJ set in 2-4 words. Mood: {set_mood}. Set #{set_number}. "
-                        f"Be creative, evocative. No quotes. Just the name."}],
+                        f"Reply with ONLY a creative 2-4 word name for a {set_mood} DJ set. "
+                        f"Examples: Midnight Signal, Dark Matter, Velvet Underground, Neural Drift. "
+                        f"No explanation. No quotes. Just the name."}],
                     api_base=cfg.llm.api_base, api_key=cfg.llm.api_key,
                     temperature=0.9, timeout=10,
                 )
