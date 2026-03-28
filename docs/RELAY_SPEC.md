@@ -56,6 +56,57 @@ Every push is a JSON object. Server receives ~3 messages/second.
     "deck2Right": 0.0
   },
   "crossfader": -0.85,
+  "decks": {
+    "deck1": {
+      "title": "Home (feat. Delhia De France)",
+      "artist": "Adriatique & Marino Canal",
+      "bpm": 122.0,
+      "key": "Dm (7A)",
+      "playing": true,
+      "trackLoaded": true,
+      "syncEnabled": true,
+      "duration": 398.0,
+      "elapsed": 214.5,
+      "remaining": 183.5,
+      "volume": 1.0,
+      "eqHi": 1.0,
+      "eqMid": 0.8,
+      "eqLo": 1.0,
+      "vuLeft": 0.389,
+      "vuRight": 0.371,
+      "waveform": {"low": [...], "mid": [...], "high": [...], "data_size": 3842} | null
+    },
+    "deck2": {
+      "title": "Eternity (Extended Mix)",
+      "artist": "Anyma & Chris Avantgarde",
+      "bpm": 124.0,
+      "key": "Cm (5A)",
+      "playing": false,
+      "trackLoaded": true,
+      "syncEnabled": false,
+      "duration": 320.0,
+      "elapsed": 0,
+      "remaining": 320.0,
+      "volume": 1.0,
+      "eqHi": 1.0,
+      "eqMid": 1.0,
+      "eqLo": 1.0,
+      "vuLeft": 0.0,
+      "vuRight": 0.0,
+      "waveform": null
+    }
+  },
+  "transition": {
+    "strategy": "Bass swap locked at 124.0 BPM. Key: Dm (7A) → Cm (5A). Crossfader curve: S-type.",
+    "countdown": "01:55"
+  },
+  "harmonicMap": {
+    "currentKey": "7A",
+    "nextKey": "5A",
+    "currentMusical": "Dm",
+    "nextMusical": "Cm",
+    "movement": "Energy Boost (+2 semitones)"
+  },
   "set": {
     "id": "set-20260328-2110",
     "number": 2,
@@ -76,14 +127,16 @@ Every push is a JSON object. Server receives ~3 messages/second.
     "startedAt": 1774712444.11
   },
   "brain": {
-    "lastDecision": "Transitioned to Deck 2 over 45s. Deck 1 ejected."
+    "lastDecision": "Transitioned to Deck 2 over 45s. Deck 1 ejected.",
+    "currentIntent": "Buildup in progress. Energy climbing at 7.2. Tension building.",
+    "transitionAnalysis": "Bass swap locked at 124.0 BPM. Key: 7A → 5A. Crossfader curve: S-type.",
+    "processingLoad": 59,
+    "decisionLog": [
+      {"time": "22:47:12", "text": "Selecting track. Key 5A compatible with current 8A."},
+      {"time": "22:45:30", "text": "Bass swap technique chosen. Both tracks 4/4 with clear bass lines."},
+      {"time": "22:43:15", "text": "Energy plateau detected at 7.2. Holding through breakdown."}
+    ]
   },
-  "waveform": {
-    "low": [0.1, 0.3, 0.5, ...],
-    "mid": [0.2, 0.4, 0.6, ...],
-    "high": [0.05, 0.1, 0.15, ...],
-    "data_size": 3842
-  } | null,
   "history": [
     {
       "title": "Running",
@@ -155,11 +208,47 @@ Full set metadata. Updated every push.
 | `energyArc` | Array of `{time, energy}` samples (last 20) |
 | `startedAt` | Unix timestamp when set started |
 
-### `waveform`
+### `decks` (Neural Deck page)
+Per-deck state for the dual-deck dashboard:
+
+| Field | Description |
+|-------|-------------|
+| `title`, `artist` | Parsed from Mixxx track info |
+| `bpm` | Real-time BPM |
+| `key` | Camelot format: `"Dm (7A)"` |
+| `playing` | Is this deck currently playing |
+| `trackLoaded` | Is a track loaded on this deck |
+| `syncEnabled` | Sync locked to other deck |
+| `duration`, `elapsed`, `remaining` | Seconds |
+| `volume` | 0.0 - 1.0 |
+| `eqHi`, `eqMid`, `eqLo` | EQ values (1.0 = flat, 0 = cut) |
+| `vuLeft`, `vuRight` | VU meter values |
+| `waveform` | Per-deck waveform (sent once per track change, then `null`) |
+
+### `transition`
+Crossfader section data:
+
+| Field | Description |
+|-------|-------------|
+| `strategy` | Transition technique + BPM + key analysis text |
+| `countdown` | `"01:55"` — time until active track ends. Empty if no idle track loaded. |
+
+### `harmonicMap` (Camelot Wheel)
+For the circular key compatibility visualization:
+
+| Field | Description |
+|-------|-------------|
+| `currentKey` | Active deck Camelot code: `"7A"`, `"8B"` |
+| `nextKey` | Idle deck Camelot code |
+| `currentMusical` | Musical key: `"Dm"`, `"Am"` |
+| `nextMusical` | Musical key of idle deck |
+| `movement` | Human-readable: `"Energy Boost (+2 semitones)"`, `"Same key"`, `"Compatible key"`, `"Relative key (parallel)"` |
+
+### `waveform` (top-level, deprecated)
+Kept for backwards compat. Use `decks.deck1.waveform` / `decks.deck2.waveform` instead.
 - Sent **only once per track change** (not every push)
 - `null` on subsequent pushes = frontend keeps previous data
 - 3842 points per channel: `low`, `mid`, `high`
-- Used for scrolling waveform visualization
 
 ### `history`
 Last 20 tracks played. Each: title, artist, time played, energy level.
@@ -181,7 +270,8 @@ Neural processing data for the sidebar panel:
 | `currentIntent` | CURRENT INTENT card | What the AI is thinking right now. Changes based on perception: breakdown/buildup/drop detection, energy direction, track timing. |
 | `transitionAnalysis` | TRANSITION ANALYSIS card | Technical transition details: BPM lock, key compatibility (Camelot), crossfader curve type. Shows "No track loaded on standby deck" if idle deck empty. |
 | `processingLoad` | Processing Load bar | 0-100%. Higher during transitions, buildups, drops. Based on tension + event detection. |
-| `lastDecision` | Scrollable log | Last brain decision text (300 chars max). |
+| `lastDecision` | Last decision | Last brain decision text (300 chars max). |
+| `decisionLog` | NEURAL DECISION LOG | Array of `{time, text}` entries (last 20). Timestamped brain decisions for scrollable log. |
 
 ---
 
@@ -287,3 +377,31 @@ DJTRETA_RELAY_TOKEN=dj-treta-prod-2026-secret
 ---
 
 *Written as a handoff spec for the dj.treta.life server implementation.*
+
+---
+
+## Server Review (from dj.treta.life session — 2026-03-28)
+
+**Status: Server updated to handle v4.0 relay format. The following is implemented:**
+
+- ✅ Waveform caching — server caches waveform when non-null, re-injects on subsequent null pushes
+- ✅ Set lifecycle tracking — server logs when `set.status` changes to `"finished"`
+- ✅ Backwards compat — handles old relay format (flat `set: {elapsed, remaining, tracksPlayed}`)
+- ✅ Fan-out to browsers working at 3Hz
+- ✅ Listener count injected into every push
+- ✅ Icecast recording configured (dump-file on VM)
+- ✅ Types updated: rich SetInfo, nullable waveform, optional brain fields
+
+**Still TODO on server side (future sessions):**
+
+- [ ] **ffmpeg recording** — start/stop ffmpeg capture based on `set.status` (currently using Icecast dump-file which overwrites). Better: server runs `ffmpeg -i http://localhost:8000/live -c copy /data/sets/{set_id}.mp3` when set starts, kills it when set ends.
+- [ ] **Set metadata storage** — save finished set JSON to `/data/sets/{set_id}.json` (tracklist, energy arc, duration, mood)
+- [ ] **Archive API** — `GET /api/sets`, `GET /api/sets/:id`, `GET /api/sets/:id/audio`
+- [ ] **PostgreSQL** — for auth, waitlist, set metadata (Phase 2.5/3)
+
+**Requests for DJ Treta Being:**
+
+1. Make sure `set.id` format is consistent: `"set-YYYYMMDD-HHMM"` — server will use this as filename
+2. When set finishes, push ONE final message with `set.status = "finished"` and full `energyArc` + `tracksPlayed` count — server saves this as the set record
+3. `waveform` — confirm it's sent once per track change, then `null`. Server caches correctly.
+4. `brain.lastDecision` — is this the raw agent output? Truncate to 300 chars on being side if possible to keep WS payload small
