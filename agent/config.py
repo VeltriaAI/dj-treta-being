@@ -70,6 +70,26 @@ class PlannerConfig:
 
 
 @dataclass
+class SetsConfig:
+    auto_mode: bool = True
+    default_duration_minutes: int = 120
+    recording_dir: str = "~/Music/DJTreta/recordings"
+
+
+@dataclass
+class RelayConfig:
+    enabled: bool = False
+    server_url: str = "wss://dj.treta.life/ws/relay"
+    token: str = ""
+    push_hz: int = 3
+
+
+@dataclass
+class BroadcastConfig:
+    auto_start: bool = True
+
+
+@dataclass
 class Config:
     mixxx: MixxxConfig = field(default_factory=MixxxConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
@@ -79,6 +99,9 @@ class Config:
     set: SetConfig = field(default_factory=SetConfig)
     capabilities: CapabilitiesConfig = field(default_factory=CapabilitiesConfig)
     planner: PlannerConfig = field(default_factory=PlannerConfig)
+    sets: SetsConfig = field(default_factory=SetsConfig)
+    relay: RelayConfig = field(default_factory=RelayConfig)
+    broadcast: BroadcastConfig = field(default_factory=BroadcastConfig)
 
 
 def _pick_fields(d: dict, cls: type) -> dict:
@@ -128,6 +151,12 @@ def load_config(path: str | Path | None = None) -> Config:
         cfg.capabilities = CapabilitiesConfig(**_pick_fields(raw["capabilities"], CapabilitiesConfig))
     if "planner" in raw:
         cfg.planner = PlannerConfig(**_pick_fields(raw["planner"], PlannerConfig))
+    if "sets" in raw:
+        cfg.sets = SetsConfig(**_pick_fields(raw["sets"], SetsConfig))
+    if "relay" in raw:
+        cfg.relay = RelayConfig(**_pick_fields(raw["relay"], RelayConfig))
+    if "broadcast" in raw:
+        cfg.broadcast = BroadcastConfig(**_pick_fields(raw["broadcast"], BroadcastConfig))
 
     env_key = os.environ.get("DJTRETA_LLM_API_KEY") or os.environ.get("LLM_API_KEY")
     if env_key:

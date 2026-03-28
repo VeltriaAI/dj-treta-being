@@ -34,9 +34,23 @@ capabilities:
   allow_shell: false
 
 planner:
-  replan_every_n_tracks: 2      # re-plan after N tracks played
-  download_new_tracks: 3         # download N new tracks each plan cycle
-  min_play_time_seconds: 180     # minimum time on deck before transition
+  replan_every_n_tracks: 2
+  download_new_tracks: 3
+  min_play_time_seconds: 180
+
+sets:
+  auto_mode: true
+  default_duration_minutes: 120
+  recording_dir: "~/Music/DJTreta/recordings"
+
+relay:
+  enabled: false
+  server_url: "wss://dj.treta.life/ws/relay"
+  token: ""
+  push_hz: 3
+
+broadcast:
+  auto_start: true
 
 set:
   default_mood: "techno-deep"

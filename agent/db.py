@@ -44,13 +44,29 @@ def init_db():
         created_at REAL DEFAULT (strftime('%s','now'))
     );
 
+    CREATE TABLE IF NOT EXISTS sets (
+        id TEXT PRIMARY KEY,
+        started_at REAL,
+        ended_at REAL,
+        mood TEXT,
+        genre TEXT,
+        target_duration_minutes INTEGER,
+        actual_duration_minutes REAL,
+        track_count INTEGER DEFAULT 0,
+        energy_arc TEXT,
+        status TEXT DEFAULT 'live',
+        recording_path TEXT,
+        synced_at REAL
+    );
+
     CREATE TABLE IF NOT EXISTS set_history (
         id INTEGER PRIMARY KEY,
+        set_id TEXT REFERENCES sets(id),
         track_id INTEGER REFERENCES tracks(id),
         title TEXT,
         played_at REAL,
         deck INTEGER,
-        session_id TEXT
+        transition_type TEXT
     );
 
     CREATE TABLE IF NOT EXISTS learnings (
@@ -205,3 +221,70 @@ def scan_library(music_path: Path):
         for f in sorted(genre_dir.iterdir()):
             if f.suffix.lower() in ('.mp3', '.wav', '.flac', '.ogg', '.m4a'):
                 upsert_track(path=str(f), title=f.stem, genre=genre_dir.name)
+
+
+# ── Sets ──────────────────────────────────────────────────────────────
+
+def insert_set(set_data: dict):
+    db = get_db()
+    try:
+        db.execute(
+            "INSERT INTO sets (id, started_at, mood, genre, target_duration_minutes, status) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (set_data["id"], set_data["started_at"], set_data.get("mood"),
+             set_data.get("genre"), set_data.get("target_duration"), "live")
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
+def update_set(set_data: dict):
+    db = get_db()
+    try:
+        actual = None
+        if set_data.get("ended_at") and set_data.get("started_at"):
+            actual = (set_data["ended_at"] - set_data["started_at"]) / 60
+        db.execute(
+            "UPDATE sets SET ended_at=?, status=?, actual_duration_minutes=?, "
+            "track_count=?, energy_arc=?, recording_path=? WHERE id=?",
+            (set_data.get("ended_at"), set_data.get("status", "finished"),
+             actual, set_data.get("track_count", 0),
+             json.dumps(set_data.get("energy_arc", [])),
+             set_data.get("recording_path"), set_data["id"])
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
+def add_track_to_set(set_id: str, title: str, deck: int, transition_type: str = ""):
+    db = get_db()
+    try:
+        db.execute(
+            "INSERT INTO set_history (set_id, title, played_at, deck, transition_type) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (set_id, title, time.time(), deck, transition_type)
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
+def get_current_set() -> dict | None:
+    db = get_db()
+    try:
+        row = db.execute("SELECT * FROM sets WHERE status='live' ORDER BY started_at DESC LIMIT 1").fetchone()
+        return dict(row) if row else None
+    finally:
+        db.close()
+
+
+def get_set_tracks(set_id: str) -> list[dict]:
+    db = get_db()
+    try:
+        return [dict(r) for r in db.execute(
+            "SELECT * FROM set_history WHERE set_id=? ORDER BY played_at", (set_id,)
+        ).fetchall()]
+    finally:
+        db.close()

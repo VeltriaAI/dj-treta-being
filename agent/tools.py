@@ -744,7 +744,10 @@ def do_transition(to_deck: int, duration: int = 60) -> str:
     _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5})
     _mixxx_post("/api/filter", {"deck": to_deck, "value": 0.5})
 
-    return f"Transitioned to Deck {to_deck} over {duration}s. Deck {out_deck} paused."
+    # Eject outgoing deck — prevents "loaded but finished" state
+    _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
+
+    return f"Transitioned to Deck {to_deck} over {duration}s. Deck {out_deck} ejected."
 
 
 @tool
@@ -805,7 +808,10 @@ def do_bass_swap(to_deck: int, duration: int = 60) -> str:
         _mixxx_post("/api/eq", {"deck": out_deck, band: 1.0})
         _mixxx_post("/api/eq", {"deck": to_deck, band: 1.0})
 
-    return f"Bass-swapped to Deck {to_deck} over {duration}s. Deck {out_deck} paused."
+    # Eject outgoing deck
+    _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
+
+    return f"Bass-swapped to Deck {to_deck} over {duration}s. Deck {out_deck} ejected."
 
 
 # ═══════════════════════════════════════════════════════════════════════

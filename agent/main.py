@@ -195,6 +195,9 @@ class DJTretaBeing:
         # Self-evolution tracking
         self._last_reflect_count = 0
 
+        # Current set
+        self.current_set = None
+
         # Track when each deck's current track started (for minimum play time)
         self._deck_start_time = {1: 0.0, 2: 0.0}  # wall clock when track started on deck
         self._deck_track = {1: "", 2: ""}  # track path on each deck
@@ -236,6 +239,10 @@ class DJTretaBeing:
         # Planner loop — background track planning
         threading.Thread(target=self._planner_loop, daemon=True).start()
 
+        # Start broadcast + recording + set
+        self._start_broadcast()
+        self._start_set()
+
         # Main loop — the Being's heartbeat
         self._next_sleep = 30
         log.info("Ready. Listening.")
@@ -254,6 +261,16 @@ class DJTretaBeing:
         log.info("DJ Treta Being shutting down")
 
     def stop(self):
+        # End set + recording + broadcast gracefully
+        if self.current_set:
+            from .db import update_set
+            self.current_set["status"] = "finished"
+            self.current_set["ended_at"] = time.time()
+            self.current_set["track_count"] = len(self.tracks_played)
+            self._stop_recording()
+            update_set(self.current_set)
+            log.info(f"Set ended on shutdown: {self.current_set['id']}")
+        self._stop_broadcast()
         self._save_session()
         self._running = False
         PID_FILE.unlink(missing_ok=True)
@@ -336,6 +353,7 @@ class DJTretaBeing:
             self._next_sleep = 10
 
         self._record_playing_tracks()
+        self._check_set_duration()
 
     def _execute_transition(self, to_deck, duration):
         """Execute transition. Only called by heartbeat. Uses _agent_busy to prevent re-entry."""
@@ -499,6 +517,92 @@ class DJTretaBeing:
                             self.tracks_played.append({"title": title, "time": time.time()})
         except Exception:
             pass
+
+    # ── Sets + Recording + Broadcast ─────────────────────────────────
+
+    def _start_set(self, mood=None, genre=None, duration=None):
+        """Start a new DJ set. Auto-decides mood/duration if not provided."""
+        from .db import insert_set
+        set_id = f"set-{time.strftime('%Y%m%d-%H%M')}"
+        self.current_set = {
+            "id": set_id,
+            "started_at": time.time(),
+            "mood": mood or self.mood or "melodic-techno",
+            "genre": genre or "melodic-techno",
+            "target_duration": duration or 120,
+            "tracks": [],
+            "energy_arc": [],
+            "status": "live",
+        }
+        insert_set(self.current_set)
+        self._start_recording()
+        log.info(f"Set started: {set_id} ({self.current_set['mood']}, {self.current_set['target_duration']}m)")
+
+    def _end_set(self):
+        """End current set, stop recording, auto-start new one."""
+        if not self.current_set:
+            return
+        from .db import update_set
+        self.current_set["status"] = "finished"
+        self.current_set["ended_at"] = time.time()
+        self.current_set["track_count"] = len(self.tracks_played)
+        self._stop_recording()
+        update_set(self.current_set)
+        log.info(f"Set ended: {self.current_set['id']} ({len(self.tracks_played)} tracks)")
+        # Auto-start new set
+        self._start_set()
+
+    def _check_set_duration(self):
+        """Check if current set has reached target duration."""
+        if not self.current_set:
+            return
+        elapsed = (time.time() - self.current_set["started_at"]) / 60
+        if elapsed >= self.current_set["target_duration"]:
+            self._end_set()
+
+    def _start_recording(self):
+        """Start Mixxx recording."""
+        try:
+            url = self.config.mixxx.url
+            httpx.post(f"{url}/api/control", json={
+                "group": "[Recording]", "key": "toggle_recording", "value": 1
+            }, timeout=3)
+            log.info("Recording started")
+        except Exception as e:
+            log.warning(f"Recording start failed: {e}")
+
+    def _stop_recording(self):
+        """Stop Mixxx recording."""
+        try:
+            url = self.config.mixxx.url
+            httpx.post(f"{url}/api/control", json={
+                "group": "[Recording]", "key": "toggle_recording", "value": 0
+            }, timeout=3)
+            log.info("Recording stopped")
+        except Exception as e:
+            log.warning(f"Recording stop failed: {e}")
+
+    def _start_broadcast(self):
+        """Enable Mixxx Shoutcast broadcast."""
+        try:
+            url = self.config.mixxx.url
+            httpx.post(f"{url}/api/control", json={
+                "group": "[Shoutcast]", "key": "enabled", "value": 1
+            }, timeout=3)
+            log.info("Broadcast started")
+        except Exception as e:
+            log.warning(f"Broadcast start failed: {e}")
+
+    def _stop_broadcast(self):
+        """Disable Mixxx Shoutcast broadcast."""
+        try:
+            url = self.config.mixxx.url
+            httpx.post(f"{url}/api/control", json={
+                "group": "[Shoutcast]", "key": "enabled", "value": 0
+            }, timeout=3)
+            log.info("Broadcast stopped")
+        except Exception as e:
+            log.warning(f"Broadcast stop failed: {e}")
 
     # ── Self-evolution ─────────────────────────────────────────────────
 
