@@ -590,6 +590,8 @@ class DJTretaBeing:
         self._stop_recording()
         update_set(self.current_set)
         log.info(f"Set ended: {self.current_set['id']} ({len(self.tracks_played)} tracks)")
+        # Store finished set for relay to pick up (one final push)
+        self.last_finished_set = dict(self.current_set)
         # Auto-start new set
         self._start_set()
 

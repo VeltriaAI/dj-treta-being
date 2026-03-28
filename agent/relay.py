@@ -525,6 +525,26 @@ class RelayEngine:
                 "decisionLog": self._decision_log[-20:],
             },
             "history": self._history[-20:],
+            "finishedSet": self._get_finished_set(),
             "listeners": 0,
             "timestamp": int(time.time() * 1000),
         }
+
+    def _get_finished_set(self) -> dict | None:
+        """Return finished set data once, then clear."""
+        finished = getattr(self.being, 'last_finished_set', None)
+        if finished:
+            self.being.last_finished_set = None  # clear after sending
+            return {
+                "id": finished["id"],
+                "title": finished.get("title", ""),
+                "mood": finished.get("mood", ""),
+                "genre": finished.get("genre", ""),
+                "trackCount": finished.get("track_count", 0),
+                "peakEnergy": finished.get("peak_energy", 0),
+                "energyArc": finished.get("energy_arc", []),
+                "startedAt": finished.get("started_at", 0),
+                "endedAt": finished.get("ended_at", 0),
+                "durationMinutes": round((finished.get("ended_at", 0) - finished.get("started_at", 0)) / 60, 1),
+            }
+        return None

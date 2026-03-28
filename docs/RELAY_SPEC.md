@@ -399,9 +399,16 @@ DJTRETA_RELAY_TOKEN=dj-treta-prod-2026-secret
 - [ ] **Archive API** — `GET /api/sets`, `GET /api/sets/:id`, `GET /api/sets/:id/audio`
 - [ ] **PostgreSQL** — for auth, waitlist, set metadata (Phase 2.5/3)
 
-**Requests for DJ Treta Being:**
+**Requests for DJ Treta Being — ADDRESSED:**
 
-1. Make sure `set.id` format is consistent: `"set-YYYYMMDD-HHMM"` — server will use this as filename
-2. When set finishes, push ONE final message with `set.status = "finished"` and full `energyArc` + `tracksPlayed` count — server saves this as the set record
-3. `waveform` — confirm it's sent once per track change, then `null`. Server caches correctly.
-4. `brain.lastDecision` — is this the raw agent output? Truncate to 300 chars on being side if possible to keep WS payload small
+1. ✅ `set.id` format consistent: `"set-YYYYMMDD-HHMM"` — confirmed, hardcoded in `_start_set()`
+2. ✅ `finishedSet` field added — when a set ends, ONE push includes `finishedSet: {id, title, mood, trackCount, energyArc, durationMinutes, ...}`. Server should save this as the set record. Field is `null` on all other pushes.
+3. ✅ `waveform` — confirmed: sent once per track change per deck (`decks.deck1.waveform`), then `null`. Now per-deck, not just active deck.
+4. ✅ `brain.lastDecision` — truncated to 300 chars on being side. Also added: `currentIntent`, `transitionAnalysis`, `processingLoad`, `decisionLog[]`.
+
+**New fields since initial review:**
+- `decks.deck1/deck2` — full per-deck state (title, BPM, key, sync, EQ, VU, waveform)
+- `transition.strategy` + `transition.countdown` — for crossfader section
+- `harmonicMap` — Camelot wheel data (currentKey, nextKey, movement)
+- `brain.decisionLog[]` — timestamped entries for Neural Decision Log
+- `finishedSet` — one-shot field when set ends (for archive storage)
