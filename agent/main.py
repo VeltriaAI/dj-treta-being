@@ -310,7 +310,7 @@ class DJTretaBeing:
                 threading.Thread(target=self._emergency_play, daemon=True).start()
             return
 
-        # Get mix_out from DB for active track
+        # Get mix_out + timeline from DB for active track
         mix_out = None
         if playing:
             try:
@@ -321,6 +321,20 @@ class DJTretaBeing:
                 meta = get_track_by_path(tinfo.get("file_path", ""))
                 if meta:
                     mix_out = float(meta.get("mix_out_seconds") or 0)
+                    # Smart mix_out: find best transition point from timeline
+                    timeline_str = meta.get("timeline", "")
+                    if timeline_str and not mix_out:
+                        try:
+                            import json as _json
+                            timeline = _json.loads(timeline_str) if isinstance(timeline_str, str) else timeline_str
+                            # Find last breakdown or outro — ideal transition point
+                            for section in reversed(timeline):
+                                name = section.get("section", "").lower()
+                                if any(w in name for w in ["breakdown", "outro", "build"]):
+                                    mix_out = float(section.get("start", 0))
+                                    break
+                        except Exception:
+                            pass
             except Exception:
                 pass
 
@@ -753,12 +767,25 @@ class DJTretaBeing:
         candidate_text = ""
         if candidates:
             for c in candidates:
+                # Compact timeline summary
+                timeline_summary = ""
+                tl = c.get("timeline", "")
+                if tl:
+                    try:
+                        import json as _json
+                        sections = _json.loads(tl) if isinstance(tl, str) else tl
+                        parts = [f"{s['section']}({s['energy']})" for s in sections]
+                        timeline_summary = f" | Structure: {' → '.join(parts)}"
+                    except Exception:
+                        pass
+
                 candidate_text += (
                     f"  - {c['title']} | path: {c['path']} | "
                     f"BPM:{c.get('bpm',0):.0f} Key:{c.get('key_musical','?')} "
                     f"Energy:{c.get('energy_peak','?')} "
                     f"Mix-in:{c.get('mix_in_seconds',0) or 0:.0f}s "
-                    f"Mix-out:{c.get('mix_out_seconds',0) or 0:.0f}s\n"
+                    f"Mix-out:{c.get('mix_out_seconds',0) or 0:.0f}s"
+                    f"{timeline_summary}\n"
                 )
 
         # Current track info
