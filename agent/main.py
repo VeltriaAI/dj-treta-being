@@ -545,15 +545,22 @@ class DJTretaBeing:
         set_number = get_next_set_number()
         set_mood = mood or self.mood or "melodic-techno"
 
-        # Generate set name if not provided
+        # Let the AI name the set
         if not title:
-            prefixes = [
-                "Neural Drift", "Deep Current", "Midnight Signal", "Dark Matter",
-                "Sonic Pulse", "Afterhours", "Hypnotic State", "Peak Frequency",
-                "Lost Transmission", "Neon Horizon", "Velvet Underground",
-                "Crystal Waves", "Shadow Protocol", "Infinite Loop",
-            ]
-            title = f"{random.choice(prefixes)} #{set_number}"
+            try:
+                from litellm import completion
+                cfg = load_config()
+                resp = completion(
+                    model=cfg.llm.model,
+                    messages=[{"role": "user", "content":
+                        f"Name this DJ set in 2-4 words. Mood: {set_mood}. Set #{set_number}. "
+                        f"Be creative, evocative. No quotes. Just the name."}],
+                    api_base=cfg.llm.api_base, api_key=cfg.llm.api_key,
+                    temperature=0.9, timeout=10,
+                )
+                title = resp.choices[0].message.content.strip()[:50]
+            except Exception:
+                title = f"Set #{set_number}"
 
         self.current_set = {
             "id": set_id,
