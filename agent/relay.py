@@ -246,6 +246,70 @@ class RelayEngine:
         state = self._assemble_state(live, status)
         await ws.send(json.dumps(state))
 
+    def _get_current_intent(self, perc, active_status, status, idle_deck) -> str:
+        """Generate human-readable intent from perception + state."""
+        e = perc["energy"]
+        direction = perc["energyDirection"]
+        remaining = active_status.get("remaining_seconds", 0)
+        idle_loaded = status.get(f"deck{idle_deck}", {}).get("track_loaded", False)
+
+        if perc["breakdownDetected"]:
+            return f"Breakdown detected at energy {e:.1f}. Holding steady, letting the moment breathe."
+        elif perc["dropDetected"]:
+            return f"Drop hit! Energy surged to {e:.1f}. Riding the peak."
+        elif perc["buildupDetected"]:
+            return f"Buildup in progress. Energy climbing at {e:.1f}. Tension building."
+        elif direction == "building":
+            return f"Energy rising to {e:.1f}. Building momentum for the next phase."
+        elif direction == "dropping":
+            return f"Controlled descent from {e:.1f}. Creating space for the next build."
+        elif remaining < 120 and idle_loaded:
+            return f"Track ending in {remaining:.0f}s. Next track ready. Preparing transition."
+        elif remaining < 120 and not idle_loaded:
+            return f"Track ending in {remaining:.0f}s. Searching for the next track."
+        elif e > 7:
+            return f"Peak energy at {e:.1f}. Maintaining intensity."
+        elif e < 3:
+            return f"Low energy at {e:.1f}. Ambient passage."
+        else:
+            return f"Steady groove at energy {e:.1f}. Flow state."
+
+    def _get_transition_analysis(self, active_status, status, idle_deck) -> str:
+        """Generate transition analysis from deck states."""
+        idle_status = status.get(f"deck{idle_deck}", {})
+        if not idle_status.get("track_loaded"):
+            return "No track loaded on standby deck."
+
+        active_bpm = active_status.get("bpm", 0)
+        idle_bpm = idle_status.get("bpm", 0)
+        active_key = active_status.get("key", 0)
+        idle_key = idle_status.get("key", 0)
+
+        if not active_bpm or not idle_bpm:
+            return "Analyzing tracks..."
+
+        # Key compatibility
+        active_key_str = format_key(active_key)
+        idle_key_str = format_key(idle_key)
+
+        # Determine technique based on BPM difference
+        bpm_diff = abs(active_bpm - idle_bpm)
+        if bpm_diff < 2:
+            technique = "Smooth blend"
+            curve = "S-type"
+        elif bpm_diff < 5:
+            technique = "Bass swap"
+            curve = "S-type"
+        else:
+            technique = "Filter sweep"
+            curve = "Linear"
+
+        return (
+            f"{technique} locked at {idle_bpm:.1f} BPM. "
+            f"Key: {active_key_str} → {idle_key_str}. "
+            f"Crossfader curve: {curve}."
+        )
+
     def _assemble_state(self, live: dict, status: dict) -> dict:
         """Build DJWebState for the frontend."""
         from .main import _active_idle_decks
@@ -365,6 +429,9 @@ class RelayEngine:
             "set": set_info,
             "brain": {
                 "lastDecision": self.being._last_result[:300] if self.being._last_result else "",
+                "currentIntent": self._get_current_intent(perc, active_status, status, idle_deck),
+                "transitionAnalysis": self._get_transition_analysis(active_status, status, idle_deck),
+                "processingLoad": round(min(100, perc["tension"] * 10 + (10 if perc["buildupDetected"] else 0) + (15 if perc["dropDetected"] else 0))),
             },
             "waveform": waveform,
             "history": self._history[-20:],

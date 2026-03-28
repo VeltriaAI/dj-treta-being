@@ -165,7 +165,23 @@ Full set metadata. Updated every push.
 Last 20 tracks played. Each: title, artist, time played, energy level.
 
 ### `brain`
-Latest brain decision text (truncated to 300 chars). Shows what the AI decided last.
+Neural processing data for the sidebar panel:
+
+```json
+{
+  "lastDecision": "Transitioned to Deck 2 over 45s.",
+  "currentIntent": "Buildup in progress. Energy climbing at 7.2. Tension building.",
+  "transitionAnalysis": "Bass swap locked at 126.8 BPM. Key: Am (8A) → Dm (7A). Crossfader curve: S-type.",
+  "processingLoad": 59
+}
+```
+
+| Field | UI Element | Description |
+|-------|-----------|-------------|
+| `currentIntent` | CURRENT INTENT card | What the AI is thinking right now. Changes based on perception: breakdown/buildup/drop detection, energy direction, track timing. |
+| `transitionAnalysis` | TRANSITION ANALYSIS card | Technical transition details: BPM lock, key compatibility (Camelot), crossfader curve type. Shows "No track loaded on standby deck" if idle deck empty. |
+| `processingLoad` | Processing Load bar | 0-100%. Higher during transitions, buildups, drops. Based on tension + event detection. |
+| `lastDecision` | Scrollable log | Last brain decision text (300 chars max). |
 
 ---
 
