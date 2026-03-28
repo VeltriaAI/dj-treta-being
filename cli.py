@@ -437,42 +437,49 @@ def _kill_all():
     console.print("[yellow]Killed: daemon, Mixxx, LiteLLM[/yellow]")
 
 
-def _reset():
-    """Full reset — kill everything, clean library, clear all state."""
+def _reset(hard=False):
+    """Reset state. Soft = keep library + DB. Hard = delete everything."""
     import shutil
     import subprocess
 
-    console.print("[yellow]Resetting everything...[/yellow]")
+    mode = "hard" if hard else "soft"
+    console.print(f"[yellow]Resetting ({mode})...[/yellow]")
 
     # Kill daemon + Mixxx
     subprocess.run(["pkill", "-f", "python.*agent"], capture_output=True)
     subprocess.run(["pkill", "-f", "mixxx"], capture_output=True)
 
-    # Clean state files
+    # Clean state files (always)
     for f in ["/tmp/dj-treta-state.json", "/tmp/dj-treta-command.json",
               "/tmp/dj-treta-thinking.log", "/tmp/dj-treta-daemon.log",
-              "/tmp/dj-treta.pid", "/tmp/dj-treta-billing.json"]:
+              "/tmp/dj-treta.pid", "/tmp/dj-treta-billing.json",
+              "/tmp/dj-treta-playlist.json"]:
         Path(f).unlink(missing_ok=True)
 
-    # Clean session
+    # Clean session (always)
     DJ_HOME = Path.home() / "beings" / "dj-treta"
     (DJ_HOME / ".beings" / "session.json").unlink(missing_ok=True)
-    learnings = DJ_HOME / ".beings" / "memory" / "learnings.json"
-    learnings.unlink(missing_ok=True)
 
-    # Clean library
     music_dir = Path.home() / "Music" / "DJTreta"
-    if music_dir.exists():
-        shutil.rmtree(music_dir)
-    for genre in ["melodic-techno", "dark-techno", "deep", "progressive",
-                  "minimal", "vocal", "psychill", "psytrance", "techno"]:
-        (music_dir / genre).mkdir(parents=True, exist_ok=True)
 
-    # Clean analysis cache
-    (music_dir / ".analysis").mkdir(exist_ok=True)
+    if hard:
+        # Nuclear — delete library + DB
+        if music_dir.exists():
+            shutil.rmtree(music_dir)
+        for genre in ["melodic-techno", "dark-techno", "deep", "progressive",
+                      "minimal", "vocal", "psychill", "psytrance", "techno"]:
+            (music_dir / genre).mkdir(parents=True, exist_ok=True)
+        (DJ_HOME / "djtreta.db").unlink(missing_ok=True)
+        console.print("[green]Hard reset complete.[/green]")
+        console.print(f"  Library: deleted")
+        console.print(f"  Database: deleted")
+    else:
+        # Soft — keep library + DB
+        track_count = sum(1 for _ in music_dir.rglob("*.mp3")) if music_dir.exists() else 0
+        console.print("[green]Soft reset complete.[/green]")
+        console.print(f"  Library: {track_count} tracks (kept)")
+        console.print(f"  Database: kept")
 
-    console.print("[green]Reset complete.[/green]")
-    console.print(f"  Library: 0 tracks")
     console.print(f"  State: cleared")
     console.print(f"  Billing: cleared")
     console.print(f"[dim]  djtreta start to begin fresh[/dim]")
@@ -535,7 +542,8 @@ def main():
             _daemon_cmd("restart")
             return
         elif cmd == "reset":
-            _reset()
+            hard = "--hard" in sys.argv[2:] or "hard" in sys.argv[2:]
+            _reset(hard=hard)
             return
         elif cmd == "kill":
             _kill_all()

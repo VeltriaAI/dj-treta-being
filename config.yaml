@@ -33,6 +33,11 @@ capabilities:
   # Set true only on a trusted machine; agent can run arbitrary shell commands when enabled
   allow_shell: false
 
+planner:
+  replan_every_n_tracks: 2      # re-plan after N tracks played
+  download_new_tracks: 3         # download N new tracks each plan cycle
+  min_play_time_seconds: 180     # minimum time on deck before transition
+
 set:
   default_mood: "techno-deep"
   energy_max_jump: 2

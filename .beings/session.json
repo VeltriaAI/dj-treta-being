@@ -1,38 +1,40 @@
 {
-  "mood": "deep",
+  "mood": "",
   "tracks_played": [
     {
-      "title": "Neon Kora - Neural Flow - Deep Focus Progressive House \uff5c 124 BPM \uff5c Neon Kora 4K",
-      "time": 1774614347.1553888
+      "title": "Argy - Argy, Joshlane - Papito",
+      "time": 1774709687.652805
     },
     {
-      "title": "Bonobo - Bonobo - Kerala (Official Audio)",
-      "time": 1774614580.8098712
+      "title": "Afterlife - Anyma & Chris Avantgarde - Eternity (Extended Mix)",
+      "time": 1774709818.371768
     },
     {
-      "title": "B14ckic3 - Marc Romboy vs Stephan Bodzin - Triton (Original Mix)",
-      "time": 1774614859.756806
+      "title": "Afterlife - Massano - System",
+      "time": 1774710332.149631
     },
     {
-      "title": "Christian L\u00f6ffler - Christian L\u00f6ffler - Haul (feat. Mohna)",
-      "time": 1774615912.765812
+      "title": "Afterlife - Kevin de Vries - Dance With Me",
+      "time": 1774710578.020331
     },
     {
-      "title": "INF Beat - INF Eternal Love - Deep Melodic Techno \uff5c 126 BPM Iconic Pluck & Epic Hook",
-      "time": 1774616177.90945
+      "title": "No Name - Anyma & Meg Myers - Running (feat. Meg Myers)",
+      "time": 1774710832.71916
     },
     {
-      "title": "adriatique - Adriatique - Soul Valley (Original Mix)",
-      "time": 1774616395.1076322
+      "title": "Stephan Bodzin \u2014 Isaac (official)",
+      "time": 1774711201.4802392
     },
     {
-      "title": "Defected Records - A\u0302me - Rej (Original) [Full Length] 2006",
-      "time": 1774616917.317512
-    },
-    {
-      "title": "Ellum - ELL018 Maceo Plex - Conjure Balearia (Original Mix)",
-      "time": 1774620611.81543
+      "title": "Artbat-Tabu (Original mix)",
+      "time": 1774711456.482882
     }
   ],
-  "saved_at": 1774620645.110019
+  "chat_history": [
+    {
+      "user": "in mood of some argy tracks like papito",
+      "response": "I have played Argy - Argy, Joshlane - Papito on deck 1, and set crossfader to deck 1."
+    }
+  ],
+  "saved_at": 1774711794.056947
 }

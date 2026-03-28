@@ -308,13 +308,13 @@ class DJTretaBeing:
 
         # === PRIORITY 2: Transition at mix_out point (from DB) ===
         # Require 180s on THIS deck (not absolute position)
-        if idle_ready and mix_out and position >= (mix_out - 55) and time_on_deck > 180:
+        if idle_ready and mix_out and position >= (mix_out - 55) and time_on_deck > self.config.planner.min_play_time_seconds:
             log.info(f"Transition at mix_out! pos={position:.0f}s, mix_out={mix_out:.0f}s, on_deck={time_on_deck:.0f}s")
             self._execute_transition(idle_deck, 45)
             return
 
         # === PRIORITY 3: Fallback transition (no DB data but track ending) ===
-        if idle_ready and remaining < 120 and time_on_deck > 180:
+        if idle_ready and remaining < 120 and time_on_deck > self.config.planner.min_play_time_seconds:
             log.info(f"Fallback transition. remain={remaining:.0f}s, on_deck={time_on_deck:.0f}s")
             self._execute_transition(idle_deck, 45)
             return
@@ -547,7 +547,7 @@ class DJTretaBeing:
                 needs_plan = (
                     not playlist
                     or not playlist.get("planner_output")
-                    or self._tracks_since_plan >= 4
+                    or self._tracks_since_plan >= self.config.planner.replan_every_n_tracks
                 )
 
                 if needs_plan and not self._planner_busy:
@@ -621,12 +621,12 @@ class DJTretaBeing:
         result = str(self.planner_agent.run(
             f"Currently playing: {current_info}\n"
             f"Already played (DO NOT repeat): {played_list}\n\n"
-            f"Compatible tracks in library (from DB):\n{candidate_text or '  (none — search YouTube and download)'}\n\n"
-            f"Plan the next 6 tracks. Use library tracks first (they have full paths).\n"
-            f"Search+download from YouTube only if library doesn't have enough.\n"
-            f"Design an energy arc: rise → peak → release → rebuild.\n"
-            f"For each track: title, full path, BPM, key, energy, why it fits.\n"
-            f"Analyze any downloaded tracks so we know their BPM/key."
+            f"Tracks already in library:\n{candidate_text or '  (none)'}\n\n"
+            f"ALWAYS search YouTube and download {self.config.planner.download_new_tracks} NEW tracks that aren't in the library.\n"
+            f"Search for different artists each time. Don't download what's already in library.\n"
+            f"After downloading, analyze each new track.\n"
+            f"Then pick the best next 3 tracks (mix of library + new downloads).\n"
+            f"For each: title, full path, BPM, key, energy, why it fits."
         ))
         log.info(f"Planner done: {str(result)[:200]}")
 

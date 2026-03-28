@@ -63,6 +63,13 @@ class CapabilitiesConfig:
 
 
 @dataclass
+class PlannerConfig:
+    replan_every_n_tracks: int = 2
+    download_new_tracks: int = 3
+    min_play_time_seconds: int = 180
+
+
+@dataclass
 class Config:
     mixxx: MixxxConfig = field(default_factory=MixxxConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
@@ -71,6 +78,7 @@ class Config:
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
     set: SetConfig = field(default_factory=SetConfig)
     capabilities: CapabilitiesConfig = field(default_factory=CapabilitiesConfig)
+    planner: PlannerConfig = field(default_factory=PlannerConfig)
 
 
 def _pick_fields(d: dict, cls: type) -> dict:
@@ -79,7 +87,16 @@ def _pick_fields(d: dict, cls: type) -> dict:
 
 
 def load_config(path: str | Path | None = None) -> Config:
-    """Load config from YAML file."""
+    """Load config from YAML file. Also loads .env if present."""
+    # Load .env file if it exists (before anything else)
+    env_file = Path(__file__).parent.parent / ".env"
+    if env_file.exists():
+        for line in env_file.read_text().strip().split("\n"):
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, _, value = line.partition("=")
+                os.environ.setdefault(key.strip(), value.strip())
+
     if path is None:
         path = Path(__file__).parent.parent / "config.yaml"
     path = Path(path)
@@ -109,6 +126,8 @@ def load_config(path: str | Path | None = None) -> Config:
         cfg.set = SetConfig(**_pick_fields(raw["set"], SetConfig))
     if "capabilities" in raw:
         cfg.capabilities = CapabilitiesConfig(**_pick_fields(raw["capabilities"], CapabilitiesConfig))
+    if "planner" in raw:
+        cfg.planner = PlannerConfig(**_pick_fields(raw["planner"], PlannerConfig))
 
     env_key = os.environ.get("DJTRETA_LLM_API_KEY") or os.environ.get("LLM_API_KEY")
     if env_key:
