@@ -372,11 +372,11 @@ class DJTretaBeing:
         # === Everything fine — dynamic sleep ===
         if mix_out and position < (mix_out - 55):
             time_until = mix_out - 55 - position
-            self._next_sleep = min(45, max(5, time_until / 2))
-        elif remaining > 180:
-            self._next_sleep = 30
+            self._next_sleep = min(15, max(5, time_until / 3))
+        elif remaining > 120:
+            self._next_sleep = min(15, max(5, remaining / 10))
         else:
-            self._next_sleep = 10
+            self._next_sleep = 5
 
         self._record_playing_tracks()
         self._check_set_duration()
