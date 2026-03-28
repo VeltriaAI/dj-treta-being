@@ -243,6 +243,12 @@ class DJTretaBeing:
         self._start_broadcast()
         self._start_set()
 
+        # Start relay (pushes state to dj.treta.life)
+        if self.config.relay.enabled:
+            from .relay import RelayEngine
+            self.relay = RelayEngine(self.config, self)
+            threading.Thread(target=self._relay_loop, daemon=True).start()
+
         # Main loop — the Being's heartbeat
         self._next_sleep = 30
         log.info("Ready. Listening.")
@@ -517,6 +523,16 @@ class DJTretaBeing:
                             self.tracks_played.append({"title": title, "time": time.time()})
         except Exception:
             pass
+
+    # ── Relay ──────────────────────────────────────────────────────────
+
+    def _relay_loop(self):
+        """Run relay WebSocket push in asyncio event loop."""
+        import asyncio
+        try:
+            asyncio.run(self.relay.run())
+        except Exception as e:
+            log.error(f"Relay loop crashed: {e}")
 
     # ── Sets + Recording + Broadcast ─────────────────────────────────
 
