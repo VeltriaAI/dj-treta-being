@@ -536,23 +536,41 @@ class DJTretaBeing:
 
     # ── Sets + Recording + Broadcast ─────────────────────────────────
 
-    def _start_set(self, mood=None, genre=None, duration=None):
-        """Start a new DJ set. Auto-decides mood/duration if not provided."""
-        from .db import insert_set
+    def _start_set(self, mood=None, genre=None, duration=None, title=None):
+        """Start a new DJ set. Auto-decides mood/duration/name if not provided."""
+        from .db import insert_set, get_next_set_number
+        import random
+
         set_id = f"set-{time.strftime('%Y%m%d-%H%M')}"
+        set_number = get_next_set_number()
+        set_mood = mood or self.mood or "melodic-techno"
+
+        # Generate set name if not provided
+        if not title:
+            prefixes = [
+                "Neural Drift", "Deep Current", "Midnight Signal", "Dark Matter",
+                "Sonic Pulse", "Afterhours", "Hypnotic State", "Peak Frequency",
+                "Lost Transmission", "Neon Horizon", "Velvet Underground",
+                "Crystal Waves", "Shadow Protocol", "Infinite Loop",
+            ]
+            title = f"{random.choice(prefixes)} #{set_number}"
+
         self.current_set = {
             "id": set_id,
+            "set_number": set_number,
+            "title": title,
             "started_at": time.time(),
-            "mood": mood or self.mood or "melodic-techno",
+            "mood": set_mood,
             "genre": genre or "melodic-techno",
-            "target_duration": duration or 120,
+            "target_duration": duration or self.config.sets.default_duration_minutes,
             "tracks": [],
             "energy_arc": [],
+            "peak_energy": 0,
             "status": "live",
         }
         insert_set(self.current_set)
         self._start_recording()
-        log.info(f"Set started: {set_id} ({self.current_set['mood']}, {self.current_set['target_duration']}m)")
+        log.info(f"Set started: '{title}' ({set_mood}, {self.current_set['target_duration']}m)")
 
     def _end_set(self):
         """End current set, stop recording, auto-start new one."""

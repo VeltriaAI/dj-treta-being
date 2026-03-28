@@ -46,6 +46,8 @@ def init_db():
 
     CREATE TABLE IF NOT EXISTS sets (
         id TEXT PRIMARY KEY,
+        set_number INTEGER,
+        title TEXT,
         started_at REAL,
         ended_at REAL,
         mood TEXT,
@@ -53,6 +55,7 @@ def init_db():
         target_duration_minutes INTEGER,
         actual_duration_minutes REAL,
         track_count INTEGER DEFAULT 0,
+        peak_energy REAL DEFAULT 0,
         energy_arc TEXT,
         status TEXT DEFAULT 'live',
         recording_path TEXT,
@@ -225,14 +228,25 @@ def scan_library(music_path: Path):
 
 # ── Sets ──────────────────────────────────────────────────────────────
 
+def get_next_set_number() -> int:
+    db = get_db()
+    try:
+        row = db.execute("SELECT MAX(set_number) FROM sets").fetchone()
+        return (row[0] or 0) + 1
+    finally:
+        db.close()
+
+
 def insert_set(set_data: dict):
     db = get_db()
     try:
         db.execute(
-            "INSERT INTO sets (id, started_at, mood, genre, target_duration_minutes, status) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (set_data["id"], set_data["started_at"], set_data.get("mood"),
-             set_data.get("genre"), set_data.get("target_duration"), "live")
+            "INSERT INTO sets (id, set_number, title, started_at, mood, genre, "
+            "target_duration_minutes, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (set_data["id"], set_data.get("set_number", 1),
+             set_data.get("title", ""), set_data["started_at"],
+             set_data.get("mood"), set_data.get("genre"),
+             set_data.get("target_duration"), "live")
         )
         db.commit()
     finally:
@@ -247,9 +261,10 @@ def update_set(set_data: dict):
             actual = (set_data["ended_at"] - set_data["started_at"]) / 60
         db.execute(
             "UPDATE sets SET ended_at=?, status=?, actual_duration_minutes=?, "
-            "track_count=?, energy_arc=?, recording_path=? WHERE id=?",
+            "track_count=?, peak_energy=?, energy_arc=?, recording_path=? WHERE id=?",
             (set_data.get("ended_at"), set_data.get("status", "finished"),
              actual, set_data.get("track_count", 0),
+             set_data.get("peak_energy", 0),
              json.dumps(set_data.get("energy_arc", [])),
              set_data.get("recording_path"), set_data["id"])
         )
