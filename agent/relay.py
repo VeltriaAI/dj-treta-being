@@ -315,10 +315,17 @@ class RelayEngine:
         d1_live = live.get("deck1", {})
         d2_live = live.get("deck2", {})
 
-        # Waveform
+        # Waveform (3842 points: low/mid/high)
         waveform = {}
-        if active_info.get("waveform"):
-            waveform = active_info["waveform"]
+        if active_info.get("waveform_summary"):
+            ws = active_info["waveform_summary"]
+            if ws.get("has_waveform"):
+                waveform = {
+                    "low": ws.get("low", []),
+                    "mid": ws.get("mid", []),
+                    "high": ws.get("high", []),
+                    "data_size": ws.get("data_size", 0),
+                }
 
         return {
             "phase": phase,
