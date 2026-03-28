@@ -185,7 +185,8 @@ class RelayEngine:
         self._history = []
         self._last_active_title = ""
         self._track_info = {}
-        self._last_waveform_track = ""  # only send waveform once per track
+        self._last_waveform_track = {1: "", 2: ""}  # per-deck waveform tracking
+        self._decision_log = []  # timestamped brain decisions
 
     async def run(self):
         """Main relay loop — connect and push state."""
@@ -380,20 +381,97 @@ class RelayEngine:
         d1_live = live.get("deck1", {})
         d2_live = live.get("deck2", {})
 
-        # Waveform — only send once per track change (3842 × 3 = heavy)
-        waveform = None  # null = frontend keeps previous
-        track_key = f"{active_deck}:{title}"
-        if track_key != self._last_waveform_track:
-            self._last_waveform_track = track_key
-            if active_info.get("waveform_summary"):
-                ws = active_info["waveform_summary"]
-                if ws.get("has_waveform"):
-                    waveform = {
-                        "low": ws.get("low", []),
-                        "mid": ws.get("mid", []),
-                        "high": ws.get("high", []),
-                        "data_size": ws.get("data_size", 0),
-                    }
+        # Per-deck data for Neural Deck page
+        decks = {}
+        for dk in [1, 2]:
+            dk_status = status.get(f"deck{dk}", {})
+            dk_info = self._track_info.get(dk, {})
+            dk_raw = dk_info.get("title", "")
+            dk_artist, dk_title = parse_title(dk_raw, dk_info.get("file_path", ""))
+            dk_key = format_key(dk_status.get("key", 0))
+            dk_live = live.get(f"deck{dk}", {})
+
+            # Waveform per deck — only send once per track change
+            dk_waveform = None
+            dk_track_key = f"{dk}:{dk_title}"
+            if dk_track_key != self._last_waveform_track.get(dk, ""):
+                self._last_waveform_track[dk] = dk_track_key
+                if dk_info.get("waveform_summary"):
+                    ws = dk_info["waveform_summary"]
+                    if ws.get("has_waveform"):
+                        dk_waveform = {
+                            "low": ws.get("low", []),
+                            "mid": ws.get("mid", []),
+                            "high": ws.get("high", []),
+                            "data_size": ws.get("data_size", 0),
+                        }
+
+            decks[f"deck{dk}"] = {
+                "title": dk_title or "",
+                "artist": dk_artist,
+                "bpm": round(dk_status.get("bpm", 0), 1),
+                "key": dk_key,
+                "playing": dk_status.get("playing", False),
+                "trackLoaded": dk_status.get("track_loaded", False),
+                "syncEnabled": dk_status.get("sync_enabled", False),
+                "duration": round(dk_status.get("duration", 0), 1),
+                "elapsed": round(dk_status.get("position_seconds", 0), 1),
+                "remaining": round(dk_status.get("remaining_seconds", 0), 1),
+                "volume": round(dk_status.get("volume", 1), 2),
+                "eqHi": round(dk_status.get("eq_hi", 1), 1),
+                "eqMid": round(dk_status.get("eq_mid", 1), 1),
+                "eqLo": round(dk_status.get("eq_lo", 1), 1),
+                "vuLeft": round(dk_live.get("vu_left", 0), 3),
+                "vuRight": round(dk_live.get("vu_right", 0), 3),
+                "waveform": dk_waveform,
+            }
+
+        # Decision log — track brain decisions with timestamps
+        current_decision = self.being._last_result[:200] if self.being._last_result else ""
+        if current_decision and (not self._decision_log or self._decision_log[-1]["text"] != current_decision):
+            self._decision_log.append({
+                "time": time.strftime("%H:%M:%S"),
+                "text": current_decision,
+            })
+            if len(self._decision_log) > 50:
+                self._decision_log = self._decision_log[-50:]
+
+        # Harmonic map — current + next key for Camelot wheel
+        idle_status = status.get(f"deck{idle_deck}", {})
+        active_key_num = active_status.get("key", 0)
+        idle_key_num = idle_status.get("key", 0)
+        active_musical = MIXXX_KEY_TO_MUSICAL.get(active_key_num, "")
+        idle_musical = MIXXX_KEY_TO_MUSICAL.get(idle_key_num, "")
+        active_camelot = KEY_TO_CAMELOT.get(active_musical, "")
+        idle_camelot = KEY_TO_CAMELOT.get(idle_musical, "")
+
+        # Key movement description
+        key_movement = ""
+        if active_camelot and idle_camelot:
+            try:
+                a_num = int(active_camelot[:-1])
+                i_num = int(idle_camelot[:-1])
+                diff = (i_num - a_num) % 12
+                if diff == 0 and active_camelot[-1] != idle_camelot[-1]:
+                    key_movement = "Relative key (parallel)"
+                elif diff == 0:
+                    key_movement = "Same key"
+                elif diff == 1 or diff == 11:
+                    key_movement = f"Energy {'Boost' if diff == 1 else 'Drop'} (+{diff} semitones)"
+                elif diff <= 2 or diff >= 10:
+                    key_movement = "Compatible key"
+                else:
+                    key_movement = f"Key jump ({diff} steps)"
+            except ValueError:
+                pass
+
+        # Transition countdown
+        transition_countdown = ""
+        remaining_secs = active_status.get("remaining_seconds", 0)
+        if remaining_secs > 0 and idle_status.get("track_loaded"):
+            mins = int(remaining_secs // 60)
+            secs = int(remaining_secs % 60)
+            transition_countdown = f"{mins:02d}:{secs:02d}"
 
         return {
             "phase": phase,
@@ -426,14 +504,26 @@ class RelayEngine:
                 "deck2Right": round(d2_live.get("vu_right", 0), 3),
             },
             "crossfader": round(live.get("crossfader", 0), 3),
+            "decks": decks,
+            "transition": {
+                "strategy": self._get_transition_analysis(active_status, status, idle_deck),
+                "countdown": transition_countdown,
+            },
+            "harmonicMap": {
+                "currentKey": active_camelot,
+                "nextKey": idle_camelot,
+                "currentMusical": active_musical,
+                "nextMusical": idle_musical,
+                "movement": key_movement,
+            },
             "set": set_info,
             "brain": {
-                "lastDecision": self.being._last_result[:300] if self.being._last_result else "",
+                "lastDecision": current_decision,
                 "currentIntent": self._get_current_intent(perc, active_status, status, idle_deck),
                 "transitionAnalysis": self._get_transition_analysis(active_status, status, idle_deck),
                 "processingLoad": round(min(100, perc["tension"] * 10 + (10 if perc["buildupDetected"] else 0) + (15 if perc["dropDetected"] else 0))),
+                "decisionLog": self._decision_log[-20:],
             },
-            "waveform": waveform,
             "history": self._history[-20:],
             "listeners": 0,
             "timestamp": int(time.time() * 1000),
