@@ -186,6 +186,7 @@ class RelayEngine:
         self._last_active_title = ""
         self._track_info = {}
         self._last_waveform_track = {1: "", 2: ""}  # per-deck waveform tracking
+        self._pushes_since_connect = 0  # send waveform on first few pushes after connect
         self._decision_log = []  # timestamped brain decisions
 
     async def run(self):
@@ -205,6 +206,8 @@ class RelayEngine:
                     ping_interval=20, ping_timeout=10, close_timeout=5,
                 ) as ws:
                     log.info(f"Relay connected to {url}")
+                    self._pushes_since_connect = 0
+                    self._last_waveform_track = {1: "", 2: ""}  # force waveform on reconnect
                     interval = 1.0 / hz
                     while self.being._running:
                         start = time.time()
