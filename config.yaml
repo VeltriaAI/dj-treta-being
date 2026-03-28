@@ -44,9 +44,9 @@ sets:
   recording_dir: "~/Music/DJTreta/recordings"
 
 relay:
-  enabled: false
+  enabled: true
   server_url: "wss://dj.treta.life/ws/relay"
-  token: ""
+  token: ""  # set in .env: DJTRETA_RELAY_TOKEN
   push_hz: 3
 
 broadcast:

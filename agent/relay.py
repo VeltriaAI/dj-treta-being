@@ -289,14 +289,27 @@ class RelayEngine:
         if any(status.get(f"deck{d}", {}).get("playing") for d in [1, 2]):
             phase = "playing"
 
-        # Set info
+        # Set info — full metadata for archive UI
         set_info = {"elapsed": 0, "remaining": 0, "tracksPlayed": 0}
         if self.being.current_set:
             s = self.being.current_set
-            set_info["elapsed"] = round(time.time() - s["started_at"])
+            elapsed = round(time.time() - s["started_at"])
             target_secs = s["target_duration"] * 60
-            set_info["remaining"] = max(0, target_secs - set_info["elapsed"])
-            set_info["tracksPlayed"] = len(self.being.tracks_played)
+            set_info = {
+                "id": s["id"],
+                "number": s.get("set_number", 0),
+                "title": s.get("title", ""),
+                "mood": s.get("mood", ""),
+                "genre": s.get("genre", ""),
+                "status": s.get("status", "live"),
+                "elapsed": elapsed,
+                "remaining": max(0, target_secs - elapsed),
+                "targetDuration": target_secs,
+                "tracksPlayed": len(self.being.tracks_played),
+                "peakEnergy": s.get("peak_energy", 0),
+                "energyArc": s.get("energy_arc", [])[-20:],
+                "startedAt": s.get("started_at", 0),
+            }
 
         # VU
         d1_live = live.get("deck1", {})

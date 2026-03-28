@@ -162,4 +162,8 @@ def load_config(path: str | Path | None = None) -> Config:
     if env_key:
         cfg.llm.api_key = env_key
 
+    relay_token = os.environ.get("DJTRETA_RELAY_TOKEN")
+    if relay_token:
+        cfg.relay.token = relay_token
+
     return cfg
