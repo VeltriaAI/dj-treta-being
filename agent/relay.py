@@ -185,6 +185,7 @@ class RelayEngine:
         self._history = []
         self._last_active_title = ""
         self._track_info = {}
+        self._last_waveform_track = ""  # only send waveform once per track
 
     async def run(self):
         """Main relay loop — connect and push state."""
@@ -315,17 +316,20 @@ class RelayEngine:
         d1_live = live.get("deck1", {})
         d2_live = live.get("deck2", {})
 
-        # Waveform (3842 points: low/mid/high)
-        waveform = {}
-        if active_info.get("waveform_summary"):
-            ws = active_info["waveform_summary"]
-            if ws.get("has_waveform"):
-                waveform = {
-                    "low": ws.get("low", []),
-                    "mid": ws.get("mid", []),
-                    "high": ws.get("high", []),
-                    "data_size": ws.get("data_size", 0),
-                }
+        # Waveform — only send once per track change (3842 × 3 = heavy)
+        waveform = None  # null = frontend keeps previous
+        track_key = f"{active_deck}:{title}"
+        if track_key != self._last_waveform_track:
+            self._last_waveform_track = track_key
+            if active_info.get("waveform_summary"):
+                ws = active_info["waveform_summary"]
+                if ws.get("has_waveform"):
+                    waveform = {
+                        "low": ws.get("low", []),
+                        "mid": ws.get("mid", []),
+                        "high": ws.get("high", []),
+                        "data_size": ws.get("data_size", 0),
+                    }
 
         return {
             "phase": phase,
