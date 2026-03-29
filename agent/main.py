@@ -376,7 +376,8 @@ class DJTretaBeing:
                     result = str(self.agent.run(instruction)).strip()
                     log.info(f"DJ decision: {result[:150]}")
 
-                    if "TRANSITION" in result.upper():
+                    first_word = result.split("|")[0].strip().upper()
+                    if first_word == "TRANSITION":
                         # Parse: TRANSITION|crossfade|45
                         parts = result.split("|")
                         technique = "crossfade"
