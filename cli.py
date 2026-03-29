@@ -533,6 +533,10 @@ def main():
                 cmd_logs(n)
             return
         elif cmd == "start":
+            # djtreta start [mood] — e.g., djtreta start "dark melodic techno"
+            mood_args = " ".join(sys.argv[2:]) if len(sys.argv) > 2 else ""
+            if mood_args:
+                Path("/tmp/dj-treta-mood.txt").write_text(mood_args)
             _daemon_cmd("start")
             return
         elif cmd == "stop":

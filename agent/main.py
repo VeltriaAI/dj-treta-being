@@ -239,9 +239,16 @@ class DJTretaBeing:
         # Planner loop — background track planning
         threading.Thread(target=self._planner_loop, daemon=True).start()
 
+        # Read startup mood if provided via CLI
+        mood_file = Path("/tmp/dj-treta-mood.txt")
+        if mood_file.exists():
+            self.mood = mood_file.read_text().strip()
+            mood_file.unlink()
+            log.info(f"Startup mood: {self.mood}")
+
         # Start broadcast + recording + set
         self._start_broadcast()
-        self._start_set()
+        self._start_set(mood=self.mood if self.mood else None)
 
         # Start relay (pushes state to dj.treta.life)
         if self.config.relay.enabled:
