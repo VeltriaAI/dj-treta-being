@@ -317,60 +317,96 @@ class DJTretaBeing:
                 threading.Thread(target=self._emergency_play, daemon=True).start()
             return
 
-        # Get mix_out + timeline from DB for active track
-        mix_out = None
-        in_safe_section = True  # assume safe unless timeline says otherwise
-        if playing:
+        idle_ready = idle_loaded and idle_remaining > 60
+        duration = float(d_active.get("duration", 0) or 0)
+
+        # === PRIORITY 2: Agent decides transition (Software 3.0) ===
+        # Only ask after 50% played (saves tokens) and when idle deck ready
+        if idle_ready and duration > 0 and position > (duration * 0.5) and not self._agent_busy:
+            from .db import get_track_by_path
+
+            # Get metadata for both tracks
+            active_meta = None
+            idle_meta = None
+            active_file = ""
+            idle_file = ""
             try:
-                from .db import get_track_by_path
-                import json as _json
-                tinfo = httpx.get(
-                    f"{self.config.mixxx.url}/api/deck/{active_deck}/track_info", timeout=2
-                ).json()
-                meta = get_track_by_path(tinfo.get("file_path", ""))
-                if meta:
-                    mix_out = float(meta.get("mix_out_seconds") or 0)
-                    # Check timeline: what section are we in RIGHT NOW?
-                    timeline_str = meta.get("timeline", "")
-                    if timeline_str:
-                        try:
-                            timeline = _json.loads(timeline_str) if isinstance(timeline_str, str) else timeline_str
-                            for section in timeline:
-                                start = float(section.get("start", 0))
-                                end = float(section.get("end", 0))
-                                if start <= position <= end:
-                                    name = section.get("section", "").lower()
-                                    # Safe to transition: breakdown, outro, intro
-                                    # NOT safe: drop, buildup, main theme
-                                    if any(w in name for w in ["drop", "build", "main", "peak"]):
-                                        in_safe_section = False
-                                    break
-                        except Exception:
-                            pass
+                tinfo = httpx.get(f"{self.config.mixxx.url}/api/deck/{active_deck}/track_info", timeout=2).json()
+                active_file = tinfo.get("file_path", "")
+                active_meta = get_track_by_path(active_file) if active_file else None
+            except Exception:
+                pass
+            try:
+                tinfo = httpx.get(f"{self.config.mixxx.url}/api/deck/{idle_deck}/track_info", timeout=2).json()
+                idle_file = tinfo.get("file_path", "")
+                idle_meta = get_track_by_path(idle_file) if idle_file else None
             except Exception:
                 pass
 
-        idle_ready = idle_loaded and idle_remaining > 60
+            # Get track names
+            active_track = active_meta.get("title", "") if active_meta else ""
+            idle_track = idle_meta.get("title", "") if idle_meta else ""
 
-        # How long has this track been playing on this deck? (wall clock)
-        time_on_deck = time.time() - self._deck_start_time.get(active_deck, 0)
-        duration = float(d_active.get("duration", 0) or 0)
+            # Build context with timelines
+            active_section = self._get_current_section(active_meta, position)
+            active_timeline = self._format_timeline(active_meta)
+            idle_timeline = self._format_timeline(idle_meta)
+            active_bpm = d_active.get("bpm", 0)
+            idle_bpm = d_idle.get("bpm", 0)
+            active_key = active_meta.get("key_musical", "?") if active_meta else "?"
+            idle_key = idle_meta.get("key_musical", "?") if idle_meta else "?"
 
-        # === PRIORITY 2: Smart transition at mix_out (from DB timeline) ===
-        # Only transition during safe sections (breakdown, outro) — NEVER during drops
-        if idle_ready and mix_out and mix_out > 0 and position >= (mix_out - 55) and in_safe_section:
-            log.info(f"Smart transition at mix_out! pos={position:.0f}s, mix_out={mix_out:.0f}s, on_deck={time_on_deck:.0f}s, safe_section=True")
-            self._execute_transition(idle_deck, 45)
-            return
+            instruction = (
+                f"ACTIVE: '{active_track[:40]}' at {position:.0f}s/{duration:.0f}s "
+                f"({remaining:.0f}s left, BPM:{active_bpm:.0f}, Key:{active_key})\n"
+                f"  NOW IN: {active_section}\n"
+                f"  TIMELINE: {active_timeline}\n\n"
+                f"NEXT: '{idle_track[:40]}' on deck {idle_deck} "
+                f"(BPM:{idle_bpm:.0f}, Key:{idle_key})\n"
+                f"  TIMELINE: {idle_timeline}\n\n"
+                f"Should you transition NOW?\n"
+                f"- If yes: reply TRANSITION|technique|duration (e.g., TRANSITION|crossfade|45)\n"
+                f"- If no: reply WAIT|reason"
+            )
 
-        # === PRIORITY 3: Fallback transition (no DB data — use 60% guard) ===
-        min_play = max(
-            self.config.planner.min_play_time_seconds,
-            duration * 0.6 if duration > 0 else 90
-        )
-        if idle_ready and remaining < 120 and time_on_deck > min_play:
-            log.info(f"Fallback transition. remain={remaining:.0f}s, on_deck={time_on_deck:.0f}s")
-            self._execute_transition(idle_deck, 45)
+            self._agent_busy = True
+
+            def _decide_and_execute():
+                try:
+                    result = str(self.agent.run(instruction)).strip()
+                    log.info(f"DJ decision: {result[:150]}")
+
+                    if "TRANSITION" in result.upper():
+                        # Parse: TRANSITION|crossfade|45
+                        parts = result.split("|")
+                        technique = "crossfade"
+                        trans_duration = 45
+                        for p in parts[1:]:
+                            p = p.strip().lower()
+                            if p in ("crossfade", "bass_swap", "filter", "hard_cut"):
+                                technique = p
+                            elif p.isdigit():
+                                trans_duration = int(p)
+
+                        log.info(f"Transition: {technique}, {trans_duration}s")
+                        if technique == "bass_swap":
+                            from .tools import do_bass_swap
+                            do_bass_swap(idle_deck, trans_duration)
+                        else:
+                            from .tools import do_transition
+                            do_transition(idle_deck, trans_duration)
+
+                        self._record_playing_tracks()
+                        self._check_set_duration()
+                    else:
+                        log.info(f"DJ says wait: {result[:100]}")
+                except Exception as e:
+                    log.error(f"DJ decision error: {e}")
+                finally:
+                    self._agent_busy = False
+
+            threading.Thread(target=_decide_and_execute, daemon=True).start()
+            self._next_sleep = 15
             return
 
         # === PRIORITY 4: Backup load — planner didn't load idle deck ===
@@ -381,9 +417,10 @@ class DJTretaBeing:
             return
 
         # === Everything fine — dynamic sleep ===
-        if mix_out and position < (mix_out - 55):
-            time_until = mix_out - 55 - position
-            self._next_sleep = min(15, max(5, time_until / 3))
+        if duration > 0 and position < (duration * 0.5):
+            # First half: sleep longer
+            time_until_half = (duration * 0.5) - position
+            self._next_sleep = min(15, max(5, time_until_half / 3))
         elif remaining > 120:
             self._next_sleep = min(15, max(5, remaining / 10))
         else:
@@ -391,6 +428,35 @@ class DJTretaBeing:
 
         self._record_playing_tracks()
         self._check_set_duration()
+
+    def _format_timeline(self, meta) -> str:
+        """Format track timeline for agent prompt."""
+        if not meta:
+            return "(no analysis)"
+        timeline_str = meta.get("timeline", "")
+        if not timeline_str:
+            return f"BPM:{meta.get('bpm','?')} Key:{meta.get('key_musical','?')} Energy:{meta.get('energy_peak','?')}"
+        try:
+            import json as _json
+            sections = _json.loads(timeline_str) if isinstance(timeline_str, str) else timeline_str
+            parts = [f"{s['start']}s-{s['end']}s {s['section']}(energy:{s['energy']})" for s in sections]
+            return " → ".join(parts)
+        except Exception:
+            return "(analysis error)"
+
+    def _get_current_section(self, meta, position) -> str:
+        """What section is the track currently in?"""
+        if not meta or not meta.get("timeline"):
+            return "unknown"
+        try:
+            import json as _json
+            sections = _json.loads(meta["timeline"]) if isinstance(meta["timeline"], str) else meta["timeline"]
+            for s in sections:
+                if float(s["start"]) <= position <= float(s["end"]):
+                    return f"{s['section']} (energy:{s['energy']}, {s['start']}s-{s['end']}s)"
+            return "past end"
+        except Exception:
+            return "unknown"
 
     def _execute_transition(self, to_deck, duration):
         """Execute transition. Only called by heartbeat. Uses _agent_busy to prevent re-entry."""
