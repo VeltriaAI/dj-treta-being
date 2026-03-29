@@ -711,10 +711,7 @@ def do_transition(to_deck: int, duration: int = 60) -> str:
         if remaining < 30:
             return f"ABORTED: Deck {to_deck} track has only {remaining:.0f}s left — load a fresh track first."
 
-    # Reset rate to original BPM (clears stale pitch from previous sync)
-    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "rate", "value": 0})
-
-    # Sync + play + phase align
+    # Sync + play + phase align (let Mixxx handle BPM matching naturally)
     _mixxx_post("/api/sync", {"deck": to_deck})
     _mixxx_post("/api/play", {"deck": to_deck})
     _time.sleep(0.3)
@@ -844,8 +841,7 @@ def do_filter_sweep(to_deck: int, duration: int = 45) -> str:
         if remaining < 30:
             return f"ABORTED: Deck {to_deck} track has only {remaining:.0f}s left."
 
-    # Reset rate + start incoming with filter closed (muffled)
-    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "rate", "value": 0})
+    # Start incoming with filter closed (muffled), sync handles BPM
     _mixxx_post("/api/filter", {"deck": to_deck, "value": 0.0})  # fully closed
     _mixxx_post("/api/sync", {"deck": to_deck})
     _mixxx_post("/api/play", {"deck": to_deck})
@@ -896,9 +892,6 @@ def do_hard_cut(to_deck: int) -> str:
         if not deck_state.get("track_loaded", False):
             return f"ABORTED: Deck {to_deck} has no track loaded!"
 
-    # Reset rate
-    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "rate", "value": 0})
-
     # Instant switch
     _mixxx_post("/api/play", {"deck": to_deck})
     xf = 0.0 if to_deck == 1 else 1.0
@@ -932,9 +925,6 @@ def do_echo_out(to_deck: int, duration: int = 30) -> str:
         if not deck_state.get("track_loaded", False):
             return f"ABORTED: Deck {to_deck} has no track loaded!"
 
-    # Reset incoming rate
-    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "rate", "value": 0})
-
     # Fade out outgoing with filter closing (simulates echo decay)
     fps = 10
     total = int(duration * fps)
@@ -965,8 +955,8 @@ def do_echo_out(to_deck: int, duration: int = 30) -> str:
 
 @tool
 def schedule_transition(to_deck: int, at_position: int, technique: str = "crossfade", duration: int = 45) -> str:
-    """Schedule a transition at a specific track position. The transition will
-    execute when the active track reaches at_position seconds.
+    """Schedule a transition at a specific track position. Returns immediately —
+    Python executes the transition in the background when the track reaches at_position.
 
     Call this when you've decided the right moment to transition based on
     the track timeline (e.g., at a breakdown or outro).
@@ -977,8 +967,6 @@ def schedule_transition(to_deck: int, at_position: int, technique: str = "crossf
         technique: "crossfade" (smooth blend), "bass_swap" (EQ swap, techno), "filter_sweep" (progressive reveal), "echo_out" (fade with echo, mood shift), "hard_cut" (instant switch, genre change).
         duration: Transition duration in seconds (10-90). Ignored for hard_cut.
     """
-    import time as _time
-
     duration = max(10, min(120, duration))
 
     # Get current track position
@@ -986,21 +974,17 @@ def schedule_transition(to_deck: int, at_position: int, technique: str = "crossf
     if not status or _mixxx_failed(status):
         return "ERROR: Mixxx not responding"
 
-    # Find active deck position
     active_deck = 1 if to_deck == 2 else 2
     current_pos = float(status.get(f"deck{active_deck}", {}).get("position_seconds", 0) or 0)
+    delay = max(0, at_position - current_pos)
 
-    # Calculate delay
-    delay = at_position - current_pos
-    if delay < 0:
-        delay = 0
-
-    # Write scheduled transition for relay to push to frontend
+    # Write schedule — Python (_execute_scheduled_transition in main.py) picks this up
     scheduled = {
         "toDeck": to_deck,
         "atPosition": at_position,
         "technique": technique,
         "duration": duration,
+        "activeDeck": active_deck,
         "scheduledAt": current_pos,
         "executesIn": round(delay),
     }
@@ -1008,24 +992,10 @@ def schedule_transition(to_deck: int, at_position: int, technique: str = "crossf
         json.dumps(scheduled, indent=2)
     )
 
-    # Wait for the right moment
-    if delay > 0:
-        _time.sleep(delay)
-
-    # Clear scheduled file
-    Path("/tmp/dj-treta-scheduled-transition.json").unlink(missing_ok=True)
-
-    # Execute the transition
-    if technique == "bass_swap":
-        return do_bass_swap(to_deck, duration)
-    elif technique == "filter_sweep":
-        return do_filter_sweep(to_deck, duration)
-    elif technique == "hard_cut":
-        return do_hard_cut(to_deck)
-    elif technique == "echo_out":
-        return do_echo_out(to_deck, duration)
-    else:
-        return do_transition(to_deck, duration)
+    return (
+        f"Scheduled {technique} to deck {to_deck} at position {at_position}s "
+        f"(in {round(delay)}s). Python will execute it — you're free now."
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════

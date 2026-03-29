@@ -207,6 +207,9 @@ class DJTretaBeing:
         self._recording_active = False
         self._broadcast_active = False
 
+        # Scheduled transition — Python executes, agent is free
+        self._transition_pending = False
+
     def start(self):
         _check_single_instance()
         signal.signal(signal.SIGTERM, lambda s, f: self.stop())
@@ -325,9 +328,26 @@ class DJTretaBeing:
         idle_ready = idle_loaded and idle_remaining > 60
         duration = float(d_active.get("duration", 0) or 0)
 
-        # === PRIORITY 2: Agent decides transition (Software 3.0) ===
+        # === PRIORITY 2: Execute scheduled transition (Python handles timing) ===
+        if not self._transition_pending:
+            sched_file = Path("/tmp/dj-treta-scheduled-transition.json")
+            if sched_file.exists():
+                try:
+                    sched = json.loads(sched_file.read_text())
+                    self._transition_pending = True
+                    threading.Thread(
+                        target=self._execute_scheduled_transition,
+                        args=(sched,), daemon=True
+                    ).start()
+                except Exception as e:
+                    log.warning(f"Bad scheduled transition file: {e}")
+                    sched_file.unlink(missing_ok=True)
+
+        # === PRIORITY 3: Agent decides transition (Software 3.0) ===
         # Only ask after 50% played (saves tokens) and when idle deck ready
-        if idle_ready and duration > 0 and position > (duration * 0.5) and not self._agent_busy:
+        # Don't ask if transition is already pending
+        if (idle_ready and duration > 0 and position > (duration * 0.5)
+                and not self._agent_busy and not self._transition_pending):
             from .db import get_track_by_path
 
             # Get metadata for both tracks
@@ -456,6 +476,69 @@ class DJTretaBeing:
                 self._agent_busy = False
         threading.Thread(target=_run, daemon=True).start()
 
+    def _execute_scheduled_transition(self, sched: dict):
+        """Python-side transition executor. Waits for track position, then executes.
+        Runs in its own thread. Agent is FREE during this entire time."""
+        from .tools import do_transition, do_bass_swap, do_filter_sweep, do_hard_cut, do_echo_out
+
+        to_deck = sched["toDeck"]
+        at_position = sched["atPosition"]
+        technique = sched.get("technique", "crossfade")
+        duration = sched.get("duration", 45)
+        active_deck = sched.get("activeDeck", 1 if to_deck == 2 else 2)
+
+        log.info(f"Transition scheduled: {technique} to deck {to_deck} at {at_position}s (waiting...)")
+
+        try:
+            # Poll until position reached or track ends
+            # Adaptive sleep: far away = 5s, close = 0.3s for precision
+            while True:
+                status = _get_status(self.config.mixxx.url)
+                if not status:
+                    log.warning("Scheduled transition: Mixxx not responding, aborting")
+                    break
+
+                d = status.get(f"deck{active_deck}", {})
+                if not d.get("playing"):
+                    log.warning(f"Scheduled transition: Deck {active_deck} stopped, aborting")
+                    break
+
+                current_pos = float(d.get("position_seconds", 0) or 0)
+                gap = at_position - current_pos
+
+                if gap <= 0:
+                    # Time to execute — right on the mark
+                    log.info(f"Executing {technique} to deck {to_deck} at {current_pos:.1f}s (target: {at_position}s)")
+                    if technique == "bass_swap":
+                        result = do_bass_swap(to_deck, duration)
+                    elif technique == "filter_sweep":
+                        result = do_filter_sweep(to_deck, duration)
+                    elif technique == "hard_cut":
+                        result = do_hard_cut(to_deck)
+                    elif technique == "echo_out":
+                        result = do_echo_out(to_deck, duration)
+                    else:
+                        result = do_transition(to_deck, duration)
+                    log.info(f"Transition result: {str(result)[:200]}")
+                    self._record_playing_tracks()
+                    self._check_set_duration()
+                    break
+
+                # Adaptive sleep: tight when close, relaxed when far
+                if gap > 30:
+                    time.sleep(5)
+                elif gap > 10:
+                    time.sleep(2)
+                elif gap > 3:
+                    time.sleep(0.5)
+                else:
+                    time.sleep(0.2)
+        except Exception as e:
+            log.error(f"Scheduled transition error: {e}")
+        finally:
+            self._transition_pending = False
+            Path("/tmp/dj-treta-scheduled-transition.json").unlink(missing_ok=True)
+
     def _emergency_play(self):
         """Silence! Direct API play first (fast + reliable), agent fallback for empty library."""
         self._emergency_count += 1
@@ -548,12 +631,18 @@ class DJTretaBeing:
         candidates = [c for c in candidates if c.get("path") not in exclude_paths]
 
         if not candidates:
-            # Fallback: get ANY analyzed track not on either deck
-            from .db import get_all_analyzed_tracks
-            all_tracks = get_all_analyzed_tracks()
-            candidates = [t for t in all_tracks
-                          if t.get("path") not in exclude_paths
-                          and t.get("title") not in played_titles]
+            # Fallback: get ANY track from DB (analyzed or not) — Mixxx can play anything
+            from .db import get_db
+            db = get_db()
+            try:
+                all_tracks = [dict(r) for r in db.execute(
+                    "SELECT path, title FROM tracks ORDER BY RANDOM() LIMIT 20"
+                ).fetchall()]
+                candidates = [t for t in all_tracks
+                              if t.get("path") not in exclude_paths
+                              and t.get("title") not in played_titles]
+            finally:
+                db.close()
 
         if not candidates:
             log.warning("No tracks available to load on idle deck")
@@ -573,15 +662,10 @@ class DJTretaBeing:
             if result.get("ok"):
                 log.info(f"Loaded deck {idle_deck}: {next_track.get('title', '?')[:50]}")
 
-                # Reset rate to original BPM + save duration
+                # Save duration from Mixxx (Gemini analysis often misses it)
                 try:
                     url = self.config.mixxx.url
                     time.sleep(1)
-                    # Reset rate — play at original BPM, no pitch drift
-                    httpx.post(f"{url}/api/control", json={
-                        "group": f"[Channel{idle_deck}]", "key": "rate", "value": 0
-                    }, timeout=3)
-                    # Save duration from Mixxx (Gemini analysis often misses it)
                     st = _get_status(url)
                     if st:
                         dur = float(st.get(f"deck{idle_deck}", {}).get("duration", 0) or 0)
@@ -875,11 +959,10 @@ class DJTretaBeing:
         # Current track info
         current_info = "NOTHING — silence!"
         if current_meta:
-            current_info = (
-                f"{current_track} | BPM:{current_meta.get('bpm',0):.0f} "
-                f"Key:{current_meta.get('key_musical','?')} "
-                f"Energy:{current_meta.get('energy_peak','?')}"
-            )
+            bpm = current_meta.get('bpm') or 0
+            key = current_meta.get('key_musical') or '?'
+            energy = current_meta.get('energy_peak') or '?'
+            current_info = f"{current_track} | BPM:{bpm:.0f} Key:{key} Energy:{energy}"
 
         log.info(f"Planner running — current: {current_track or 'nothing'}, {len(candidates)} candidates in DB")
         result = str(self.planner_agent.run(

@@ -724,10 +724,17 @@ class DJTretaApp(App):
 
     def poll_daemon_log(self) -> None:
         if not DAEMON_LOG.exists():
+            if self._log_pos > 0:
+                # Log file was deleted (clean slate) — reset
+                self._log_pos = 0
+                self._log_mtime = 0.0
             return
         try:
-            mtime = DAEMON_LOG.stat().st_mtime
-            if mtime != self._log_mtime and self._log_mtime > 0:
+            stat = DAEMON_LOG.stat()
+            mtime = stat.st_mtime
+
+            # Detect new daemon session: file was rewritten (smaller or newer)
+            if self._log_mtime > 0 and (mtime != self._log_mtime or stat.st_size < self._log_pos * 10):
                 content_check = DAEMON_LOG.read_text()
                 if len(content_check.split("\n")) < self._log_pos:
                     self._log_pos = 0
@@ -736,6 +743,10 @@ class DJTretaApp(App):
 
             content = DAEMON_LOG.read_text()
             lines = content.split("\n")
+            if self._log_pos > len(lines):
+                # File was truncated — reset position
+                self._log_pos = 0
+                self.log_widget.write("[yellow]— New daemon session —[/yellow]")
             new_lines = lines[self._log_pos:]
             self._log_pos = len(lines)
 
@@ -744,7 +755,7 @@ class DJTretaApp(App):
                     "Talk result", "Talk done", "Talk ack", "processing...", "Result: processing",
                     "Unmapped finish_reason", "malformed_function_call", "TOKENS:", "TokenUsage",
                     "mixer ←", "dj_treta →", "dj_treta ←", "library ←", "library →", "mixer →",
-                    "shutting down", "HTTP Request:"]
+                    "HTTP Request:"]
 
             for line in new_lines:
                 if not line.strip():
