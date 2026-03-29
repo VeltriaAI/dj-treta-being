@@ -344,19 +344,18 @@ class DJTretaBeing:
         time_on_deck = time.time() - self._deck_start_time.get(active_deck, 0)
         duration = float(d_active.get("duration", 0) or 0)
 
-        # Minimum play time: at least 60% of track OR config minimum, whichever is larger
-        min_play = max(
-            self.config.planner.min_play_time_seconds,
-            duration * 0.6 if duration > 0 else 180
-        )
-
-        # === PRIORITY 2: Transition at mix_out point (from DB) ===
-        if idle_ready and mix_out and position >= (mix_out - 55) and time_on_deck > min_play:
-            log.info(f"Transition at mix_out! pos={position:.0f}s, mix_out={mix_out:.0f}s, on_deck={time_on_deck:.0f}s, min={min_play:.0f}s")
+        # === PRIORITY 2: Smart transition at mix_out (from DB timeline) ===
+        # Trust the analysis — no arbitrary min_play guard when we have real data
+        if idle_ready and mix_out and mix_out > 0 and position >= (mix_out - 55):
+            log.info(f"Smart transition at mix_out! pos={position:.0f}s, mix_out={mix_out:.0f}s, on_deck={time_on_deck:.0f}s")
             self._execute_transition(idle_deck, 45)
             return
 
-        # === PRIORITY 3: Fallback transition (no DB data but track ending) ===
+        # === PRIORITY 3: Fallback transition (no DB data — use 60% guard) ===
+        min_play = max(
+            self.config.planner.min_play_time_seconds,
+            duration * 0.6 if duration > 0 else 90
+        )
         if idle_ready and remaining < 120 and time_on_deck > min_play:
             log.info(f"Fallback transition. remain={remaining:.0f}s, on_deck={time_on_deck:.0f}s")
             self._execute_transition(idle_deck, 45)
