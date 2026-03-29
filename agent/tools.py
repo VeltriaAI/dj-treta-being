@@ -818,6 +818,152 @@ def do_bass_swap(to_deck: int, duration: int = 60) -> str:
 
 
 @tool
+def do_filter_sweep(to_deck: int, duration: int = 45) -> str:
+    """Filter sweep transition — gradually reveal incoming track through a low-pass filter.
+    Best for: progressive, melodic, atmospheric tracks.
+
+    The incoming track starts muffled (low-pass filtered), then the filter opens
+    while the outgoing track fades. Creates a smooth, evolving reveal.
+
+    Args:
+        to_deck: Deck to transition TO (1 or 2).
+        duration: Transition duration in seconds (20-90).
+    """
+    import time as _time
+
+    duration = max(20, min(90, duration))
+    out_deck = 1 if to_deck == 2 else 2
+
+    # Pre-flight
+    status = _mixxx_get("/api/status")
+    if status:
+        deck_state = status.get(f"deck{to_deck}", {})
+        if not deck_state.get("track_loaded", False):
+            return f"ABORTED: Deck {to_deck} has no track loaded!"
+        remaining = float(deck_state.get("remaining_seconds", 0) or 0)
+        if remaining < 30:
+            return f"ABORTED: Deck {to_deck} track has only {remaining:.0f}s left."
+
+    # Reset rate + start incoming with filter closed (muffled)
+    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "rate", "value": 0})
+    _mixxx_post("/api/filter", {"deck": to_deck, "value": 0.0})  # fully closed
+    _mixxx_post("/api/sync", {"deck": to_deck})
+    _mixxx_post("/api/play", {"deck": to_deck})
+    _time.sleep(0.3)
+
+    # Gradually open filter on incoming + fade out outgoing
+    fps = 10
+    total = int(duration * fps)
+    for i in range(total + 1):
+        t = i / total  # 0.0 → 1.0
+
+        # Open incoming filter: 0.0 → 0.5 (neutral)
+        _mixxx_post("/api/filter", {"deck": to_deck, "value": t * 0.5})
+
+        # Close outgoing filter: 0.5 → 0.0
+        _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5 * (1 - t)})
+
+        # Crossfader follows
+        xf = t if to_deck == 2 else (1 - t)
+        _mixxx_post("/api/crossfade", {"position": xf})
+
+        _time.sleep(1 / fps)
+
+    # Cleanup
+    xf = 0.0 if to_deck == 1 else 1.0
+    _mixxx_post("/api/crossfade", {"position": xf})
+    _mixxx_post("/api/pause", {"deck": out_deck})
+    _mixxx_post("/api/filter", {"deck": to_deck, "value": 0.5})
+    _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5})
+    _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
+
+    return f"Filter-swept to Deck {to_deck} over {duration}s. Deck {out_deck} ejected."
+
+
+@tool
+def do_hard_cut(to_deck: int) -> str:
+    """Hard cut — instant switch to the other deck. No blend, no crossfade.
+    Best for: genre changes, drop moments, high energy transitions.
+
+    Args:
+        to_deck: Deck to switch TO (1 or 2).
+    """
+    out_deck = 1 if to_deck == 2 else 2
+
+    status = _mixxx_get("/api/status")
+    if status:
+        deck_state = status.get(f"deck{to_deck}", {})
+        if not deck_state.get("track_loaded", False):
+            return f"ABORTED: Deck {to_deck} has no track loaded!"
+
+    # Reset rate
+    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "rate", "value": 0})
+
+    # Instant switch
+    _mixxx_post("/api/play", {"deck": to_deck})
+    xf = 0.0 if to_deck == 1 else 1.0
+    _mixxx_post("/api/crossfade", {"position": xf})
+    _mixxx_post("/api/pause", {"deck": out_deck})
+    _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
+
+    return f"Hard-cut to Deck {to_deck}. Deck {out_deck} ejected."
+
+
+@tool
+def do_echo_out(to_deck: int, duration: int = 30) -> str:
+    """Echo out — fade outgoing track with delay/echo tail, then drop incoming.
+    Best for: energy shifts, mood changes, dramatic moments.
+
+    The outgoing track fades with its echo reverberating, creating space,
+    then the incoming track drops in clean.
+
+    Args:
+        to_deck: Deck to transition TO (1 or 2).
+        duration: How long the echo fade takes in seconds (10-45).
+    """
+    import time as _time
+
+    duration = max(10, min(45, duration))
+    out_deck = 1 if to_deck == 2 else 2
+
+    status = _mixxx_get("/api/status")
+    if status:
+        deck_state = status.get(f"deck{to_deck}", {})
+        if not deck_state.get("track_loaded", False):
+            return f"ABORTED: Deck {to_deck} has no track loaded!"
+
+    # Reset incoming rate
+    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "rate", "value": 0})
+
+    # Fade out outgoing with filter closing (simulates echo decay)
+    fps = 10
+    total = int(duration * fps)
+    for i in range(total + 1):
+        t = i / total
+
+        # Close filter on outgoing (muffled decay)
+        _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5 * (1 - t)})
+
+        # Fade volume on outgoing
+        _mixxx_post("/api/volume", {"deck": out_deck, "volume": 1.0 - t})
+
+        _time.sleep(1 / fps)
+
+    # Outgoing silent — drop incoming
+    _mixxx_post("/api/pause", {"deck": out_deck})
+    _mixxx_post("/api/play", {"deck": to_deck})
+    xf = 0.0 if to_deck == 1 else 1.0
+    _mixxx_post("/api/crossfade", {"position": xf})
+
+    # Reset everything
+    _mixxx_post("/api/volume", {"deck": out_deck, "volume": 1.0})
+    _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5})
+    _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
+
+    return f"Echo-out to Deck {to_deck} over {duration}s. Deck {out_deck} ejected."
+
+
+@tool
 def schedule_transition(to_deck: int, at_position: int, technique: str = "crossfade", duration: int = 45) -> str:
     """Schedule a transition at a specific track position. The transition will
     execute when the active track reaches at_position seconds.
@@ -828,8 +974,8 @@ def schedule_transition(to_deck: int, at_position: int, technique: str = "crossf
     Args:
         to_deck: Deck to transition TO (1 or 2).
         at_position: Track position in seconds to START the transition.
-        technique: "crossfade" for smooth blend, "bass_swap" for techno-style EQ swap.
-        duration: Transition duration in seconds (20-60).
+        technique: "crossfade" (smooth blend), "bass_swap" (EQ swap, techno), "filter_sweep" (progressive reveal), "echo_out" (fade with echo, mood shift), "hard_cut" (instant switch, genre change).
+        duration: Transition duration in seconds (10-90). Ignored for hard_cut.
     """
     import time as _time
 
@@ -872,6 +1018,12 @@ def schedule_transition(to_deck: int, at_position: int, technique: str = "crossf
     # Execute the transition
     if technique == "bass_swap":
         return do_bass_swap(to_deck, duration)
+    elif technique == "filter_sweep":
+        return do_filter_sweep(to_deck, duration)
+    elif technique == "hard_cut":
+        return do_hard_cut(to_deck)
+    elif technique == "echo_out":
+        return do_echo_out(to_deck, duration)
     else:
         return do_transition(to_deck, duration)
 
