@@ -42,6 +42,7 @@ sets:
   auto_mode: true
   default_duration_minutes: 120
   recording_dir: "~/Music/DJTreta/recordings"
+  local_recording: false  # server records via Icecast, no need for local
 
 relay:
   enabled: true

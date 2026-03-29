@@ -74,6 +74,7 @@ class SetsConfig:
     auto_mode: bool = True
     default_duration_minutes: int = 120
     recording_dir: str = "~/Music/DJTreta/recordings"
+    local_recording: bool = False
 
 
 @dataclass

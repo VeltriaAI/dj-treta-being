@@ -646,7 +646,9 @@ class DJTretaBeing:
             self._end_set()
 
     def _start_recording(self):
-        """Start Mixxx recording."""
+        """Start Mixxx recording (if local_recording enabled)."""
+        if not self.config.sets.local_recording:
+            return
         try:
             url = self.config.mixxx.url
             httpx.post(f"{url}/api/control", json={
@@ -657,7 +659,9 @@ class DJTretaBeing:
             log.warning(f"Recording start failed: {e}")
 
     def _stop_recording(self):
-        """Stop Mixxx recording."""
+        """Stop Mixxx recording (if local_recording enabled)."""
+        if not self.config.sets.local_recording:
+            return
         try:
             url = self.config.mixxx.url
             httpx.post(f"{url}/api/control", json={
