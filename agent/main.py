@@ -520,6 +520,14 @@ class DJTretaBeing:
                     else:
                         result = do_transition(to_deck, duration)
                     log.info(f"Transition result: {str(result)[:200]}")
+                    # Mark transition event in energy arc
+                    if self.current_set and isinstance(self.current_set.get("energy_arc"), list):
+                        self.current_set["energy_arc"].append({
+                            "t": round(time.time() - self.current_set["started_at"]),
+                            "event": "transition",
+                            "technique": technique,
+                            "to_deck": to_deck,
+                        })
                     self._record_playing_tracks()
                     self._check_set_duration()
                     break

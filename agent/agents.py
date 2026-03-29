@@ -24,6 +24,8 @@ from .tools import (
     hear_music, analyze_track, preview_track,
     # Library tools
     list_library_tracks, search_music, download_track, get_set_history,
+    # Producer tools
+    generate_track,
     # Scheduling
     schedule_transition,
     # Meta tools (DJ agent only)
@@ -60,9 +62,18 @@ def _load_system_prompt() -> str:
 SUB-AGENTS:
 - mixer: load tracks, play, EQ, filter, sync, do_transition, do_bass_swap
 - library: list tracks, search YouTube, download tracks
+- producer: generate ORIGINAL AI tracks with Lyria 3 — specify mood, BPM, key, genre
 
 You can also: hear_music (listen to playing audio), preview_track (listen to any file),
 analyze_track (full track analysis), save_learning, recall_learnings, read/write your own files.
+
+PRODUCER — WHEN TO USE:
+- When you want a track with EXACT BPM/key to match the current mix
+- When the library doesn't have the right vibe and you want something custom
+- When you want to create something that's never existed before
+- Be specific in your prompt: mood, instruments, energy level, texture
+- Generated tracks land in the library ready to load and mix
+- Example: producer("Generate a dark minimal techno track with 808 kicks, filtered acid bassline, atmospheric reverb tails", bpm=130, key="D minor", genre="dark-techno")
 
 GOLDEN RULES:
 1. NEVER call the same action twice. ONE transition per heartbeat.
@@ -293,6 +304,17 @@ def create_dj_agent(config: Config) -> ToolCallingAgent:
         step_callbacks=[step_cb],
     )
 
+    producer = ToolCallingAgent(
+        tools=[
+            generate_track, list_library_tracks, analyze_track,
+        ],
+        model=model,
+        name="producer",
+        description="AI music producer — generates original tracks using Lyria 3. Use when you want a track with specific BPM/key/mood that doesn't exist in the library, or when you want to create something original. Specify mood, BPM, key, genre, and style details for best results.",
+        max_steps=5,
+        step_callbacks=[step_cb],
+    )
+
     # Clear thinking log on new agent creation
     try:
         THINKING_FILE.write_text("")
@@ -308,7 +330,7 @@ def create_dj_agent(config: Config) -> ToolCallingAgent:
             read_file, write_file,
         ],
         model=model,
-        managed_agents=[mixer, library],
+        managed_agents=[mixer, library, producer],
         prompt_templates={**EMPTY_PROMPT_TEMPLATES, "system_prompt": _load_system_prompt()},
         max_steps=20,
         planning_interval=5,
@@ -367,6 +389,7 @@ Output your plan clearly — the heartbeat agent will follow it."""
         tools=[
             analyze_track, preview_track,
             list_library_tracks, search_music, download_track,
+            generate_track,
             recall_learnings, read_file,
         ],
         model=model,

@@ -188,6 +188,7 @@ class RelayEngine:
         self._last_waveform_track = {1: "", 2: ""}  # per-deck waveform tracking
         self._pushes_since_connect = 0  # send waveform on first few pushes after connect
         self._decision_log = []  # timestamped brain decisions
+        self._last_energy_sample = 0.0  # wall clock of last energy arc sample
 
     async def run(self):
         """Main relay loop — connect and push state."""
@@ -248,6 +249,13 @@ class RelayEngine:
 
         # Assemble and send
         state = self._assemble_state(live, status)
+
+        # Sample energy arc every 10s — append to set for DB storage + realtime push
+        now = time.time()
+        if now - self._last_energy_sample >= 10 and self.being.current_set:
+            self._last_energy_sample = now
+            self._sample_energy_arc(state, status)
+
         await ws.send(json.dumps(state))
 
     def _get_current_intent(self, perc, active_status, status, idle_deck) -> str:
@@ -376,7 +384,7 @@ class RelayEngine:
                 "targetDuration": target_secs,
                 "tracksPlayed": len(self.being.tracks_played),
                 "peakEnergy": s.get("peak_energy", 0),
-                "energyArc": s.get("energy_arc", [])[-20:],
+                "energyArc": s.get("energy_arc", [])[-60:],  # last 10 min at 10s intervals
                 "startedAt": s.get("started_at", 0),
             }
 
@@ -562,3 +570,61 @@ class RelayEngine:
                 "durationMinutes": round((finished.get("ended_at", 0) - finished.get("started_at", 0)) / 60, 1),
             }
         return None
+
+    def _sample_energy_arc(self, state: dict, status: dict):
+        """Sample energy data point every 10s — stored on set for DB + pushed to frontend."""
+        try:
+            s = self.being.current_set
+            if not s:
+                return
+
+            elapsed = round(time.time() - s["started_at"])
+            perc = state.get("perception", {})
+            energy = perc.get("energy", 0)
+            mood = perc.get("mood", "")
+            direction = perc.get("energyDirection", "steady")
+
+            # Current track + section
+            ct = state.get("currentTrack", {})
+            track = ct.get("title", "")
+            track_pos = ct.get("elapsed", 0)
+
+            # Get section from DB timeline
+            section = ""
+            from .db import get_track_by_path
+            active_deck = state.get("activeDeck", 1)
+            info = self._track_info.get(active_deck, {})
+            file_path = info.get("file_path", "")
+            if file_path:
+                meta = get_track_by_path(file_path)
+                if meta and meta.get("timeline"):
+                    try:
+                        sections = json.loads(meta["timeline"]) if isinstance(meta["timeline"], str) else meta["timeline"]
+                        for sec in sections:
+                            if float(sec["start"]) <= track_pos <= float(sec["end"]):
+                                section = sec.get("section", "")
+                                break
+                    except Exception:
+                        pass
+
+            sample = {
+                "t": elapsed,
+                "energy": round(energy, 1),
+                "direction": direction,
+                "mood": mood,
+                "track": track[:50],
+                "section": section,
+                "bpm": ct.get("bpm", 0),
+            }
+
+            # Append to set's energy_arc
+            if not isinstance(s.get("energy_arc"), list):
+                s["energy_arc"] = []
+            s["energy_arc"].append(sample)
+
+            # Update peak energy
+            if energy > s.get("peak_energy", 0):
+                s["peak_energy"] = round(energy, 1)
+
+        except Exception:
+            pass

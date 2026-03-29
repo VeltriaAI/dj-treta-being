@@ -779,11 +779,18 @@ def do_bass_swap(to_deck: int, duration: int = 60) -> str:
     fps = 10
     total = int(duration * fps)
 
-    # Sync + play incoming with bass killed
+    # Move crossfader to center so both decks are audible through it
+    _mixxx_post("/api/crossfade", {"position": 0.5})
+
+    # Sync + play incoming with bass killed and volume at 0
     _mixxx_post("/api/sync", {"deck": to_deck})
     _mixxx_post("/api/eq", {"deck": to_deck, "lo": 0.0})
+    _mixxx_post("/api/volume", {"deck": to_deck, "volume": 0.0})
     _mixxx_post("/api/play", {"deck": to_deck})
 
+    # Phase 1 (0-40%): Bring in incoming volume (bass still cut)
+    # Phase 2 (40-60%): Swap bass — cut outgoing bass, restore incoming bass
+    # Phase 3 (60-100%): Fade out outgoing volume
     for i in range(total + 1):
         t = i / total
         if t <= 0.4:
@@ -798,9 +805,16 @@ def do_bass_swap(to_deck: int, duration: int = 60) -> str:
             _mixxx_post("/api/volume", {"deck": out_deck, "volume": round(fade, 2)})
         _time.sleep(1.0 / fps)
 
-    # Cleanup — crossfader + pause + reset
-    xf = 0.0 if to_deck == 1 else 1.0
-    _mixxx_post("/api/crossfade", {"position": xf})
+    # Cleanup — smooth crossfader to final position, pause + reset
+    xf_target = 0.0 if to_deck == 1 else 1.0
+    # Glide crossfader over 1s instead of snapping
+    steps = 10
+    xf_start = 0.5
+    for s in range(steps + 1):
+        xf = xf_start + (xf_target - xf_start) * (s / steps)
+        _mixxx_post("/api/crossfade", {"position": round(xf, 2)})
+        _time.sleep(0.1)
+
     _mixxx_post("/api/pause", {"deck": out_deck})
     _mixxx_post("/api/volume", {"deck": out_deck, "volume": 1.0})
     _mixxx_post("/api/volume", {"deck": to_deck, "volume": 1.0})
@@ -925,6 +939,14 @@ def do_echo_out(to_deck: int, duration: int = 30) -> str:
         if not deck_state.get("track_loaded", False):
             return f"ABORTED: Deck {to_deck} has no track loaded!"
 
+    # Move crossfader to center so both decks are audible
+    _mixxx_post("/api/crossfade", {"position": 0.5})
+
+    # Start incoming silently — it will be revealed after outgoing fades
+    _mixxx_post("/api/volume", {"deck": to_deck, "volume": 0.0})
+    _mixxx_post("/api/sync", {"deck": to_deck})
+    _mixxx_post("/api/play", {"deck": to_deck})
+
     # Fade out outgoing with filter closing (simulates echo decay)
     fps = 10
     total = int(duration * fps)
@@ -939,13 +961,21 @@ def do_echo_out(to_deck: int, duration: int = 30) -> str:
 
         _time.sleep(1 / fps)
 
-    # Outgoing silent — drop incoming
+    # Outgoing silent — bring in incoming clean
     _mixxx_post("/api/pause", {"deck": out_deck})
-    _mixxx_post("/api/play", {"deck": to_deck})
-    xf = 0.0 if to_deck == 1 else 1.0
-    _mixxx_post("/api/crossfade", {"position": xf})
+    # Quick volume rise on incoming (0.5s clean drop-in)
+    for s in range(5):
+        _mixxx_post("/api/volume", {"deck": to_deck, "volume": round((s + 1) / 5, 2)})
+        _time.sleep(0.1)
 
-    # Reset everything
+    # Glide crossfader to final position
+    xf_target = 0.0 if to_deck == 1 else 1.0
+    for s in range(10):
+        xf = 0.5 + (xf_target - 0.5) * ((s + 1) / 10)
+        _mixxx_post("/api/crossfade", {"position": round(xf, 2)})
+        _time.sleep(0.1)
+
+    # Reset
     _mixxx_post("/api/volume", {"deck": out_deck, "volume": 1.0})
     _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5})
     _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
@@ -1111,6 +1141,129 @@ def download_track(url: str, genre: str = "deep") -> str:
         return "ALREADY EXISTS: This track was already downloaded. Search for a DIFFERENT track."
 
     return f"Downloaded to {genre}/ folder"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# MUSIC PRODUCTION (Lyria 3)
+# ═══════════════════════════════════════════════════════════════════════
+
+@tool
+def generate_track(prompt: str, bpm: int = 128, key: str = "C minor",
+                   genre: str = "dark-techno", duration: str = "full") -> str:
+    """Generate an original AI track using Google Lyria 3. The track is saved
+    to the music library and auto-analyzed, ready to be loaded and mixed.
+
+    Args:
+        prompt: Describe the track — mood, style, instruments, energy. Be specific.
+               Example: "Dark driving techno with pulsing bassline, metallic percussion,
+               atmospheric pads, building tension, no vocals"
+        bpm: Tempo in BPM (60-200). Default 128.
+        key: Musical key. Example: "C minor", "F# major", "A minor".
+        genre: Genre folder to save into (e.g., dark-techno, melodic-techno, deep, minimal, progressive, ai-generated).
+        duration: "full" for ~3 min track (lyria-3-pro), "clip" for 30s clip (lyria-3-clip).
+    """
+    from google import genai
+    from google.genai import types
+    import time as _time
+
+    cfg = load_config()
+    pc = cfg.producer
+
+    # Build the music prompt with DJ-specific instructions
+    music_prompt = (
+        f"{prompt}\n\n"
+        f"Tempo: {bpm} BPM\n"
+        f"Key: {key}\n"
+        f"Style: {genre.replace('-', ' ')}\n"
+        f"Instrumental only, no vocals.\n"
+        f"DJ-friendly structure: clear intro (16 bars), main groove, breakdown, build-up, drop, outro (16 bars).\n"
+        f"Designed for DJ mixing with beatmatched intro and outro."
+    )
+
+    # Pick model based on duration
+    use_clip = (duration == "clip")
+
+    try:
+        import warnings as _warnings
+        _warnings.filterwarnings('ignore', message='.*Interactions.*')
+
+        client = genai.Client(
+            vertexai=True,
+            project=pc.vertex_project,
+            location=pc.vertex_location,
+        )
+
+        audio_data = None
+        description = ""
+
+        if use_clip:
+            # Clip model (30s) uses generate_content API
+            response = client.models.generate_content(
+                model="lyria-3-clip-preview",
+                contents=music_prompt,
+                config=types.GenerateContentConfig(
+                    response_modalities=["AUDIO", "TEXT"],
+                ),
+            )
+            if response.parts:
+                for part in response.parts:
+                    if part.text is not None:
+                        description = part.text
+                    elif part.inline_data is not None:
+                        audio_data = part.inline_data.data
+        else:
+            # Pro model (~3 min) uses interactions API
+            import base64 as _b64
+            interaction = client.interactions.create(
+                model="lyria-3-pro-preview",
+                response_modalities=["audio", "text"],
+                input=music_prompt,
+            )
+            # Use model_dump() — interaction.outputs can be None due to SDK bug
+            outputs = interaction.model_dump().get("outputs") or []
+            for out in outputs:
+                if out.get("type") == "text":
+                    description = out.get("text", "")
+                elif out.get("type") == "audio" and out.get("data"):
+                    audio_data = _b64.b64decode(out["data"])
+    except Exception as e:
+        return f"Lyria generation failed: {e}"
+
+    if not audio_data:
+        return f"No audio generated. Model response: {description[:200]}"
+
+    # Save to library
+    genre_dir = _music_dir() / genre
+    genre_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generate filename from prompt
+    slug = re.sub(r'[^a-z0-9]+', '-', prompt.lower().strip())[:60].strip('-')
+    timestamp = _time.strftime("%H%M%S")
+    filename = f"Treta-{slug}-{bpm}bpm-{timestamp}.mp3"
+    filepath = genre_dir / filename
+
+    try:
+        with open(filepath, "wb") as f:
+            f.write(audio_data)
+    except Exception as e:
+        return f"Failed to save audio: {e}"
+
+    # Insert into DB + auto-analyze in background
+    from .db import upsert_track
+    upsert_track(path=str(filepath), title=filepath.stem, genre=genre)
+
+    import threading
+    def _bg_analyze():
+        try:
+            analyze_track(str(filepath))
+        except Exception:
+            pass
+    threading.Thread(target=_bg_analyze, daemon=True).start()
+
+    result = f"Generated: {filepath}"
+    if description:
+        result += f"\nLyria notes: {description[:200]}"
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════════
