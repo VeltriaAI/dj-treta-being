@@ -36,7 +36,7 @@ capabilities:
 planner:
   replan_every_n_tracks: 2
   download_new_tracks: 3
-  min_play_time_seconds: 180
+  min_play_time_seconds: 90
 
 sets:
   auto_mode: true
