@@ -364,49 +364,25 @@ class DJTretaBeing:
                 f"NEXT: '{idle_track[:40]}' on deck {idle_deck} "
                 f"(BPM:{idle_bpm:.0f}, Key:{idle_key})\n"
                 f"  TIMELINE: {idle_timeline}\n\n"
-                f"Should you transition NOW?\n"
-                f"- If yes: reply TRANSITION|technique|duration (e.g., TRANSITION|crossfade|45)\n"
-                f"- If no: reply WAIT|reason"
+                f"You are the DJ. Look at the timelines.\n"
+                f"If you want to transition, call schedule_transition with the right track position.\n"
+                f"If not ready yet, just explain why you're waiting."
             )
 
             self._agent_busy = True
 
-            def _decide_and_execute():
+            def _run():
                 try:
-                    result = str(self.agent.run(instruction)).strip()
+                    result = str(self.agent.run(instruction))
                     log.info(f"DJ decision: {result[:150]}")
-
-                    first_word = result.split("|")[0].strip().upper()
-                    if first_word == "TRANSITION":
-                        # Parse: TRANSITION|crossfade|45
-                        parts = result.split("|")
-                        technique = "crossfade"
-                        trans_duration = 45
-                        for p in parts[1:]:
-                            p = p.strip().lower()
-                            if p in ("crossfade", "bass_swap", "filter", "hard_cut"):
-                                technique = p
-                            elif p.isdigit():
-                                trans_duration = int(p)
-
-                        log.info(f"Transition: {technique}, {trans_duration}s")
-                        if technique == "bass_swap":
-                            from .tools import do_bass_swap
-                            do_bass_swap(idle_deck, trans_duration)
-                        else:
-                            from .tools import do_transition
-                            do_transition(idle_deck, trans_duration)
-
-                        self._record_playing_tracks()
-                        self._check_set_duration()
-                    else:
-                        log.info(f"DJ says wait: {result[:100]}")
+                    self._record_playing_tracks()
+                    self._check_set_duration()
                 except Exception as e:
                     log.error(f"DJ decision error: {e}")
                 finally:
                     self._agent_busy = False
 
-            threading.Thread(target=_decide_and_execute, daemon=True).start()
+            threading.Thread(target=_run, daemon=True).start()
             self._next_sleep = 15
             return
 

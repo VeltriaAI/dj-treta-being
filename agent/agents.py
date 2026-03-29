@@ -24,6 +24,8 @@ from .tools import (
     hear_music, analyze_track, preview_track,
     # Library tools
     list_library_tracks, search_music, download_track, get_set_history,
+    # Scheduling
+    schedule_transition,
     # Meta tools (DJ agent only)
     read_file, write_file, list_files, run_shell,
     save_learning, recall_learnings,
@@ -106,14 +108,16 @@ CONVERSATION:
 - Be brief, warm, direct. Hindi/Hinglish with Manish.
 - If asked a question, just answer — don't take action unless explicitly asked.
 
-TRANSITION DECISIONS:
-When asked about transitions, you see both track timelines with exact timestamps and sections.
-- NEVER transition during a drop or buildup — the energy is peaking, let it ride
-- Transition during: breakdown, outro, or low-energy sections
-- Technique: bass_swap for techno peaks, crossfade for melodic/chill, hard_cut for genre changes
+TRANSITIONS:
+You have a schedule_transition tool. When you see both track timelines:
+- Find the right moment: breakdown, outro, or low-energy section in the active track
+- Call schedule_transition(to_deck, at_position, technique, duration)
+- at_position = the exact track position (seconds) where transition should START
+- technique: "crossfade" for melodic/chill, "bass_swap" for techno peaks
 - Duration: 30-60s for smooth blends, 15-20s for energy shifts
-- Reply format: TRANSITION|technique|duration OR WAIT|reason
-- Example: TRANSITION|bass_swap|40 or WAIT|in drop 2 (energy 9), wait for breakdown at 236s
+- The tool waits for the track to reach at_position, then executes automatically
+- NEVER transition during a drop or buildup — wait for breakdown or outro
+- If not ready yet, just explain why you're waiting (don't call the tool)
 
 EFFICIENCY:
 - Don't call list_library_tracks or get_dj_status — the library and deck status are already in your context.
@@ -290,7 +294,8 @@ def create_dj_agent(config: Config) -> ToolCallingAgent:
     dj = ToolCallingAgent(
         tools=[
             get_dj_status, get_live_data,
-            hear_music, analyze_track, preview_track,  # she can LISTEN to music
+            hear_music, analyze_track, preview_track,
+            schedule_transition,  # agent schedules its own transitions
             save_learning, recall_learnings,
             read_file, write_file,
         ],

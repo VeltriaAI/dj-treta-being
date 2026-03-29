@@ -817,6 +817,65 @@ def do_bass_swap(to_deck: int, duration: int = 60) -> str:
     return f"Bass-swapped to Deck {to_deck} over {duration}s. Deck {out_deck} ejected."
 
 
+@tool
+def schedule_transition(to_deck: int, at_position: int, technique: str = "crossfade", duration: int = 45) -> str:
+    """Schedule a transition at a specific track position. The transition will
+    execute when the active track reaches at_position seconds.
+
+    Call this when you've decided the right moment to transition based on
+    the track timeline (e.g., at a breakdown or outro).
+
+    Args:
+        to_deck: Deck to transition TO (1 or 2).
+        at_position: Track position in seconds to START the transition.
+        technique: "crossfade" for smooth blend, "bass_swap" for techno-style EQ swap.
+        duration: Transition duration in seconds (20-60).
+    """
+    import time as _time
+
+    duration = max(10, min(120, duration))
+
+    # Get current track position
+    status = _mixxx_get("/api/status")
+    if not status or _mixxx_failed(status):
+        return "ERROR: Mixxx not responding"
+
+    # Find active deck position
+    active_deck = 1 if to_deck == 2 else 2
+    current_pos = float(status.get(f"deck{active_deck}", {}).get("position_seconds", 0) or 0)
+
+    # Calculate delay
+    delay = at_position - current_pos
+    if delay < 0:
+        delay = 0
+
+    # Write scheduled transition for relay to push to frontend
+    scheduled = {
+        "toDeck": to_deck,
+        "atPosition": at_position,
+        "technique": technique,
+        "duration": duration,
+        "scheduledAt": current_pos,
+        "executesIn": round(delay),
+    }
+    Path("/tmp/dj-treta-scheduled-transition.json").write_text(
+        json.dumps(scheduled, indent=2)
+    )
+
+    # Wait for the right moment
+    if delay > 0:
+        _time.sleep(delay)
+
+    # Clear scheduled file
+    Path("/tmp/dj-treta-scheduled-transition.json").unlink(missing_ok=True)
+
+    # Execute the transition
+    if technique == "bass_swap":
+        return do_bass_swap(to_deck, duration)
+    else:
+        return do_transition(to_deck, duration)
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # MUSIC DISCOVERY — Search & Download
 # ═══════════════════════════════════════════════════════════════════════

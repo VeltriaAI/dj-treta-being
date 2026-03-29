@@ -511,6 +511,7 @@ class RelayEngine:
             "transition": {
                 "strategy": self._get_transition_analysis(active_status, status, idle_deck),
                 "countdown": transition_countdown,
+                "scheduled": self._get_scheduled_transition(),
             },
             "harmonicMap": {
                 "currentKey": active_camelot,
@@ -532,6 +533,16 @@ class RelayEngine:
             "listeners": 0,
             "timestamp": int(time.time() * 1000),
         }
+
+    def _get_scheduled_transition(self) -> dict | None:
+        """Read scheduled transition data from temp file."""
+        try:
+            f = Path("/tmp/dj-treta-scheduled-transition.json")
+            if f.exists():
+                return json.loads(f.read_text())
+        except Exception:
+            pass
+        return None
 
     def _get_finished_set(self) -> dict | None:
         """Return finished set data once, then clear."""
