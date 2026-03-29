@@ -711,13 +711,24 @@ def do_transition(to_deck: int, duration: int = 60) -> str:
         if remaining < 30:
             return f"ABORTED: Deck {to_deck} track has only {remaining:.0f}s left — load a fresh track first."
 
-    # Reset rate to original BPM, then sync + play + phase align
+    # Reset rate to original BPM
     _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "rate", "value": 0})
-    _mixxx_post("/api/sync", {"deck": to_deck})
+
+    # Smart sync: only sync BPM if tracks are close (±15 BPM)
+    # If BPM gap is large (genre change), skip sync — play at natural BPM
+    out_bpm = float(status.get(f"deck{out_deck}", {}).get("file_bpm", 0) or 0)
+    in_bpm = float(status.get(f"deck{to_deck}", {}).get("file_bpm", 0) or 0)
+    bpm_gap = abs(out_bpm - in_bpm) if out_bpm > 0 and in_bpm > 0 else 0
+
+    if bpm_gap <= 15:
+        _mixxx_post("/api/sync", {"deck": to_deck})
+
     _mixxx_post("/api/play", {"deck": to_deck})
     _time.sleep(0.3)
-    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "beatsync_phase", "value": 1})
-    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "quantize", "value": 1})
+
+    if bpm_gap <= 15:
+        _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "beatsync_phase", "value": 1})
+        _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "quantize", "value": 1})
     _time.sleep(0.1)
 
     # Verify it actually started playing
