@@ -323,9 +323,11 @@ RULES:
 - If a track is in the library, include its full file path
 - If not in library, search YouTube and download it
 
-Good artists: Anyma, ARTBAT, Tale of Us, Stephan Bodzin, Mind Against, Adriatique,
-Âme, Maceo Plex, Boris Brejcha, Ben Böhmer, Monolink, Jan Blomqvist, CamelPhat,
-Charlotte de Witte, Argy, Fideles, Kevin de Vries, Innellea, Agents of Time
+Search for artists and tracks that match the CURRENT MOOD/GENRE. Do NOT default to melodic techno.
+If mood is psytrance → search Infected Mushroom, Astrix, Vini Vici, Ace Ventura, etc.
+If mood is bhojpuri → search Pawan Singh, Khesari Lal, etc.
+If mood is melodic techno → search Anyma, ARTBAT, Tale of Us, etc.
+Always match the mood. The mood is given in the planner prompt.
 
 Use analyze_track to deeply understand tracks in the library.
 Use search_music + download_track to get tracks not in library.

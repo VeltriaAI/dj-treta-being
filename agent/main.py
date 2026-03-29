@@ -610,7 +610,7 @@ class DJTretaBeing:
             "title": title,
             "started_at": time.time(),
             "mood": set_mood,
-            "genre": genre or "melodic-techno",
+            "genre": genre or set_mood or "melodic-techno",
             "target_duration": duration or self.config.sets.default_duration_minutes,
             "tracks": [],
             "energy_arc": [],
