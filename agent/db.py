@@ -157,10 +157,27 @@ def find_compatible_tracks(bpm: float, key_camelot: str, energy: int,
 
 
 def get_track_by_path(path: str) -> dict | None:
+    import unicodedata
     db = get_db()
     try:
+        # Exact match first
         row = db.execute("SELECT * FROM tracks WHERE path=?", (path,)).fetchone()
-        return dict(row) if row else None
+        if row:
+            return dict(row)
+
+        # Normalize unicode and try again (Mixxx vs Python encoding differences)
+        normalized = unicodedata.normalize("NFC", path)
+        row = db.execute("SELECT * FROM tracks WHERE path=?", (normalized,)).fetchone()
+        if row:
+            return dict(row)
+
+        # Fallback: match by filename (last component)
+        filename = path.rsplit("/", 1)[-1] if "/" in path else path
+        rows = db.execute("SELECT * FROM tracks WHERE path LIKE ?", (f"%{filename}",)).fetchall()
+        if len(rows) == 1:
+            return dict(rows[0])
+
+        return None
     finally:
         db.close()
 
