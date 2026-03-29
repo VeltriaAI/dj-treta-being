@@ -711,7 +711,8 @@ def do_transition(to_deck: int, duration: int = 60) -> str:
         if remaining < 30:
             return f"ABORTED: Deck {to_deck} track has only {remaining:.0f}s left — load a fresh track first."
 
-    # Sync + play + phase align
+    # Reset rate to original BPM, then sync + play + phase align
+    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "rate", "value": 0})
     _mixxx_post("/api/sync", {"deck": to_deck})
     _mixxx_post("/api/play", {"deck": to_deck})
     _time.sleep(0.3)

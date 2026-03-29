@@ -519,10 +519,16 @@ class DJTretaBeing:
             if result.get("ok"):
                 log.info(f"Loaded deck {idle_deck}: {next_track.get('title', '?')[:50]}")
 
-                # Save duration from Mixxx (Gemini analysis often misses it)
+                # Reset rate to original BPM + save duration
                 try:
+                    url = self.config.mixxx.url
                     time.sleep(1)
-                    st = _get_status(self.config.mixxx.url)
+                    # Reset rate — play at original BPM, no pitch drift
+                    httpx.post(f"{url}/api/control", json={
+                        "group": f"[Channel{idle_deck}]", "key": "rate", "value": 0
+                    }, timeout=3)
+                    # Save duration from Mixxx (Gemini analysis often misses it)
+                    st = _get_status(url)
                     if st:
                         dur = float(st.get(f"deck{idle_deck}", {}).get("duration", 0) or 0)
                         if dur > 0:
