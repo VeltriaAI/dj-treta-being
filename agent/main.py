@@ -513,8 +513,17 @@ class DJTretaBeing:
             if result.get("ok"):
                 log.info(f"Loaded deck {idle_deck}: {next_track.get('title', '?')[:50]}")
 
-                # Cue point disabled — let tracks play from start
-                # TODO: planner decides per-track based on genre/mood
+                # Save duration from Mixxx (Gemini analysis often misses it)
+                try:
+                    time.sleep(1)
+                    st = _get_status(self.config.mixxx.url)
+                    if st:
+                        dur = float(st.get(f"deck{idle_deck}", {}).get("duration", 0) or 0)
+                        if dur > 0:
+                            from .db import upsert_track
+                            upsert_track(path=track_path, duration_seconds=dur)
+                except Exception:
+                    pass
 
             else:
                 log.warning(f"Load failed: {result}")
