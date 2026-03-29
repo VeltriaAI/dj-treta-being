@@ -9,6 +9,7 @@ Usage:
 
 import json
 import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -23,6 +24,10 @@ from textual.timer import Timer
 from textual.widgets import (
     Footer, Header, Input, Label, RichLog, Static,
 )
+
+# DB access for track timeline + stats
+sys.path.insert(0, str(Path(__file__).parent))
+from agent.db import get_db, get_current_set, get_set_tracks, get_track_by_path
 
 # ── Config ────────────────────────────────────────────────────────────
 
@@ -151,6 +156,60 @@ def knob_display(value: float, label: str, neutral: float = 1.0) -> str:
     else:
         return f"[bold cyan]{label}↓{value:.1f}[/bold cyan]"
 
+def _find_current_section(timeline_json, position: float) -> str:
+    """Find which section the track is currently in from timeline JSON."""
+    try:
+        sections = json.loads(timeline_json) if isinstance(timeline_json, str) else timeline_json
+        if not sections:
+            return ""
+        for s in sections:
+            if float(s["start"]) <= position <= float(s["end"]):
+                return f"{s['section']} (energy:{s['energy']}, {s['start']:.0f}s-{s['end']}s)"
+    except Exception:
+        pass
+    return ""
+
+
+def _format_timeline_compact(timeline_json, current_pos: float) -> str:
+    """Format full timeline with current section highlighted."""
+    try:
+        sections = json.loads(timeline_json) if isinstance(timeline_json, str) else timeline_json
+        if not sections:
+            return ""
+        parts = []
+        for s in sections:
+            label = f"{s['section'].upper()}({s['energy']})"
+            if float(s["start"]) <= current_pos <= float(s["end"]):
+                parts.append(f"[bold yellow]{label}[/bold yellow]")
+            else:
+                parts.append(f"[dim]{label}[/dim]")
+        return " → ".join(parts)
+    except Exception:
+        return ""
+
+
+def _get_scheduled_transition() -> dict | None:
+    """Read scheduled transition data from temp file."""
+    try:
+        f = Path("/tmp/dj-treta-scheduled-transition.json")
+        return json.loads(f.read_text()) if f.exists() else None
+    except Exception:
+        return None
+
+
+def _detect_config_value(section: str, key: str, default=False):
+    """Read a value from config.yaml — fallback when daemon state file is old."""
+    try:
+        import yaml
+        config_file = Path(__file__).parent / "config.yaml"
+        if config_file.exists():
+            cfg = yaml.safe_load(config_file.read_text()) or {}
+            return cfg.get(section, {}).get(key, default)
+    except Exception:
+        pass
+    return default
+
+
 def send_command(command: str, args: dict = {}) -> str:
     cmd_id = f"{time.time():.6f}"
     payload = {"command": command, "args": args, "id": cmd_id}
@@ -216,7 +275,7 @@ class DeckWidget(Static):
                 if ct.get("title"):
                     track_name = ct["title"]
 
-        max_name = 48
+        max_name = 60
         if len(track_name) > max_name:
             track_name = track_name[:max_name - 1] + "…"
 
@@ -241,6 +300,8 @@ class DeckWidget(Static):
             tags.append("[yellow]LOOP[/yellow]")
         if peak:
             tags.append("[red bold]PEAK[/red bold]")
+        if file_bpm > 0 and abs(bpm - file_bpm) > 2:
+            tags.append("[red]DRIFT[/red]")
         tags_str = " ".join(tags)
 
         # Rate display
@@ -257,9 +318,23 @@ class DeckWidget(Static):
         vol_bar = "█" * vol_pct + "░" * (10 - vol_pct)
         vol_str = f"VOL [{dim_color}]{vol_bar}[/{dim_color}] {vol:.0%}"
 
+        # Track section from DB timeline
+        section_str = ""
+        try:
+            file_path = deck.get("file_path", "") or _track_cache.get(self.deck_num, {}).get("file_path", "")
+            if file_path:
+                track_data = get_track_by_path(file_path)
+                if track_data and track_data.get("timeline"):
+                    section = _find_current_section(track_data["timeline"], pos)
+                    if section:
+                        section_str = f"  [dim]▸ {section}[/dim]\n"
+        except Exception:
+            pass
+
         self.update(
             f"[bold {color}]DECK {self.deck_num}{active_str}[/bold {color}]  {beat_str}  {tags_str}\n"
             f"  [bold]{track_name}[/bold]\n"
+            f"{section_str}"
             f"  {icon} {fmt_time_precise(pos)} [{dim_color}]{bar}[/{dim_color}] -{fmt_time(remaining)}\n"
             f"  [bold]{bpm:.2f}[/bold] BPM {rate_str}  [bold]{key}[/bold]  (file: {file_bpm:.0f})\n"
             f"  EQ {eq_str}  {vol_str}\n"
@@ -293,63 +368,155 @@ class MixerWidget(Static):
 
 
 class BrainWidget(Static):
-    """Brain status bar."""
+    """Brain panel — set info, status, DJ decisions, timeline, billing."""
 
-    def update_brain(self, state: dict | None):
+    def update_brain(self, state: dict | None, status: dict | None = None):
         if not state:
             self.update("[dim]Brain offline — /start to launch[/dim]")
             return
 
         phase = state.get("phase", "?")
-        mood = state.get("mood", "?")
         played = state.get("tracks_played", 0)
-        elapsed = state.get("set_elapsed", 0)
-        remaining = state.get("set_remaining", 0)
-
-        colors = {
+        phase_colors = {
             "playing": "green", "preparing": "yellow", "transitioning": "blue",
             "recovery": "red", "starting": "yellow", "stopped": "dim", "idle": "dim",
         }
-        pc = colors.get(phase, "white")
+        pc = phase_colors.get(phase, "white")
 
-        if isinstance(remaining, str):
-            set_str = f"{fmt_time(elapsed)} / {remaining}"
+        lines = []
+
+        # ── Line 1: Set info ──
+        set_data = state.get("set", {})
+        # Fallback: read from DB if old daemon doesn't write set info
+        if not set_data:
+            try:
+                db_set = get_current_set()
+                if db_set:
+                    elapsed_secs = time.time() - db_set["started_at"]
+                    target_min = db_set.get("target_duration_minutes", 0) or 0
+                    set_data = {
+                        "number": db_set.get("set_number", "?"),
+                        "title": db_set.get("title", ""),
+                        "mood": db_set.get("mood", ""),
+                        "genre": db_set.get("genre", ""),
+                        "elapsed": elapsed_secs,
+                        "target_minutes": target_min,
+                    }
+            except Exception:
+                pass
+        if set_data:
+            set_num = set_data.get("number", "?")
+            set_title = set_data.get("title", "")
+            set_genre = set_data.get("genre", set_data.get("mood", ""))
+            elapsed = set_data.get("elapsed", 0)
+            target_min = set_data.get("target_minutes", 0)
+            target_secs = target_min * 60 if target_min else 0
+            set_time = f"{fmt_time(elapsed)} / {fmt_time(target_secs)}" if target_secs else fmt_time(elapsed)
+            lines.append(
+                f"SET #{set_num} [bold]\"{set_title}\"[/bold] | "
+                f"{set_genre} | {set_time} | {played} tracks"
+            )
         else:
-            set_str = f"{fmt_time(elapsed)} / {fmt_time(elapsed + remaining)}"
+            mood = state.get("mood", "?")
+            lines.append(f"[dim]No set active[/dim]  Mood: [bold]{mood}[/bold]  Tracks: {played}")
 
-        # Get billing info
-        billing_str = ""
+        # ── Line 2: Status bar ──
+        agent_str = "[yellow]THINKING[/yellow]" if state.get("agent_busy") else "[dim]idle[/dim]"
+        planner_status = state.get("planner_status", "idle")
+        planner_since = state.get("planner_tracks_since", 0)
+        planner_str = (f"[yellow]PLANNING[/yellow]" if planner_status == "busy"
+                       else f"[dim]idle ({planner_since} since)[/dim]")
+
+        # Relay: check state file first, fallback to config.yaml
+        if "relay_connected" in state:
+            relay_on = state.get("relay_connected", False)
+        else:
+            relay_on = _detect_config_value("relay", "enabled", False)
+        relay_str = "[green]ON[/green]" if relay_on else "[dim]OFF[/dim]"
+
+        # Recording/Broadcast: check state file first, fallback to config defaults
+        if "recording" in state:
+            rec_on = state.get("recording", False)
+        else:
+            rec_on = _detect_config_value("sets", "local_recording", False)
+        rec_str = "[green]ON[/green]" if rec_on else "[dim]OFF[/dim]"
+
+        if "broadcasting" in state:
+            bcast_on = state.get("broadcasting", False)
+        else:
+            bcast_on = _detect_config_value("broadcast", "auto_start", True)
+        bcast_str = "[green]ON[/green]" if bcast_on else "[dim]OFF[/dim]"
+
+        emerg = state.get("emergency_count", 0)
+        emerg_str = f"[red]{emerg}[/red]" if emerg > 0 else "[dim]0[/dim]"
+
+        lines.append(
+            f"[{pc}]● {phase.upper()}[/{pc}] | "
+            f"Agent: {agent_str} | Planner: {planner_str} | "
+            f"Relay: {relay_str} | REC: {rec_str} | BCAST: {bcast_str} | Emerg: {emerg_str}"
+        )
+
+        # ── Line 3: DJ Decision + Scheduled Transition ──
+        dj_decision = getattr(self.app, '_last_dj_decision', '') if hasattr(self, 'app') else ''
+        scheduled = _get_scheduled_transition()
+        decision_parts = []
+        if dj_decision:
+            decision_parts.append(f"[italic]{dj_decision}[/italic]")
+        if scheduled:
+            tech = scheduled.get("technique", "crossfade").upper().replace("_", " ")
+            at_pos = scheduled.get("atPosition", 0)
+            # Compute live countdown from current deck position
+            countdown = 0
+            if status:
+                ct = state.get("current_track", {})
+                current_pos = ct.get("position", 0)
+                countdown = max(0, int(at_pos - current_pos))
+            decision_parts.append(f"[bold yellow]{tech} in {countdown}s[/bold yellow]")
+        if decision_parts:
+            lines.append("  DJ: " + " | ".join(decision_parts))
+        else:
+            ct = state.get("current_track", {})
+            nt = state.get("next_track")
+            now_next = []
+            if ct.get("title"):
+                now_next.append(f"Now: [italic]{ct['title']}[/italic]")
+            if nt and nt.get("title"):
+                now_next.append(f"Next: [italic cyan]{nt['title']}[/italic cyan]")
+            if now_next:
+                lines.append("  " + "  ".join(now_next))
+
+        # ── Line 4: Track timeline ──
+        ct = state.get("current_track", {})
+        file_path = ct.get("file_path", "")
+        pos = ct.get("position", 0)
+        if file_path:
+            try:
+                track_data = get_track_by_path(file_path)
+                if track_data and track_data.get("timeline"):
+                    timeline_str = _format_timeline_compact(track_data["timeline"], pos)
+                    if timeline_str:
+                        lines.append(f"  {timeline_str}")
+            except Exception:
+                pass
+
+        # ── Line 5: Billing ──
         try:
             billing_file = Path("/tmp/dj-treta-billing.json")
             if billing_file.exists():
                 b = json.loads(billing_file.read_text())
                 total_tokens = b.get("total_input_tokens", 0) + b.get("total_output_tokens", 0)
                 cost = b.get("total_cost_usd", 0)
+                calls = b.get("calls", 0)
+                session_start = b.get("session_start", time.time())
+                mins = (time.time() - session_start) / 60
+                cost_hr = cost / mins * 60 if mins > 0 else 0
                 if total_tokens > 0:
-                    if total_tokens > 1_000_000:
-                        billing_str = f"  [dim]{total_tokens/1_000_000:.1f}M tokens ${cost:.3f}[/dim]"
-                    else:
-                        billing_str = f"  [dim]{total_tokens//1000}K tokens ${cost:.4f}[/dim]"
+                    tok_str = f"{total_tokens/1_000_000:.1f}M" if total_tokens > 1_000_000 else f"{total_tokens//1000}K"
+                    lines.append(f"  [dim]${cost:.3f} | {tok_str} tokens | {calls} calls | ${cost_hr:.3f}/hr[/dim]")
         except Exception:
             pass
 
-        line1 = (
-            f"[{pc}]● {phase.upper()}[/{pc}]  "
-            f"Mood: [bold]{mood or 'none'}[/bold]  "
-            f"Tracks: [bold]{played}[/bold]  "
-            f"Set: {set_str}{billing_str}"
-        )
-
-        parts = [line1]
-        ct = state.get("current_track", {})
-        if ct.get("title"):
-            parts.append(f"  Now: [italic]{ct['title']}[/italic]")
-
-        nt = state.get("next_track")
-        if nt and nt.get("title"):
-            parts.append(f"  Next: [italic cyan]{nt['title']}[/italic cyan]")
-
-        self.update("\n".join(parts))
+        self.update("\n".join(lines))
 
 
 # ── Main App ──────────────────────────────────────────────────────────
@@ -360,7 +527,7 @@ Screen {
 }
 
 #decks {
-    height: 10;
+    height: 11;
     layout: horizontal;
 }
 
@@ -377,7 +544,7 @@ Screen {
 }
 
 #brain {
-    height: 4;
+    height: 7;
     padding: 0 1;
     border-top: solid $accent;
 }
@@ -449,6 +616,8 @@ class DJTretaApp(App):
         self._log_mtime = 0.0
         self._debug_log_pos = 0
         self._thinking_pos = 0
+        self._last_dj_decision = ""
+        self._last_dj_decision_time = 0.0
         self.set_interval(3.0, self.poll_daemon_log)
         self.set_interval(1.0, self.poll_debug_log)
         self.set_interval(1.0, self.poll_thinking_log)
@@ -551,7 +720,7 @@ class DJTretaApp(App):
             deck2_w.update("[red bold]DECK 2[/red bold]\n  [red]Mixxx offline[/red]\n\n\n\n\n")
             mixer_w.update("[red]No connection to Mixxx[/red]")
 
-        brain_w.update_brain(state)
+        brain_w.update_brain(state, status)
 
     def poll_daemon_log(self) -> None:
         if not DAEMON_LOG.exists():
@@ -571,10 +740,11 @@ class DJTretaApp(App):
             self._log_pos = len(lines)
 
             skip = ["LiteLLM", "Wrapper:", "completion() model", "─", "│", "╭", "╰",
-                    "Observations:", "Step ", "Calling tool", "Final answer:", "TRACK:", "TECHNIQUE:", "ENERGY:",
+                    "Observations:", "Step ", "Calling tool", "TRACK:", "TECHNIQUE:", "ENERGY:",
                     "Talk result", "Talk done", "Talk ack", "processing...", "Result: processing",
                     "Unmapped finish_reason", "malformed_function_call", "TOKENS:", "TokenUsage",
-                    "mixer ←", "dj_treta →", "dj_treta ←", "library ←", "library →", "mixer →"]
+                    "mixer ←", "dj_treta →", "dj_treta ←", "library ←", "library →", "mixer →",
+                    "shutting down", "HTTP Request:"]
 
             for line in new_lines:
                 if not line.strip():
@@ -590,16 +760,32 @@ class DJTretaApp(App):
                 msg = parts[1].strip()
                 if "ERROR" in line or "WARNING" in line:
                     self.log_widget.write(f"[red]  {msg}[/red]")
+                elif "DJ decision:" in msg:
+                    self.log_widget.write(f"[bold bright_blue]  {msg}[/bold bright_blue]")
+                elif "Final answer:" in msg:
+                    self.log_widget.write(f"[bold blue]  {msg}[/bold blue]")
                 elif "Playing:" in msg or "now playing" in msg.lower():
                     self.log_widget.write(f"[green]  {msg}[/green]")
                 elif "Next:" in msg:
                     self.log_widget.write(f"[cyan]  {msg}[/cyan]")
-                elif "Transition" in msg or "transition" in msg:
+                elif "Transition" in msg or "transition" in msg or "Bass-swap" in msg or "bass_swap" in msg:
                     self.log_widget.write(f"[blue]  {msg}[/blue]")
+                elif "Set started:" in msg or "Set ended:" in msg:
+                    self.log_widget.write(f"[bold yellow]  {msg}[/bold yellow]")
+                elif "Emergency" in msg or "emergency" in msg:
+                    self.log_widget.write(f"[bold red]  {msg}[/bold red]")
+                elif "Planner done:" in msg:
+                    # Show full planner plan from playlist file
+                    self.log_widget.write(f"[bold yellow]  Planner done — new plan:[/bold yellow]")
+                    self._show_planner_plan()
+                elif "Planner" in msg or "planner" in msg.lower():
+                    self.log_widget.write(f"[yellow]  {msg}[/yellow]")
                 elif "preparing" in msg.lower() or "brain" in msg.lower():
                     self.log_widget.write(f"[yellow]  {msg}[/yellow]")
                 elif "sync" in msg.lower() or "Loaded" in msg:
                     self.log_widget.write(f"[magenta]  {msg}[/magenta]")
+                elif "schedule_transition" in msg.lower():
+                    self.log_widget.write(f"[bold cyan]  {msg}[/bold cyan]")
                 elif "hear" in msg.lower() or "listen" in msg.lower():
                     self.log_widget.write(f"[bright_green]  {msg}[/bright_green]")
                 else:
@@ -608,11 +794,9 @@ class DJTretaApp(App):
             pass
 
     def poll_thinking_log(self) -> None:
-        """Agent internal thinking — all goes to debug panel."""
+        """Agent internal thinking — DJ decisions go to BrainWidget, details to debug panel."""
         debug_visible = self.query_one("#debug-log").has_class("visible")
 
-        if not debug_visible:
-            return
         if not THINKING_LOG.exists():
             return
         try:
@@ -628,16 +812,20 @@ class DJTretaApp(App):
                 if line.startswith("[THINK:"):
                     agent = line.split("]")[0].split(":")[1]
                     thought = line.split("] ", 1)[1] if "] " in line else line
-                    if len(thought) > 300:
-                        thought = thought[:300] + "..."
-                    self.debug_widget.write(f"[bold bright_white]  💭 {agent}:[/bold bright_white] [italic]{thought}[/italic]")
+                    # Surface DJ decisions to BrainWidget
+                    if "dj_treta" in agent:
+                        self._last_dj_decision = thought[:300]
+                        self._last_dj_decision_time = time.time()
+                    if debug_visible:
+                        if len(thought) > 300:
+                            thought = thought[:300] + "..."
+                        self.debug_widget.write(f"[bold bright_white]  {agent}:[/bold bright_white] [italic]{thought}[/italic]")
 
                 elif line.startswith("[CALL:"):
-                    # Tool calls → DEBUG panel only
                     if debug_visible:
                         agent = line.split("]")[0].split(":")[1]
                         call = line.split("] ", 1)[1] if "] " in line else line
-                        self.debug_widget.write(f"[cyan]  🔧 {agent} → {call}[/cyan]")
+                        self.debug_widget.write(f"[cyan]  {agent} -> {call}[/cyan]")
 
                 elif line.startswith("[OBS:"):
                     if debug_visible:
@@ -645,7 +833,7 @@ class DJTretaApp(App):
                         obs = line.split("] ", 1)[1] if "] " in line else line
                         if len(obs) > 150:
                             obs = obs[:150] + "..."
-                        self.debug_widget.write(f"[dim green]  📋 {agent} ← {obs}[/dim green]")
+                        self.debug_widget.write(f"[dim green]  {agent} <- {obs}[/dim green]")
 
                 elif line.startswith("[TOKENS:"):
                     if debug_visible:
@@ -680,12 +868,18 @@ class DJTretaApp(App):
                 "  [cyan]/skip[/cyan]              Skip (smooth 20s transition)\n"
                 "  [cyan]/pause[/cyan] [deck]      Pause\n"
                 "  [cyan]/load[/cyan] <d> <name>   Load track by name\n"
-                "  [cyan]/set[/cyan]               Show set history (full playlist)\n"
+                "  [cyan]/set[/cyan]               Show current set info\n"
+                "  [cyan]/set history[/cyan]       Show all sets from DB\n"
+                "  [cyan]/queue[/cyan]             Show next track + planner plan\n"
+                "  [cyan]/brain[/cyan]             Show last DJ decisions\n"
+                "  [cyan]/stats[/cyan]             Show library stats from DB\n"
+                "  [cyan]/relay[/cyan]             Show relay status\n"
                 "  [cyan]/tracks[/cyan]            List library\n"
+                "  [cyan]/cost[/cyan]              Show billing details\n"
                 "  [cyan]/start[/cyan]             Start Being daemon\n"
                 "  [cyan]/kill[/cyan]              Kill Being daemon\n"
                 "  [cyan]/help[/cyan]              This help\n"
-                "  [dim]Ctrl+Q quit | Ctrl+S skip[/dim]\n"
+                "  [dim]Ctrl+Q quit | F2 debug | Ctrl+S skip[/dim]\n"
             )
         elif cmd == "play":
             mood = args[0] if args else "melodic-techno"
@@ -717,7 +911,18 @@ class DJTretaApp(App):
         elif cmd == "debug":
             self.action_toggle_debug()
         elif cmd == "set":
-            self.show_set_history()
+            if args and args[0] == "history":
+                self.show_set_history_db()
+            else:
+                self.show_current_set()
+        elif cmd == "queue":
+            self.show_queue()
+        elif cmd == "brain":
+            self.show_brain_decisions()
+        elif cmd == "stats":
+            self.show_db_stats()
+        elif cmd == "relay":
+            self.show_relay_status()
         else:
             self.log_widget.write(f"[red]Unknown: {text}[/red] — /help")
 
@@ -756,44 +961,58 @@ class DJTretaApp(App):
         self.log_widget.write("\n".join(lines))
 
     def show_set_history(self):
-        """Show full set journey — played, now, planned."""
+        """Show full set journey — played tracks from DB, now playing, next."""
         state = read_state()
         status = mixxx_get("/api/status")
 
         lines = ["\n[bold]SET JOURNEY[/bold]"]
 
+        # Set info from state
         if state:
-            mood = state.get("mood", "?")
-            elapsed = state.get("set_elapsed", 0)
-            remaining = state.get("set_remaining", 0)
-            if isinstance(remaining, str):
-                dur_str = f"{fmt_time(elapsed)} / {remaining}"
+            sd = state.get("set", {})
+            if sd:
+                elapsed = sd.get("elapsed", 0)
+                target_min = sd.get("target_minutes", 0)
+                target_secs = target_min * 60 if target_min else 0
+                dur_str = f"{fmt_time(elapsed)} / {fmt_time(target_secs)}" if target_secs else fmt_time(elapsed)
+                lines.append(f"  Set #{sd.get('number', '?')}: [bold]{sd.get('title', '')}[/bold]")
+                lines.append(f"  Mood: [bold]{sd.get('mood', '?')}[/bold]  Duration: {dur_str}")
             else:
-                dur_str = f"{fmt_time(elapsed)} / {fmt_time(elapsed + remaining)}"
-            lines.append(f"  Mood: [bold]{mood}[/bold]  Duration: {dur_str}")
+                lines.append(f"  Mood: [bold]{state.get('mood', '?')}[/bold]")
             lines.append("")
 
-        # ── PLAYED ──
-        session_file = Path.home() / "beings" / "dj-treta" / ".beings" / "session.json"
+        # ── PLAYED (from DB set_history) ──
+        set_id = state.get("set", {}).get("id", "") if state else ""
         tracks = []
-        if session_file.exists():
+        if set_id:
             try:
-                session = json.loads(session_file.read_text())
-                tracks = session.get("tracks_played", [])
+                tracks = get_set_tracks(set_id)
             except Exception:
                 pass
+
+        if not tracks:
+            # Fallback to session.json
+            session_file = Path.home() / "beings" / "dj-treta" / ".beings" / "session.json"
+            if session_file.exists():
+                try:
+                    session = json.loads(session_file.read_text())
+                    tracks = session.get("tracks_played", [])
+                except Exception:
+                    pass
 
         if tracks:
             lines.append("  [dim]── Played ──[/dim]")
             for i, t in enumerate(tracks, 1):
                 title = t.get("title", "Unknown")
-                played_at = t.get("time", 0)
+                played_at = t.get("played_at") or t.get("time", 0)
                 if played_at:
                     import datetime
                     ts = datetime.datetime.fromtimestamp(played_at).strftime("%H:%M")
                 else:
                     ts = "?"
-                lines.append(f"  [dim]{i:2d}. {ts}[/dim]  {title}")
+                transition = t.get("transition_type", "")
+                trans_str = f" [dim]({transition})[/dim]" if transition else ""
+                lines.append(f"  [dim]{i:2d}. {ts}[/dim]  {title}{trans_str}")
             lines.append("")
 
         # ── NOW PLAYING ──
@@ -812,21 +1031,12 @@ class DJTretaApp(App):
                     lines.append(f"      {bpm:.0f} BPM  {key}  {fmt_time(rem)} remaining")
                     lines.append("")
 
-        # ── PLANNED ──
-        planned = []
+        # ── NEXT ──
         if state:
-            planned = state.get("planned_tracks", [])
-
-        if planned:
-            lines.append("  [bold cyan]── Coming Up ──[/bold cyan]")
-            for i, t in enumerate(planned, 1):
-                title = t.get("title", "?")
-                reason = t.get("reason", "")
-                if reason:
-                    lines.append(f"  [cyan]{i}.[/cyan] {title}")
-                    lines.append(f"     [dim italic]{reason}[/dim italic]")
-                else:
-                    lines.append(f"  [cyan]{i}.[/cyan] {title}")
+            nt = state.get("next_track")
+            if nt and nt.get("title"):
+                lines.append(f"  [bold cyan]── Next (deck {nt.get('deck', '?')}) ──[/bold cyan]")
+                lines.append(f"  [cyan]{nt['title']}[/cyan]")
         else:
             lines.append("  [dim]── Coming Up ──[/dim]")
             lines.append("  [dim]Brain hasn't planned ahead yet[/dim]")
@@ -870,6 +1080,220 @@ class DJTretaApp(App):
             self.log_widget.write("\n".join(lines))
         except Exception as e:
             self.log_widget.write(f"[red]Billing error: {e}[/red]")
+
+    def show_current_set(self):
+        """Show current set info from state file."""
+        state = read_state()
+        lines = ["\n[bold]CURRENT SET[/bold]"]
+        if state:
+            sd = state.get("set", {})
+            if sd:
+                lines.append(f"  Set #{sd.get('number', '?')}: [bold]{sd.get('title', '?')}[/bold]")
+                lines.append(f"  Mood: {sd.get('mood', '?')}  Genre: {sd.get('genre', '?')}")
+                elapsed = sd.get("elapsed", 0)
+                target_min = sd.get("target_minutes", 0)
+                target_secs = target_min * 60 if target_min else 0
+                lines.append(f"  Duration: {fmt_time(elapsed)} / {fmt_time(target_secs)}")
+                lines.append(f"  Tracks played: {state.get('tracks_played', 0)}")
+            else:
+                lines.append("  [dim]No set active[/dim]")
+
+            # Show currently playing + next
+            ct = state.get("current_track", {})
+            if ct.get("title"):
+                lines.append(f"\n  [green]Now:[/green] {ct['title']}")
+            nt = state.get("next_track")
+            if nt and nt.get("title"):
+                lines.append(f"  [cyan]Next:[/cyan] {nt['title']} (deck {nt.get('deck', '?')})")
+        else:
+            lines.append("  [dim]Brain offline[/dim]")
+        lines.append("")
+        self.log_widget.write("\n".join(lines))
+
+    def show_set_history_db(self):
+        """Show all sets from SQLite DB."""
+        lines = ["\n[bold]SET HISTORY[/bold]"]
+        try:
+            db = get_db()
+            rows = db.execute("SELECT * FROM sets ORDER BY started_at DESC LIMIT 10").fetchall()
+            db.close()
+            if rows:
+                for r in rows:
+                    r = dict(r)
+                    status_color = "green" if r.get("status") == "live" else "dim"
+                    started = time.strftime("%H:%M", time.localtime(r.get("started_at", 0)))
+                    dur = ""
+                    if r.get("actual_duration_minutes"):
+                        dur = f" ({r['actual_duration_minutes']:.0f}m)"
+                    elif r.get("started_at"):
+                        elapsed = (r.get("ended_at") or time.time()) - r["started_at"]
+                        dur = f" ({elapsed/60:.0f}m)"
+                    lines.append(
+                        f"  [{status_color}]#{r.get('set_number', '?')}[/{status_color}] "
+                        f"[bold]{r.get('title', '?')}[/bold] "
+                        f"| {r.get('mood', '')} | {started}{dur} | "
+                        f"{r.get('track_count', 0)} tracks | [{status_color}]{r.get('status', '?')}[/{status_color}]"
+                    )
+            else:
+                lines.append("  [dim]No sets yet[/dim]")
+        except Exception as e:
+            lines.append(f"  [red]DB error: {e}[/red]")
+        lines.append("")
+        self.log_widget.write("\n".join(lines))
+
+    def show_queue(self):
+        """Show next track on idle deck + planner plan."""
+        state = read_state()
+        lines = ["\n[bold]QUEUE[/bold]"]
+
+        # Next track from state
+        if state:
+            nt = state.get("next_track")
+            if nt and nt.get("title"):
+                lines.append(f"  [cyan]Next (deck {nt.get('deck', '?')}):[/cyan] {nt['title']}")
+            else:
+                lines.append("  [dim]No track on idle deck[/dim]")
+
+        # Planner output from playlist file
+        playlist_file = Path("/tmp/dj-treta-playlist.json")
+        if playlist_file.exists():
+            try:
+                playlist = json.loads(playlist_file.read_text())
+                output = playlist.get("planner_output", "")
+                if output:
+                    lines.append(f"\n  [bold]Planner Plan:[/bold]")
+                    for pline in output.split("\n")[:15]:
+                        if pline.strip():
+                            lines.append(f"  [dim]{pline.strip()[:80]}[/dim]")
+            except Exception:
+                pass
+        else:
+            lines.append("  [dim]No planner output yet[/dim]")
+        lines.append("")
+        self.log_widget.write("\n".join(lines))
+
+    def show_brain_decisions(self):
+        """Show last DJ decisions from thinking log."""
+        lines = ["\n[bold]DJ DECISIONS[/bold]"]
+        if THINKING_LOG.exists():
+            try:
+                content = THINKING_LOG.read_text()
+                think_lines = [l for l in content.split("\n") if l.startswith("[THINK:dj_treta]")]
+                for tl in think_lines[-10:]:
+                    thought = tl.split("] ", 1)[1] if "] " in tl else tl
+                    if len(thought) > 120:
+                        thought = thought[:120] + "..."
+                    lines.append(f"  [italic]{thought}[/italic]")
+                if not think_lines:
+                    lines.append("  [dim]No decisions yet[/dim]")
+            except Exception:
+                lines.append("  [dim]Cannot read thinking log[/dim]")
+        else:
+            lines.append("  [dim]No thinking log[/dim]")
+        lines.append("")
+        self.log_widget.write("\n".join(lines))
+
+    def show_db_stats(self):
+        """Show library stats from SQLite DB."""
+        lines = ["\n[bold]LIBRARY STATS[/bold]"]
+        try:
+            db = get_db()
+            # Total + analyzed counts
+            row = db.execute(
+                "SELECT COUNT(*) as total, "
+                "COUNT(CASE WHEN analyzed_at IS NOT NULL THEN 1 END) as analyzed, "
+                "MIN(bpm) as min_bpm, MAX(bpm) as max_bpm, "
+                "AVG(bpm) as avg_bpm "
+                "FROM tracks"
+            ).fetchone()
+            if row:
+                lines.append(f"  Total tracks: [bold]{row['total']}[/bold]  Analyzed: [bold]{row['analyzed']}[/bold]")
+                if row['min_bpm']:
+                    lines.append(f"  BPM range: {row['min_bpm']:.0f} - {row['max_bpm']:.0f} (avg {row['avg_bpm']:.0f})")
+
+            # Genre counts
+            genres = db.execute(
+                "SELECT genre, COUNT(*) as cnt FROM tracks WHERE genre IS NOT NULL "
+                "GROUP BY genre ORDER BY cnt DESC"
+            ).fetchall()
+            if genres:
+                lines.append(f"\n  [bold]By genre:[/bold]")
+                for g in genres:
+                    lines.append(f"    {g['genre']}: {g['cnt']}")
+
+            # Key distribution (top 5)
+            keys = db.execute(
+                "SELECT key_camelot, COUNT(*) as cnt FROM tracks "
+                "WHERE key_camelot IS NOT NULL AND analyzed_at IS NOT NULL "
+                "GROUP BY key_camelot ORDER BY cnt DESC LIMIT 8"
+            ).fetchall()
+            if keys:
+                key_str = ", ".join(f"{k['key_camelot']}({k['cnt']})" for k in keys)
+                lines.append(f"\n  [bold]Top keys:[/bold] {key_str}")
+
+            # Sets count
+            sets_row = db.execute("SELECT COUNT(*) as cnt FROM sets").fetchone()
+            if sets_row:
+                lines.append(f"\n  Total sets: [bold]{sets_row['cnt']}[/bold]")
+
+            db.close()
+        except Exception as e:
+            lines.append(f"  [red]DB error: {e}[/red]")
+        lines.append("")
+        self.log_widget.write("\n".join(lines))
+
+    def _show_planner_plan(self):
+        """Read and display the full planner plan from playlist file."""
+        playlist_file = Path("/tmp/dj-treta-playlist.json")
+        if not playlist_file.exists():
+            return
+        try:
+            playlist = json.loads(playlist_file.read_text())
+            output = playlist.get("planner_output", "")
+            if not output:
+                return
+            for pline in output.strip().split("\n"):
+                pline = pline.strip()
+                if not pline:
+                    continue
+                # Highlight track numbers and key info
+                if pline.startswith(("1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.")):
+                    self.log_widget.write(f"[cyan]    {pline}[/cyan]")
+                elif pline.startswith(("- ", "* ", "•")):
+                    self.log_widget.write(f"[dim]      {pline}[/dim]")
+                elif "BPM" in pline or "Key" in pline or "Energy" in pline:
+                    self.log_widget.write(f"[dim]      {pline}[/dim]")
+                elif pline.startswith("**") or "path:" in pline.lower():
+                    self.log_widget.write(f"[dim yellow]    {pline}[/dim yellow]")
+                else:
+                    self.log_widget.write(f"[yellow]    {pline}[/yellow]")
+        except Exception:
+            pass
+
+    def show_relay_status(self):
+        """Show relay connection status."""
+        state = read_state()
+        lines = ["\n[bold]RELAY STATUS[/bold]"]
+        if state:
+            enabled = state.get("relay_enabled", False)
+            connected = state.get("relay_connected", False)
+            lines.append(f"  Enabled: {'[green]Yes[/green]' if enabled else '[red]No[/red]'}")
+            lines.append(f"  Connected: {'[green]Yes[/green]' if connected else '[red]No[/red]'}")
+            # Read config for URL
+            try:
+                config_file = Path(__file__).parent / "config.yaml"
+                if config_file.exists():
+                    import yaml
+                    cfg = yaml.safe_load(config_file.read_text()) or {}
+                    relay_cfg = cfg.get("relay", {})
+                    lines.append(f"  Server: {relay_cfg.get('server_url', '?')}")
+                    lines.append(f"  Push rate: {relay_cfg.get('push_hz', '?')} Hz")
+            except Exception:
+                pass
+        else:
+            lines.append("  [dim]Brain offline[/dim]")
+        lines.append("")
+        self.log_widget.write("\n".join(lines))
 
     def start_brain(self):
         import subprocess

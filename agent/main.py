@@ -202,6 +202,11 @@ class DJTretaBeing:
         self._deck_start_time = {1: 0.0, 2: 0.0}  # wall clock when track started on deck
         self._deck_track = {1: "", 2: ""}  # track path on each deck
 
+        # State tracking for TUI
+        self._emergency_count = 0
+        self._recording_active = False
+        self._broadcast_active = False
+
     def start(self):
         _check_single_instance()
         signal.signal(signal.SIGTERM, lambda s, f: self.stop())
@@ -374,7 +379,7 @@ class DJTretaBeing:
             def _run():
                 try:
                     result = str(self.agent.run(instruction))
-                    log.info(f"DJ decision: {result[:150]}")
+                    log.info(f"DJ decision: {result[:500]}")
                     self._record_playing_tracks()
                     self._check_set_duration()
                 except Exception as e:
@@ -453,6 +458,7 @@ class DJTretaBeing:
 
     def _emergency_play(self):
         """Silence! Direct API play first (fast + reliable), agent fallback for empty library."""
+        self._emergency_count += 1
         try:
             url = self.config.mixxx.url
 
@@ -630,7 +636,7 @@ class DJTretaBeing:
         from .db import insert_set, get_next_set_number
         import random
 
-        set_id = f"set-{time.strftime('%Y%m%d-%H%M')}"
+        set_id = f"set-{time.strftime('%Y%m%d-%H%M%S')}"
         set_number = get_next_set_number()
         set_mood = mood or self.mood or "melodic-techno"
 
@@ -702,6 +708,7 @@ class DJTretaBeing:
             httpx.post(f"{url}/api/control", json={
                 "group": "[Recording]", "key": "toggle_recording", "value": 1
             }, timeout=3)
+            self._recording_active = True
             log.info("Recording started")
         except Exception as e:
             log.warning(f"Recording start failed: {e}")
@@ -715,6 +722,7 @@ class DJTretaBeing:
             httpx.post(f"{url}/api/control", json={
                 "group": "[Recording]", "key": "toggle_recording", "value": 0
             }, timeout=3)
+            self._recording_active = False
             log.info("Recording stopped")
         except Exception as e:
             log.warning(f"Recording stop failed: {e}")
@@ -726,6 +734,7 @@ class DJTretaBeing:
             httpx.post(f"{url}/api/control", json={
                 "group": "[Shoutcast]", "key": "enabled", "value": 1
             }, timeout=3)
+            self._broadcast_active = True
             log.info("Broadcast started")
         except Exception as e:
             log.warning(f"Broadcast start failed: {e}")
@@ -737,6 +746,7 @@ class DJTretaBeing:
             httpx.post(f"{url}/api/control", json={
                 "group": "[Shoutcast]", "key": "enabled", "value": 0
             }, timeout=3)
+            self._broadcast_active = False
             log.info("Broadcast stopped")
         except Exception as e:
             log.warning(f"Broadcast stop failed: {e}")
@@ -883,7 +893,7 @@ class DJTretaBeing:
             f"Then pick the best next 3 tracks (mix of library + new downloads).\n"
             f"For each: title, full path, BPM, key, energy, why it fits."
         ))
-        log.info(f"Planner done: {str(result)[:200]}")
+        log.info(f"Planner done: {str(result)[:500]}")
 
         self._write_playlist(result, current_track)
 
@@ -1022,7 +1032,7 @@ class DJTretaBeing:
             self._last_command_id = cmd_id
             self._last_result = result
             self._write_state()
-            log.info(f"Talk done: {result[:200]}")
+            log.info(f"Talk done: {result[:500]}")
         except Exception as e:
             self._last_command_id = cmd_id
             self._last_result = f"Error: {e}"
@@ -1150,7 +1160,7 @@ class DJTretaBeing:
     def _write_state(self):
         try:
             status = _get_status(self.config.mixxx.url)
-            current = {"title": "", "bpm": 0, "key": "", "remaining": 0}
+            current = {"title": "", "bpm": 0, "key": "", "remaining": 0, "file_path": ""}
 
             if status:
                 for dk in [1, 2]:
@@ -1160,12 +1170,48 @@ class DJTretaBeing:
                             tinfo = httpx.get(f"{self.config.mixxx.url}/api/deck/{dk}/track_info", timeout=2).json()
                             if tinfo and not tinfo.get("error"):
                                 current["title"] = tinfo.get("title", "")
+                                current["file_path"] = tinfo.get("file_path", "")
                         except Exception:
                             pass
                         current["bpm"] = d.get("bpm", 0)
                         current["key"] = d.get("key", 0)
                         current["remaining"] = d.get("remaining_seconds", 0)
+                        current["position"] = d.get("position_seconds", 0)
+                        current["duration"] = d.get("duration", 0)
+                        current["file_bpm"] = d.get("file_bpm", 0)
+                        current["deck"] = dk
                         break
+
+            # Next track (idle deck)
+            next_track = None
+            if status:
+                _, idle_dk = _active_idle_decks(status)
+                d_idle = status.get(f"deck{idle_dk}", {})
+                if d_idle.get("track_loaded"):
+                    try:
+                        tinfo = httpx.get(f"{self.config.mixxx.url}/api/deck/{idle_dk}/track_info", timeout=2).json()
+                        if tinfo and not tinfo.get("error"):
+                            next_track = {"title": tinfo.get("title", ""), "deck": idle_dk,
+                                          "file_path": tinfo.get("file_path", "")}
+                    except Exception:
+                        pass
+
+            # Set info
+            set_data = {}
+            if self.current_set:
+                s = self.current_set
+                elapsed_secs = time.time() - s["started_at"]
+                target_secs = s["target_duration"] * 60
+                set_data = {
+                    "id": s["id"],
+                    "number": s.get("set_number", 0),
+                    "title": s.get("title", ""),
+                    "mood": s.get("mood", ""),
+                    "genre": s.get("genre", ""),
+                    "elapsed": elapsed_secs,
+                    "remaining": max(0, target_secs - elapsed_secs),
+                    "target_minutes": s["target_duration"],
+                }
 
             # Read billing
             billing_str = ""
@@ -1182,20 +1228,29 @@ class DJTretaBeing:
             except Exception:
                 pass
 
+            phase = "idle"
+            if status and (status.get("deck1", {}).get("playing") or status.get("deck2", {}).get("playing")):
+                phase = "playing"
+
             STATE_FILE.write_text(json.dumps({
-                "phase": "playing" if (status and (status.get("deck1", {}).get("playing") or status.get("deck2", {}).get("playing"))) else "idle",
+                "phase": phase,
                 "mood": self.mood,
                 "tracks_played": len(self.tracks_played),
-                "set_elapsed": 0,
-                "set_remaining": "infinite",
                 "current_track": current,
-                "next_track": None,
-                "planned_tracks": [],
+                "next_track": next_track,
+                "set": set_data,
+                "planner_status": "busy" if self._planner_busy else "idle",
+                "planner_tracks_since": getattr(self, '_tracks_since_plan', 0),
+                "agent_busy": self._agent_busy,
+                "relay_enabled": self.config.relay.enabled,
+                "relay_connected": hasattr(self, 'relay'),
+                "recording": self._recording_active,
+                "broadcasting": self._broadcast_active,
+                "emergency_count": self._emergency_count,
                 "last_command": self._last_command,
                 "last_command_id": self._last_command_id,
                 "last_command_result": self._last_result,
                 "billing": billing_str,
-                "consecutive_errors": 0,
             }, indent=2))
         except Exception:
             pass
