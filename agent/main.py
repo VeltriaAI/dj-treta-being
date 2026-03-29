@@ -319,26 +319,31 @@ class DJTretaBeing:
 
         # Get mix_out + timeline from DB for active track
         mix_out = None
+        in_safe_section = True  # assume safe unless timeline says otherwise
         if playing:
             try:
                 from .db import get_track_by_path
+                import json as _json
                 tinfo = httpx.get(
                     f"{self.config.mixxx.url}/api/deck/{active_deck}/track_info", timeout=2
                 ).json()
                 meta = get_track_by_path(tinfo.get("file_path", ""))
                 if meta:
                     mix_out = float(meta.get("mix_out_seconds") or 0)
-                    # Smart mix_out: find best transition point from timeline
+                    # Check timeline: what section are we in RIGHT NOW?
                     timeline_str = meta.get("timeline", "")
-                    if timeline_str and not mix_out:
+                    if timeline_str:
                         try:
-                            import json as _json
                             timeline = _json.loads(timeline_str) if isinstance(timeline_str, str) else timeline_str
-                            # Find last breakdown or outro — ideal transition point
-                            for section in reversed(timeline):
-                                name = section.get("section", "").lower()
-                                if any(w in name for w in ["breakdown", "outro", "build"]):
-                                    mix_out = float(section.get("start", 0))
+                            for section in timeline:
+                                start = float(section.get("start", 0))
+                                end = float(section.get("end", 0))
+                                if start <= position <= end:
+                                    name = section.get("section", "").lower()
+                                    # Safe to transition: breakdown, outro, intro
+                                    # NOT safe: drop, buildup, main theme
+                                    if any(w in name for w in ["drop", "build", "main", "peak"]):
+                                        in_safe_section = False
                                     break
                         except Exception:
                             pass
@@ -352,9 +357,9 @@ class DJTretaBeing:
         duration = float(d_active.get("duration", 0) or 0)
 
         # === PRIORITY 2: Smart transition at mix_out (from DB timeline) ===
-        # Trust the analysis — no arbitrary min_play guard when we have real data
-        if idle_ready and mix_out and mix_out > 0 and position >= (mix_out - 55):
-            log.info(f"Smart transition at mix_out! pos={position:.0f}s, mix_out={mix_out:.0f}s, on_deck={time_on_deck:.0f}s")
+        # Only transition during safe sections (breakdown, outro) — NEVER during drops
+        if idle_ready and mix_out and mix_out > 0 and position >= (mix_out - 55) and in_safe_section:
+            log.info(f"Smart transition at mix_out! pos={position:.0f}s, mix_out={mix_out:.0f}s, on_deck={time_on_deck:.0f}s, safe_section=True")
             self._execute_transition(idle_deck, 45)
             return
 
