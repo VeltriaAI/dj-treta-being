@@ -427,7 +427,9 @@ class DJTretaBeing:
                     self._record_playing_tracks()
                     self._check_set_duration()
                 except Exception as e:
-                    log.error(f"DJ decision error: {e}")
+                    import traceback
+                    log.error(f"DJ decision error: {type(e).__name__}: {e}")
+                    log.error(traceback.format_exc()[:500])
                 finally:
                     self._agent_busy = False
 
@@ -636,7 +638,9 @@ class DJTretaBeing:
                 self._record_playing_tracks()
             self._record_playing_tracks()
         except Exception as e:
-            log.error(f"Emergency play error: {e}")
+            import traceback
+            log.error(f"Emergency play error: {type(e).__name__}: {e}")
+            log.error(traceback.format_exc()[:500])
         finally:
             self._agent_busy = False
 
@@ -963,7 +967,9 @@ class DJTretaBeing:
                         self._planner_busy = False
 
             except Exception as e:
-                log.warning(f"Planner loop error: {e}")
+                import traceback
+                log.warning(f"Planner loop error: {type(e).__name__}: {e}")
+                log.warning(traceback.format_exc()[:500])
             time.sleep(30)
 
     def _run_planner(self, status, current_track):
@@ -1224,7 +1230,11 @@ class DJTretaBeing:
     def _run_async(self, coro, timeout=120):
         """Run async coroutine on the persistent event loop. Thread-safe."""
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-        return future.result(timeout=timeout)
+        try:
+            return future.result(timeout=timeout)
+        except TimeoutError:
+            future.cancel()
+            raise TimeoutError(f"ADK agent call timed out after {timeout}s")
 
     async def _invoke_agent_async(self, instruction: str) -> str:
         """Invoke DJ agent via ADK runner."""
@@ -1239,9 +1249,9 @@ class DJTretaBeing:
                         result += part.text
         return result
 
-    def _invoke_agent(self, instruction: str) -> str:
+    def _invoke_agent(self, instruction: str, timeout: int = 60) -> str:
         """Invoke DJ agent. Sync wrapper using persistent event loop."""
-        return self._run_async(self._invoke_agent_async(instruction))
+        return self._run_async(self._invoke_agent_async(instruction), timeout=timeout)
 
     async def _invoke_planner_async(self, instruction: str) -> str:
         """Invoke planner agent via ADK runner."""
@@ -1257,8 +1267,8 @@ class DJTretaBeing:
         return result
 
     def _invoke_planner(self, instruction: str) -> str:
-        """Invoke planner. Sync wrapper using persistent event loop."""
-        return self._run_async(self._invoke_planner_async(instruction))
+        """Invoke planner. Sync wrapper — longer timeout for generation."""
+        return self._run_async(self._invoke_planner_async(instruction), timeout=600)
 
     def _agent_talk(self, message, cmd_id):
         """One agent, one personality. Always."""
