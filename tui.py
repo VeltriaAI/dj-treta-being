@@ -785,6 +785,8 @@ class DJTretaApp(App):
                     self.log_widget.write(f"[bold yellow]  {msg}[/bold yellow]")
                 elif "Emergency" in msg or "emergency" in msg:
                     self.log_widget.write(f"[bold red]  {msg}[/bold red]")
+                elif "Generated track:" in msg or "Lyria" in msg or "generate_track" in msg:
+                    self.log_widget.write(f"[bold bright_magenta]  {msg}[/bold bright_magenta]")
                 elif "Planner done:" in msg:
                     # Show full planner plan from playlist file
                     self.log_widget.write(f"[bold yellow]  Planner done — new plan:[/bold yellow]")
