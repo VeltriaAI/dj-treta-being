@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/banner.svg" alt="DJClaw — Install Your Own AI DJ Being" width="100%">
+  <img src="docs/assets/banner.png" alt="DJClaw — Install Your Own AI DJ Being" width="100%">
 </p>
 
 <h1 align="center">DJClaw</h1>
@@ -18,11 +18,11 @@
 
 ---
 
-<!-- <p align="center">
+<p align="center">
   <img src="docs/assets/tui-demo.gif" alt="DJ Treta TUI — live autonomous mixing" width="90%">
   <br>
   <em>DJ Treta playing a live set. She chose these tracks, decided when to transition, and mixed them herself.</em>
-</p> -->
+</p>
 
 > **[dj.treta.life](https://dj.treta.life)** — Listen to DJ Treta live. Real AI, real mixing, real-time.
 
