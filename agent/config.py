@@ -66,6 +66,7 @@ class CapabilitiesConfig:
 class PlannerConfig:
     replan_every_n_tracks: int = 2
     download_new_tracks: int = 3
+    generate_new_tracks: int = 1
     min_play_time_seconds: int = 180
 
 
@@ -86,8 +87,24 @@ class RelayConfig:
 
 
 @dataclass
+class SourcesConfig:
+    youtube: bool = True
+    treta_originals: bool = True
+
+
+@dataclass
 class BroadcastConfig:
     auto_start: bool = True
+
+
+@dataclass
+class ProducerConfig:
+    enabled: bool = True
+    model: str = "lyria-3-pro-preview"
+    vertex_project: str = "fandorab2w3"
+    vertex_location: str = "global"
+    default_duration_seconds: int = 180
+    genre_dir: str = "ai-generated"
 
 
 @dataclass
@@ -103,6 +120,8 @@ class Config:
     sets: SetsConfig = field(default_factory=SetsConfig)
     relay: RelayConfig = field(default_factory=RelayConfig)
     broadcast: BroadcastConfig = field(default_factory=BroadcastConfig)
+    producer: ProducerConfig = field(default_factory=ProducerConfig)
+    sources: SourcesConfig = field(default_factory=SourcesConfig)
 
 
 def _pick_fields(d: dict, cls: type) -> dict:
@@ -158,6 +177,10 @@ def load_config(path: str | Path | None = None) -> Config:
         cfg.relay = RelayConfig(**_pick_fields(raw["relay"], RelayConfig))
     if "broadcast" in raw:
         cfg.broadcast = BroadcastConfig(**_pick_fields(raw["broadcast"], BroadcastConfig))
+    if "producer" in raw:
+        cfg.producer = ProducerConfig(**_pick_fields(raw["producer"], ProducerConfig))
+    if "sources" in raw:
+        cfg.sources = SourcesConfig(**_pick_fields(raw["sources"], SourcesConfig))
 
     env_key = os.environ.get("DJTRETA_LLM_API_KEY") or os.environ.get("LLM_API_KEY")
     if env_key:

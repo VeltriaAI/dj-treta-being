@@ -24,7 +24,7 @@ from pathlib import Path
 import httpx
 
 from .config import load_config, Config
-from .agents import create_dj_agent, create_planner_agent
+from .agents import create_agents
 
 logging.basicConfig(
     level=logging.INFO,
@@ -210,6 +210,12 @@ class DJTretaBeing:
         # Scheduled transition — Python executes, agent is free
         self._transition_pending = False
 
+        # Music production — async generation via ThreadPoolExecutor
+        from concurrent.futures import ThreadPoolExecutor
+        self._producer_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="producer")
+        self._active_future = None
+        self._generation_status = {}  # {name, status} for TUI
+
     def start(self):
         _check_single_instance()
         signal.signal(signal.SIGTERM, lambda s, f: self.stop())
@@ -223,9 +229,10 @@ class DJTretaBeing:
                 "DJTRETA_LLM_API_KEY / LLM_API_KEY"
             )
 
-        # Reset billing + playlist for fresh session
+        # Reset billing + playlist + generation queue for fresh session
         Path("/tmp/dj-treta-billing.json").unlink(missing_ok=True)
         PLAYLIST_FILE.unlink(missing_ok=True)
+        Path("/tmp/dj-treta-generation-jobs.json").unlink(missing_ok=True)
 
         # Init SQLite DB + scan library
         from .db import init_db, scan_library
@@ -236,16 +243,17 @@ class DJTretaBeing:
         _ensure_mixxx(self.config)
         self._restore_session()
 
-        log.info("Creating DJ agent...")
-        self.agent = create_dj_agent(self.config)
-        log.info("Creating planner agent...")
-        self.planner_agent = create_planner_agent(self.config)
+        log.info("Creating agents (DJ + planner, shared producer)...")
+        self.agent, self.planner_agent = create_agents(self.config)
 
         # State writer for TUI (infrastructure)
         threading.Thread(target=self._state_loop, daemon=True).start()
 
         # Planner loop — background track planning
         threading.Thread(target=self._planner_loop, daemon=True).start()
+
+        # Generation worker — processes async generation jobs
+        threading.Thread(target=self._generation_worker, daemon=True).start()
 
         # Read startup mood if provided via CLI
         mood_file = Path("/tmp/dj-treta-mood.txt")
@@ -555,7 +563,14 @@ class DJTretaBeing:
 
             # Try direct API first — pick any track from library, load, play
             import glob
-            tracks = glob.glob(str(self.config.library.music_path / "**/*.mp3"), recursive=True)
+            all_tracks = glob.glob(str(self.config.library.music_path / "**/*.mp3"), recursive=True)
+            # Prefer originals when youtube source is off
+            if not self.config.sources.youtube and self.config.sources.treta_originals:
+                tracks = [t for t in all_tracks if "Treta-" in Path(t).name]
+                if not tracks:
+                    tracks = all_tracks  # fallback — music never stops
+            else:
+                tracks = all_tracks
             if tracks:
                 import random
                 track = random.choice(tracks)
@@ -576,13 +591,20 @@ class DJTretaBeing:
                 self._record_playing_tracks()
                 return
 
-            # Empty library — agent searches + downloads
+            # Empty library — generate or download depending on sources
             context = self._build_context(_get_status(url))
-            result = self.agent.run(
-                f"{context}\n\n"
-                f"SILENCE! Empty library. Search YouTube, download a melodic techno track, "
-                f"load on deck 1, play it, set crossfader to 0.0."
-            )
+            if self.config.sources.treta_originals:
+                result = self.agent.run(
+                    f"{context}\n\n"
+                    f"SILENCE! Empty library. Use the producer to generate a {self.mood or 'melodic-techno'} track, "
+                    f"then load on deck 1, play it, set crossfader to 0.0."
+                )
+            else:
+                result = self.agent.run(
+                    f"{context}\n\n"
+                    f"SILENCE! Empty library. Search YouTube, download a {self.mood or 'melodic-techno'} track, "
+                    f"load on deck 1, play it, set crossfader to 0.0."
+                )
             log.info(f"Emergency play (agent): {str(result)[:200]}")
             self._record_playing_tracks()
         except Exception as e:
@@ -637,6 +659,13 @@ class DJTretaBeing:
             )
         # Filter out tracks on EITHER deck
         candidates = [c for c in candidates if c.get("path") not in exclude_paths]
+
+        # When youtube source is off, prefer Treta originals
+        if not self.config.sources.youtube and self.config.sources.treta_originals:
+            originals = [c for c in candidates
+                         if c.get("artist") == "DJ Treta" or "Treta-" in c.get("title", "")]
+            if originals:
+                candidates = originals
 
         if not candidates:
             # Fallback: get ANY track from DB (analyzed or not) — Mixxx can play anything
@@ -977,16 +1006,122 @@ class DJTretaBeing:
             f"Currently playing: {current_info}\n"
             f"Already played (DO NOT repeat): {played_list}\n\n"
             f"Tracks already in library:\n{candidate_text or '  (none)'}\n\n"
-            f"Current mood/genre: {self.mood or 'melodic-techno'}. Search for THIS genre specifically.\n"
-            f"ALWAYS search YouTube and download {self.config.planner.download_new_tracks} NEW '{self.mood or 'melodic-techno'}' tracks.\n"
-            f"Search for different artists each time. Don't download what's already in library.\n"
-            f"After downloading, analyze each new track.\n"
-            f"Then pick the best next 3 tracks (mix of library + new downloads).\n"
+            f"Current mood/genre: {self.mood or 'melodic-techno'}.\n"
+            + self._build_source_instructions() +
+            f"After creating/finding new tracks, analyze each one.\n"
+            f"Then pick the best next 3 tracks from what's available.\n"
             f"For each: title, full path, BPM, key, energy, why it fits."
         ))
         log.info(f"Planner done: {str(result)[:500]}")
 
         self._write_playlist(result, current_track)
+
+    def _build_source_instructions(self) -> str:
+        """Build planner instructions based on enabled music sources."""
+        mood = self.mood or 'melodic-techno'
+        parts = []
+        if self.config.sources.youtube:
+            parts.append(
+                f"Search YouTube and download {self.config.planner.download_new_tracks} NEW "
+                f"'{mood}' tracks. Search for different artists each time. "
+                f"Don't download what's already in library.\n"
+            )
+        else:
+            parts.append("YouTube is DISABLED. Do NOT search YouTube, do NOT download. You cannot.\n")
+        if self.config.sources.treta_originals:
+            gen_count = self.config.planner.generate_new_tracks
+            if not self.config.sources.youtube:
+                # Originals only — generate more to compensate
+                gen_count = self.config.planner.download_new_tracks + self.config.planner.generate_new_tracks
+            parts.append(
+                f"Delegate to your 'producer' sub-agent to generate {gen_count} "
+                f"original track(s). Tell the producer the BPM, key, genre='{mood}', and describe the mood/instruments.\n"
+                f"Example: producer(\"Generate a {mood} track, 125 BPM, A minor, with warm pads and driving bass, genre {mood}\")\n"
+                f"This is YOUR music — be creative with the description. Each track should sound DIFFERENT.\n"
+            )
+        if not self.config.sources.youtube and not self.config.sources.treta_originals:
+            parts.append("Only use tracks already in the library.\n")
+        return "".join(parts)
+
+    # ── Generation worker — async track production ─────────────────────
+
+    def _generation_worker(self):
+        """Background: poll for generation jobs, execute via ThreadPoolExecutor."""
+        JOBS_FILE = Path("/tmp/dj-treta-generation-jobs.json")
+        time.sleep(10)  # let system boot
+        while self._running:
+            try:
+                # Check for completed future → auto-load
+                if self._active_future and self._active_future.done():
+                    try:
+                        result = self._active_future.result()
+                        if "Generated:" in result:
+                            filepath = result.split("Generated: ")[1].split(" |")[0]
+                            self._auto_load_track(filepath)
+                        log.info(f"Generation complete: {result[:200]}")
+                    except Exception as e:
+                        log.warning(f"Generation failed: {e}")
+                    self._active_future = None
+                    self._generation_status = {}
+
+                # Skip if already generating
+                if self._active_future and not self._active_future.done():
+                    time.sleep(5)
+                    continue
+
+                # Pick up next job
+                if not JOBS_FILE.exists():
+                    time.sleep(5)
+                    continue
+
+                try:
+                    jobs = json.loads(JOBS_FILE.read_text())
+                except Exception:
+                    time.sleep(5)
+                    continue
+
+                pending = [j for j in jobs if j.get("status") == "pending"]
+                if not pending:
+                    time.sleep(5)
+                    continue
+
+                job = pending[0]
+                job["status"] = "generating"
+                self._generation_status = {
+                    "name": job.get("name") or "Untitled",
+                    "status": "generating",
+                }
+                JOBS_FILE.write_text(json.dumps(jobs, indent=2))
+                log.info(f"Generation starting: {job.get('name', 'Untitled')}")
+
+                # Submit to executor — non-blocking
+                from .tools import generate_track
+                self._active_future = self._producer_pool.submit(
+                    generate_track,
+                    prompt=job["prompt"], bpm=job["bpm"], key=job["key"],
+                    genre=job["genre"], duration=job["duration"],
+                    name=job.get("name", ""),
+                )
+
+            except Exception as e:
+                log.warning(f"Generation worker error: {e}")
+            time.sleep(3)
+
+    def _auto_load_track(self, filepath):
+        """Load a freshly generated track on the idle deck."""
+        status = _get_status(self.config.mixxx.url)
+        if not status:
+            return
+        _, idle_deck = _active_idle_decks(status)
+        try:
+            result = httpx.post(
+                f"{self.config.mixxx.url}/api/load",
+                json={"deck": idle_deck, "track": filepath}, timeout=5
+            ).json()
+            if result.get("ok"):
+                log.info(f"Auto-loaded generated track on deck {idle_deck}: {Path(filepath).stem[:50]}")
+        except Exception as e:
+            log.warning(f"Auto-load failed: {e}")
 
     def _get_current_track_title(self, status) -> str:
         """Get the title of the currently playing track."""
@@ -1099,6 +1234,18 @@ class DJTretaBeing:
             self.mood = args.get("mood", self.mood)
             return f"Mood changed to {self.mood}"
 
+        elif cmd == "change_sources":
+            source = args.get("source", "")
+            enabled = args.get("enabled", True)
+            if source == "youtube":
+                self.config.sources.youtube = enabled
+            elif source in ("treta_originals", "originals"):
+                self.config.sources.treta_originals = enabled
+            # Recreate agents with new tool access
+            log.info(f"Source changed: {source} → {'on' if enabled else 'off'} — rebuilding agents")
+            self.agent, self.planner_agent = create_agents(self.config)
+            return f"Source {source} → {'on' if enabled else 'off'} (agents rebuilt)"
+
         else:
             return f"Unknown: {cmd}"
 
@@ -1167,7 +1314,12 @@ class DJTretaBeing:
 
         d1 = status.get("deck1", {})
         d2 = status.get("deck2", {})
-        parts = [f"Mood: {self.mood or 'not set'}"]
+        src_parts = []
+        if self.config.sources.youtube:
+            src_parts.append("youtube")
+        if self.config.sources.treta_originals:
+            src_parts.append("treta_originals")
+        parts = [f"Mood: {self.mood or 'not set'}  Sources: {', '.join(src_parts) or 'none'}"]
         parts.append(f"Tracks played: {len(self.tracks_played)}")
 
         for dk, d in [(1, d1), (2, d2)]:
@@ -1342,6 +1494,11 @@ class DJTretaBeing:
                 "last_command_id": self._last_command_id,
                 "last_command_result": self._last_result,
                 "billing": billing_str,
+                "sources": {
+                    "youtube": self.config.sources.youtube,
+                    "treta_originals": self.config.sources.treta_originals,
+                },
+                "producing": self._generation_status,
             }, indent=2))
         except Exception:
             pass

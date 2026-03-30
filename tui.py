@@ -214,7 +214,7 @@ def send_command(command: str, args: dict = {}) -> str:
     cmd_id = f"{time.time():.6f}"
     payload = {"command": command, "args": args, "id": cmd_id}
     COMMAND_FILE.write_text(json.dumps(payload))
-    for _ in range(240):  # 120s timeout (agent can take 60s+ for tool calls)
+    for _ in range(600):  # 300s timeout (generation can take 2-3 min with Lyria + analysis)
         time.sleep(0.5)
         state = read_state()
         if state and state.get("last_command_id") == cmd_id:
@@ -412,9 +412,17 @@ class BrainWidget(Static):
             target_min = set_data.get("target_minutes", 0)
             target_secs = target_min * 60 if target_min else 0
             set_time = f"{fmt_time(elapsed)} / {fmt_time(target_secs)}" if target_secs else fmt_time(elapsed)
+            # Sources badge
+            sources = state.get("sources", {})
+            src_parts = []
+            if sources.get("youtube"):
+                src_parts.append("YT")
+            if sources.get("treta_originals"):
+                src_parts.append("Originals")
+            src_str = "+".join(src_parts) if src_parts else "none"
             lines.append(
                 f"SET #{set_num} [bold]\"{set_title}\"[/bold] | "
-                f"{set_genre} | {set_time} | {played} tracks"
+                f"{set_genre} | {set_time} | {played} tracks | [magenta]{src_str}[/magenta]"
             )
         else:
             mood = state.get("mood", "?")
@@ -426,6 +434,12 @@ class BrainWidget(Static):
         planner_since = state.get("planner_tracks_since", 0)
         planner_str = (f"[yellow]PLANNING[/yellow]" if planner_status == "busy"
                        else f"[dim]idle ({planner_since} since)[/dim]")
+
+        # Producer status
+        producing = state.get("producing", {})
+        if producing and producing.get("status"):
+            prod_name = producing.get("name", "?")
+            planner_str += f"  [bold yellow]♫ PRODUCING: {prod_name}[/bold yellow]"
 
         # Relay: check state file first, fallback to config.yaml
         if "relay_connected" in state:
@@ -888,6 +902,7 @@ class DJTretaApp(App):
                 "  [cyan]/stats[/cyan]             Show library stats from DB\n"
                 "  [cyan]/relay[/cyan]             Show relay status\n"
                 "  [cyan]/tracks[/cyan]            List library\n"
+                "  [cyan]/sources[/cyan] <src> on|off  Toggle music sources (yt, originals)\n"
                 "  [cyan]/cost[/cyan]              Show billing details\n"
                 "  [cyan]/start[/cyan]             Start Being daemon\n"
                 "  [cyan]/kill[/cyan]              Kill Being daemon\n"
@@ -936,6 +951,14 @@ class DJTretaApp(App):
             self.show_db_stats()
         elif cmd == "relay":
             self.show_relay_status()
+        elif cmd == "sources" and args:
+            source = args[0].lower()
+            enabled = args[1].lower() in ("on", "true", "1") if len(args) > 1 else True
+            # Map shorthand
+            if source == "yt":
+                source = "youtube"
+            self.run_brain_command("change_sources", {"source": source, "enabled": enabled})
+            self.log_widget.write(f"[green]  Source {source} → {'on' if enabled else 'off'}[/green]")
         else:
             self.log_widget.write(f"[red]Unknown: {text}[/red] — /help")
 
@@ -1025,7 +1048,8 @@ class DJTretaApp(App):
                     ts = "?"
                 transition = t.get("transition_type", "")
                 trans_str = f" [dim]({transition})[/dim]" if transition else ""
-                lines.append(f"  [dim]{i:2d}. {ts}[/dim]  {title}{trans_str}")
+                original = " [magenta]★[/magenta]" if title.startswith("Treta-") else ""
+                lines.append(f"  [dim]{i:2d}. {ts}[/dim]  {title}{original}{trans_str}")
             lines.append("")
 
         # ── NOW PLAYING ──
@@ -1039,7 +1063,8 @@ class DJTretaApp(App):
                     bpm = d.get("bpm", 0)
                     key = fmt_key(d.get("key", 0))
                     rem = d.get("remaining_seconds", 0)
-                    lines.append(f"  [bold green]▶ NOW PLAYING[/bold green]")
+                    original_badge = " [magenta]★ ORIGINAL[/magenta]" if title.startswith("Treta-") else ""
+                    lines.append(f"  [bold green]▶ NOW PLAYING[/bold green]{original_badge}")
                     lines.append(f"      {title}")
                     lines.append(f"      {bpm:.0f} BPM  {key}  {fmt_time(rem)} remaining")
                     lines.append("")

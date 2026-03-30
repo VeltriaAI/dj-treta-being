@@ -571,8 +571,38 @@ def analyze_track(track_path: str) -> str:
         key_musical = data.get("key", "")
         key_camelot = KEY_TO_CAMELOT.get(key_musical, "")
 
+        # Get real duration from ffprobe — Gemini hallucinates timelines beyond track length
+        real_duration = None
+        try:
+            dur_result = _sp.run(
+                ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", str(path)],
+                capture_output=True, text=True, timeout=10,
+            )
+            real_duration = float(json.loads(dur_result.stdout)["format"]["duration"])
+        except Exception:
+            pass
+
+        # Clamp timeline to real duration
+        timeline = data.get("timeline", [])
+        if real_duration and timeline:
+            clamped = []
+            for s in timeline:
+                if s.get("start", 0) >= real_duration:
+                    break
+                if s.get("end", 0) > real_duration:
+                    s["end"] = round(real_duration)
+                clamped.append(s)
+            timeline = clamped
+            data["timeline"] = timeline
+
+        # Clamp mix_out
+        mix_out = data.get("mix_out_seconds")
+        if real_duration and mix_out and mix_out > real_duration - 10:
+            mix_out = max(real_duration - 30, real_duration * 0.7)
+            data["mix_out_seconds"] = mix_out
+
         # Store in DB
-        timeline_json = json.dumps(data.get("timeline", []))
+        timeline_json = json.dumps(timeline)
         upsert_track(
             path=str(path), title=title,
             bpm=data.get("bpm"),
@@ -582,7 +612,7 @@ def analyze_track(track_path: str) -> str:
             mood=data.get("mood"),
             mix_in_seconds=data.get("mix_in_seconds"),
             mix_out_seconds=data.get("mix_out_seconds"),
-            duration_seconds=data.get("duration_seconds"),
+            duration_seconds=real_duration or data.get("duration_seconds"),
             timeline=timeline_json,
             analysis_text=raw,
             similar=data.get("similar"),
@@ -1005,8 +1035,23 @@ def schedule_transition(to_deck: int, at_position: int, technique: str = "crossf
         return "ERROR: Mixxx not responding"
 
     active_deck = 1 if to_deck == 2 else 2
-    current_pos = float(status.get(f"deck{active_deck}", {}).get("position_seconds", 0) or 0)
+    d_active = status.get(f"deck{active_deck}", {})
+    current_pos = float(d_active.get("position_seconds", 0) or 0)
+    track_duration = float(d_active.get("duration", 0) or 0)
+
+    # Safety: clamp at_position so transition completes before track ends
+    if track_duration > 0:
+        max_start = track_duration - duration - 5  # 5s safety margin
+        if at_position > max_start:
+            at_position = max(current_pos + 5, max_start)
+
     delay = max(0, at_position - current_pos)
+
+    # If track is almost over, transition immediately
+    remaining = float(d_active.get("remaining_seconds", 0) or 0)
+    if remaining < duration + 10:
+        at_position = current_pos + 2  # start in 2 seconds
+        delay = 2
 
     # Write schedule — Python (_execute_scheduled_transition in main.py) picks this up
     scheduled = {
@@ -1147,9 +1192,51 @@ def download_track(url: str, genre: str = "deep") -> str:
 # MUSIC PRODUCTION (Lyria 3)
 # ═══════════════════════════════════════════════════════════════════════
 
+GENERATION_QUEUE_FILE = Path("/tmp/dj-treta-generation-jobs.json")
+
+
+@tool
+def generate_track_async(prompt: str, bpm: int = 128, key: str = "C minor",
+                         genre: str = "dark-techno", duration: str = "full",
+                         name: str = "") -> str:
+    """Start generating a track in the BACKGROUND. Returns IMMEDIATELY.
+    The track auto-loads on the idle deck when ready. Use this when DJing live
+    so you stay free to DJ while the track produces.
+
+    Args:
+        prompt: Describe the track — mood, style, instruments, energy.
+        bpm: Tempo in BPM (60-200).
+        key: Musical key.
+        genre: Genre folder.
+        duration: "full" for ~3 min, "clip" for 30s.
+        name: Track name. If provided, skips AI naming.
+    """
+    import time as _time
+    job_id = f"gen-{_time.strftime('%H%M%S')}-{id(prompt) % 10000}"
+    job = {
+        "id": job_id,
+        "prompt": prompt, "bpm": bpm, "key": key,
+        "genre": genre, "duration": duration, "name": name,
+        "status": "pending", "requested_at": _time.time(),
+    }
+    # Append to jobs file — daemon's generation worker picks it up
+    jobs = []
+    if GENERATION_QUEUE_FILE.exists():
+        try:
+            jobs = json.loads(GENERATION_QUEUE_FILE.read_text())
+        except Exception:
+            pass
+    jobs.append(job)
+    GENERATION_QUEUE_FILE.write_text(json.dumps(jobs, indent=2))
+
+    display = name or "a new track"
+    return f"Producing '{display}'... will auto-load on idle deck when ready. Keep DJing."
+
+
 @tool
 def generate_track(prompt: str, bpm: int = 128, key: str = "C minor",
-                   genre: str = "dark-techno", duration: str = "full") -> str:
+                   genre: str = "dark-techno", duration: str = "full",
+                   name: str = "") -> str:
     """Generate an original AI track using Google Lyria 3. The track is saved
     to the music library and auto-analyzed, ready to be loaded and mixed.
 
@@ -1161,6 +1248,7 @@ def generate_track(prompt: str, bpm: int = 128, key: str = "C minor",
         key: Musical key. Example: "C minor", "F# major", "A minor".
         genre: Genre folder to save into (e.g., dark-techno, melodic-techno, deep, minimal, progressive, ai-generated).
         duration: "full" for ~3 min track (lyria-3-pro), "clip" for 30s clip (lyria-3-clip).
+        name: Track name. If provided, skips AI naming. If empty, Gemini names it.
     """
     from google import genai
     from google.genai import types
@@ -1213,56 +1301,168 @@ def generate_track(prompt: str, bpm: int = 128, key: str = "C minor",
                         audio_data = part.inline_data.data
         else:
             # Pro model (~3 min) uses interactions API
+            # API is flaky — sometimes returns empty outputs on 'completed'. Retry up to 3 times.
             import base64 as _b64
-            interaction = client.interactions.create(
-                model="lyria-3-pro-preview",
-                response_modalities=["audio", "text"],
-                input=music_prompt,
-            )
-            # Use model_dump() — interaction.outputs can be None due to SDK bug
-            outputs = interaction.model_dump().get("outputs") or []
-            for out in outputs:
-                if out.get("type") == "text":
-                    description = out.get("text", "")
-                elif out.get("type") == "audio" and out.get("data"):
-                    audio_data = _b64.b64decode(out["data"])
+            for _attempt in range(3):
+                interaction = client.interactions.create(
+                    model="lyria-3-pro-preview",
+                    response_modalities=["audio", "text"],
+                    input=music_prompt,
+                )
+                # Try direct attribute access first, fall back to model_dump()
+                raw_outputs = interaction.outputs
+                if raw_outputs:
+                    for out in raw_outputs:
+                        otype = getattr(out, "type", None)
+                        if otype == "text" and not description:
+                            description = getattr(out, "text", "")
+                        elif otype == "audio":
+                            data = getattr(out, "data", None)
+                            if data:
+                                audio_data = _b64.b64decode(data) if isinstance(data, str) else data
+                else:
+                    # SDK bug: outputs attr is None but data exists in dump
+                    _warnings.filterwarnings('ignore', category=UserWarning)
+                    outputs = interaction.model_dump().get("outputs") or []
+                    for out in outputs:
+                        if out.get("type") == "text" and not description:
+                            description = out.get("text", "")
+                        elif out.get("type") == "audio" and out.get("data"):
+                            audio_data = _b64.b64decode(out["data"])
+                if audio_data:
+                    break
     except Exception as e:
         return f"Lyria generation failed: {e}"
 
     if not audio_data:
         return f"No audio generated. Model response: {description[:200]}"
 
-    # Save to library
+    # Step 1: Save to temp file
     genre_dir = _music_dir() / genre
     genre_dir.mkdir(parents=True, exist_ok=True)
-
-    # Generate filename from prompt
-    slug = re.sub(r'[^a-z0-9]+', '-', prompt.lower().strip())[:60].strip('-')
     timestamp = _time.strftime("%H%M%S")
-    filename = f"Treta-{slug}-{bpm}bpm-{timestamp}.mp3"
-    filepath = genre_dir / filename
+    temp_path = genre_dir / f"_generating_{timestamp}.mp3"
 
     try:
-        with open(filepath, "wb") as f:
+        with open(temp_path, "wb") as f:
             f.write(audio_data)
     except Exception as e:
         return f"Failed to save audio: {e}"
 
-    # Insert into DB + auto-analyze in background
-    from .db import upsert_track
-    upsert_track(path=str(filepath), title=filepath.stem, genre=genre)
+    # Step 2: Analyze with librosa (real signal processing, no LLM guessing)
+    from .audio_analysis import analyze_audio
+    audio_data_analysis = {}
+    try:
+        audio_data_analysis = analyze_audio(str(temp_path))
+    except Exception:
+        pass
 
-    import threading
-    def _bg_analyze():
+    real_bpm = audio_data_analysis.get("bpm", bpm)
+    real_key = audio_data_analysis.get("key", key)
+    real_duration = audio_data_analysis.get("duration_seconds")
+    energy_peak = audio_data_analysis.get("energy_peak", 5)
+    timeline = audio_data_analysis.get("timeline", [])
+    mix_in = audio_data_analysis.get("mix_in_seconds", 0)
+    mix_out = audio_data_analysis.get("mix_out_seconds")
+
+    # Step 3: Name the track — use provided name or Gemini fallback
+    track_name = None
+    if name:
+        track_name = re.sub(r'[<>:"/\\|?*]', '', name.strip())[:50]
+    if not track_name:
         try:
-            analyze_track(str(filepath))
+            from litellm import completion as _name_completion
+            _name_resp = _name_completion(
+                model=cfg.llm.model,
+                messages=[{"role": "user", "content":
+                    f"You are DJ Treta naming your new track. Reply with ONLY a creative "
+                    f"2-4 word name. No explanation, no quotes, just the name. "
+                    f"Make it evocative and unique — never generic.\n"
+                    f"Style: {genre}, BPM: {real_bpm:.0f}, Key: {real_key}, Energy: {energy_peak}/10\n"
+                    f"Description: {prompt[:200]}"}],
+                api_base=cfg.llm.api_base, api_key=cfg.llm.api_key,
+                temperature=0.9, timeout=10,
+            )
+            track_name = _name_resp.choices[0].message.content.strip().strip('"\'')[:50]
+            track_name = re.sub(r'[<>:"/\\|?*]', '', track_name).strip()
         except Exception:
             pass
-    threading.Thread(target=_bg_analyze, daemon=True).start()
+    if not track_name:
+        track_name = f"Untitled {timestamp}"
 
-    result = f"Generated: {filepath}"
-    if description:
-        result += f"\nLyria notes: {description[:200]}"
+    # Step 3b: Get mood + similar artists from Gemini (creative, not structural)
+    mood_text = ""
+    similar = ""
+    verdict = ""
+    try:
+        from litellm import completion as _mood_completion
+        _mood_resp = _mood_completion(
+            model=cfg.llm.model,
+            messages=[{"role": "user", "content":
+                f"A {genre} track at {real_bpm:.0f} BPM in {real_key}, energy {energy_peak}/10.\n"
+                f"Prompt was: {prompt[:150]}\n"
+                f"Reply JSON only: "
+                '{"mood": "<2-3 mood words>", "similar": "<3 similar artists>", '
+                '"verdict": "<one sentence about this track>"}'}],
+            api_base=cfg.llm.api_base, api_key=cfg.llm.api_key,
+            temperature=0.5, timeout=10,
+        )
+        _raw = _mood_resp.choices[0].message.content.strip()
+        if "```" in _raw:
+            _raw = _raw.split("```")[1].split("```")[0].strip()
+            if _raw.startswith("json"):
+                _raw = _raw[4:].strip()
+        _mood_data = json.loads(_raw)
+        mood_text = _mood_data.get("mood", "")
+        similar = _mood_data.get("similar", "")
+        verdict = _mood_data.get("verdict", "")
+    except Exception:
+        pass
+
+    # Step 4: Rename to final path
+    filename = f"DJ Treta - {track_name}.mp3"
+    filepath = genre_dir / filename
+    if filepath.exists():
+        filename = f"DJ Treta - {track_name} ({timestamp}).mp3"
+        filepath = genre_dir / filename
+    temp_path.rename(filepath)
+
+    # Step 5: Write ID3 tags with full metadata
+    try:
+        from mutagen.id3 import ID3, TIT2, TPE1, TBPM, TKEY, TCON, TALB, COMM
+        tags = ID3()
+        tags.add(TIT2(encoding=3, text=[track_name]))
+        tags.add(TPE1(encoding=3, text=["DJ Treta"]))
+        tags.add(TBPM(encoding=3, text=[str(int(real_bpm))]))
+        tags.add(TKEY(encoding=3, text=[real_key]))
+        tags.add(TCON(encoding=3, text=[genre.replace('-', ' ').title()]))
+        tags.add(TALB(encoding=3, text=["Treta Originals"]))
+        tags.add(COMM(encoding=3, lang='eng', desc='prompt', text=[prompt[:200]]))
+        tags.save(filepath)
+    except Exception:
+        pass
+
+    # Step 6: Insert full metadata into DB
+    from .db import upsert_track
+    from .camelot import KEY_TO_CAMELOT
+    key_camelot = KEY_TO_CAMELOT.get(real_key, "")
+    timeline_json = json.dumps(timeline)
+
+    upsert_track(
+        path=str(filepath), title=track_name, artist="DJ Treta",
+        genre=genre, bpm=float(real_bpm), key_musical=real_key,
+        key_camelot=key_camelot, energy_peak=energy_peak,
+        mood=mood_text,
+        duration_seconds=real_duration,
+        mix_in_seconds=mix_in,
+        mix_out_seconds=mix_out,
+        timeline=timeline_json,
+        similar=similar,
+        verdict=verdict,
+        analyzed_at=_time.time(),
+    )
+
+    result = f"Generated: {filepath} | {track_name} | {real_bpm:.0f} BPM | {real_key} | Energy: {energy_peak} | Mood: {mood_text}"
     return result
 
 

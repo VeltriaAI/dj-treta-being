@@ -15,6 +15,9 @@ dependencies = [
     "pyyaml",
     "textual",
     "rich",
+    "google-genai",
+    "mutagen",
+    "librosa",
 ]
 
 [project.scripts]

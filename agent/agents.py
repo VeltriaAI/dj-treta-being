@@ -1,8 +1,12 @@
 """Agent factory — creates the multi-agent DJ system.
 
 DJ Agent (manager) delegates to:
-  - Mixer Agent: all Mixxx audio control
+  - Mixer Agent: Mixxx audio control
   - Library Agent: track discovery and management
+  - Producer Agent: AI music generation (shared with Planner)
+
+Planner Agent delegates to:
+  - Producer Agent: same instance, generates tracks during planning
 """
 
 import json
@@ -25,7 +29,7 @@ from .tools import (
     # Library tools
     list_library_tracks, search_music, download_track, get_set_history,
     # Producer tools
-    generate_track,
+    generate_track, generate_track_async,
     # Scheduling
     schedule_transition,
     # Meta tools (DJ agent only)
@@ -34,7 +38,7 @@ from .tools import (
 )
 
 
-def _load_system_prompt() -> str:
+def _load_system_prompt(config: Config = None) -> str:
     """Load DJ knowledge + Being identity as system prompt."""
     parts = []
 
@@ -61,19 +65,19 @@ def _load_system_prompt() -> str:
 
 SUB-AGENTS:
 - mixer: load tracks, play, EQ, filter, sync, do_transition, do_bass_swap
-- library: list tracks, search YouTube, download tracks
+- library: list tracks, browse library, check set history
 - producer: generate ORIGINAL AI tracks with Lyria 3 — specify mood, BPM, key, genre
 
 You can also: hear_music (listen to playing audio), preview_track (listen to any file),
 analyze_track (full track analysis), save_learning, recall_learnings, read/write your own files.
 
 PRODUCER — WHEN TO USE:
-- When you want a track with EXACT BPM/key to match the current mix
-- When the library doesn't have the right vibe and you want something custom
-- When you want to create something that's never existed before
-- Be specific in your prompt: mood, instruments, energy level, texture
-- Generated tracks land in the library ready to load and mix
-- Example: producer("Generate a dark minimal techno track with 808 kicks, filtered acid bassline, atmospheric reverb tails", bpm=130, key="D minor", genre="dark-techno")
+- Use generate_track_async to produce in background — you stay FREE to DJ
+- NAME YOUR TRACKS: when you conceive a track, give it a name upfront
+  Example: producer("Generate dark techno, 130 BPM, D minor, name='Midnight Signal', genre dark-techno")
+- The track auto-loads on idle deck when ready — no need to wait
+- Be specific: mood, instruments, energy, texture
+- Only use generate_track (sync, blocking) when you absolutely need the result now
 
 GOLDEN RULES:
 1. NEVER call the same action twice. ONE transition per heartbeat.
@@ -137,6 +141,12 @@ Techniques — pick the right one for the moment:
 - "hard_cut" — instant switch, no blend (genre changes, surprise drops)
 
 If the track is in a drop or buildup NOW, WAIT. Say why you're waiting.
+
+MUSIC SOURCES:
+Your music comes from enabled sources (shown in context as "Sources: ..."):
+- youtube: search YouTube, download individual tracks via library agent
+- treta_originals: generate original tracks via producer agent
+Only use enabled sources. When treta_originals is the only source, you are playing a fully original set.
 
 EFFICIENCY:
 - Don't call list_library_tracks or get_dj_status — the library and deck status are already in your context.
@@ -273,8 +283,11 @@ def create_model(config: Config) -> LiteLLMModel:
     )
 
 
-def create_dj_agent(config: Config) -> ToolCallingAgent:
-    """Create the full multi-agent DJ system."""
+def create_agents(config: Config) -> tuple[ToolCallingAgent, ToolCallingAgent]:
+    """Create the full multi-agent DJ system with shared Producer.
+
+    Returns (dj_agent, planner_agent). Both share the same Producer sub-agent.
+    """
     model = create_model(config)
     step_cb = partial(_step_callback, model_id=config.llm.model)
 
@@ -293,24 +306,30 @@ def create_dj_agent(config: Config) -> ToolCallingAgent:
         step_callbacks=[step_cb],
     )
 
+    # Library tools depend on youtube source
+    library_tools = [list_library_tracks, get_set_history]
+    library_desc = "Manages the DJ music library — list available tracks by genre folder, check what's been played."
+    if config.sources.youtube:
+        library_tools.extend([search_music, download_track])
+        library_desc = "Manages the DJ music library — list available tracks by genre folder, search YouTube for new music, download tracks, check what's been played in this set. Use for ALL track discovery."
+
     library = ToolCallingAgent(
-        tools=[
-            list_library_tracks, search_music, download_track, get_set_history,
-        ],
+        tools=library_tools,
         model=model,
         name="library",
-        description="Manages the DJ music library — list available tracks by genre folder, search YouTube for new music, download tracks, check what's been played in this set. Use for ALL track discovery.",
+        description=library_desc,
         max_steps=8,
         step_callbacks=[step_cb],
     )
 
+    # Producer — created ONCE, shared by DJ agent + planner
     producer = ToolCallingAgent(
         tools=[
-            generate_track, list_library_tracks, analyze_track,
+            generate_track_async, generate_track, list_library_tracks, analyze_track,
         ],
         model=model,
         name="producer",
-        description="AI music producer — generates original tracks using Lyria 3. Use when you want a track with specific BPM/key/mood that doesn't exist in the library, or when you want to create something original. Specify mood, BPM, key, genre, and style details for best results.",
+        description="AI music producer. Use generate_track_async (preferred — returns instantly, track auto-loads when ready) or generate_track (blocks until done, use only when result needed immediately). Specify mood, BPM, key, genre. If a name is provided, use it.",
         max_steps=5,
         step_callbacks=[step_cb],
     )
@@ -331,7 +350,7 @@ def create_dj_agent(config: Config) -> ToolCallingAgent:
         ],
         model=model,
         managed_agents=[mixer, library, producer],
-        prompt_templates={**EMPTY_PROMPT_TEMPLATES, "system_prompt": _load_system_prompt()},
+        prompt_templates={**EMPTY_PROMPT_TEMPLATES, "system_prompt": _load_system_prompt(config)},
         max_steps=20,
         planning_interval=5,
         name="dj_treta",
@@ -339,19 +358,11 @@ def create_dj_agent(config: Config) -> ToolCallingAgent:
         step_callbacks=[step_cb],
     )
 
-    return dj
-
-
-def create_planner_agent(config: Config) -> ToolCallingAgent:
-    """Create the background planner agent — plans next 3 tracks."""
-    model = create_model(config)
-    step_cb = partial(_step_callback, model_id=config.llm.model)
-
     planner_prompt = """You are DJ Treta's planning brain. You run in the background while tracks play.
 
 Your job: plan the next 6 tracks — a complete energy arc. For EACH track provide:
 - Track title and artist
-- Search query (for YouTube if not in library)
+- Search query (if searching is enabled)
 - Genre folder (melodic-techno, dark-techno, progressive, deep, minimal, vocal, psychill)
 - Estimated BPM, key, energy (1-10)
 - WHY this track fits next (energy arc, BPM compatibility, key compatibility, mood)
@@ -365,17 +376,35 @@ RULES:
 - Never pick same artist twice in a row
 - Only individual tracks (3-8 min), NEVER mixes/sets/compilations
 - If a track is in the library, include its full file path
-- If not in library, search YouTube and download it
+- If not in library, use available sources (YouTube if enabled, or produce with producer)
 
-Search for artists and tracks that match the CURRENT MOOD/GENRE. Do NOT default to melodic techno.
-If mood is psytrance → search Infected Mushroom, Astrix, Vini Vici, Ace Ventura, etc.
-If mood is bhojpuri → search Pawan Singh, Khesari Lal, etc.
-If mood is melodic techno → search Anyma, ARTBAT, Tale of Us, etc.
-Always match the mood. The mood is given in the planner prompt.
+MUSIC SOURCES:
+The planner prompt tells you which sources are enabled. ONLY use enabled sources:
+- youtube: search_music + download_track. Match the CURRENT MOOD/GENRE — don't default to melodic techno.
+  If psytrance → Infected Mushroom, Astrix, Vini Vici. If melodic techno → Anyma, ARTBAT, Tale of Us. Etc.
+- treta_originals: delegate to producer sub-agent to generate original tracks.
+  When only treta_originals is enabled, you are composing a fully original set — every track is yours.
 
 Use analyze_track to deeply understand tracks in the library.
-Use search_music + download_track to get tracks not in library.
 Use recall_learnings to remember what worked in past sets.
+
+PRODUCTION (when treta_originals source is enabled):
+You have a producer sub-agent — delegate to it to create original tracks.
+DJ Treta is a musician. EVERY set should have at least one Treta original.
+
+When to generate:
+- Library lacks the right BPM/key combo for harmonic mixing
+- You want a specific mood that existing tracks can't deliver
+- You need a transition bridge between different energy levels
+- You want to express something unique
+
+How to use:
+- Delegate to producer with generate_track_async: "Generate dark techno, 130 BPM, D minor, name='Shadow Protocol', genre dark-techno"
+- NAME each track you produce — be creative
+- MATCH THE GENRE to the current set mood — NOT "ai-generated"
+- Be specific about mood, instruments, texture, energy
+- The producer generates in background — you can keep planning
+- Include generated tracks in your plan alongside library + downloaded tracks
 
 IMPORTANT:
 - Plan 6 tracks with a coherent energy arc (rise → peak → release → rebuild)
@@ -385,14 +414,15 @@ IMPORTANT:
 
 Output your plan clearly — the heartbeat agent will follow it."""
 
+    # Planner tools: search/download only when youtube is on
+    planner_tools = [analyze_track, preview_track, list_library_tracks, recall_learnings, read_file]
+    if config.sources.youtube:
+        planner_tools.extend([search_music, download_track])
+
     planner = ToolCallingAgent(
-        tools=[
-            analyze_track, preview_track,
-            list_library_tracks, search_music, download_track,
-            generate_track,
-            recall_learnings, read_file,
-        ],
+        tools=planner_tools,
         model=model,
+        managed_agents=[producer],
         prompt_templates={**EMPTY_PROMPT_TEMPLATES, "system_prompt": planner_prompt},
         max_steps=15,
         name="planner",
@@ -400,4 +430,4 @@ Output your plan clearly — the heartbeat agent will follow it."""
         step_callbacks=[step_cb],
     )
 
-    return planner
+    return dj, planner

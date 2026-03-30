@@ -36,6 +36,7 @@ capabilities:
 planner:
   replan_every_n_tracks: 2
   download_new_tracks: 3
+  generate_new_tracks: 1
   min_play_time_seconds: 90
 
 sets:
@@ -52,6 +53,18 @@ relay:
 
 broadcast:
   auto_start: true
+
+producer:
+  enabled: true
+  model: "lyria-3-pro-preview"
+  vertex_project: "fandorab2w3"
+  vertex_location: "global"
+  default_duration_seconds: 180
+  genre_dir: "ai-generated"
+
+sources:
+  youtube: false
+  treta_originals: true
 
 set:
   default_mood: "techno-deep"
