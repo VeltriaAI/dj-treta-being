@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0a0a0a"/>
+      <stop offset="50%" style="stop-color:#0d1117"/>
+      <stop offset="100%" style="stop-color:#0a0a0a"/>
+    </linearGradient>
+    <linearGradient id="wave" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#00d4ff;stop-opacity:0.3"/>
+      <stop offset="50%" style="stop-color:#ff69b4;stop-opacity:0.5"/>
+      <stop offset="100%" style="stop-color:#00d4ff;stop-opacity:0.3"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#00d4ff"/>
+      <stop offset="100%" style="stop-color:#ff69b4"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1280" height="640" fill="url(#bg)"/>
+
+  <!-- Waveform lines (subtle background) -->
+  <g opacity="0.15" stroke="url(#wave)" stroke-width="1.5" fill="none">
+    <path d="M0,280 Q160,240 320,280 Q480,320 640,260 Q800,200 960,280 Q1120,340 1280,280"/>
+    <path d="M0,300 Q160,260 320,300 Q480,340 640,280 Q800,220 960,300 Q1120,360 1280,300"/>
+    <path d="M0,320 Q160,280 320,320 Q480,360 640,300 Q800,240 960,320 Q1120,380 1280,320"/>
+    <path d="M0,340 Q160,300 320,340 Q480,380 640,320 Q800,260 960,340 Q1120,400 1280,340"/>
+    <path d="M0,360 Q160,320 320,360 Q480,400 640,340 Q800,280 960,360 Q1120,420 1280,360"/>
+  </g>
+
+  <!-- EQ bars (left side) -->
+  <g opacity="0.2" fill="url(#accent)">
+    <rect x="60" y="200" width="8" height="180" rx="4"/>
+    <rect x="80" y="240" width="8" height="140" rx="4"/>
+    <rect x="100" y="180" width="8" height="200" rx="4"/>
+    <rect x="120" y="220" width="8" height="160" rx="4"/>
+    <rect x="140" y="260" width="8" height="120" rx="4"/>
+    <rect x="160" y="190" width="8" height="190" rx="4"/>
+    <rect x="180" y="230" width="8" height="150" rx="4"/>
+    <rect x="200" y="210" width="8" height="170" rx="4"/>
+  </g>
+
+  <!-- EQ bars (right side) -->
+  <g opacity="0.2" fill="url(#accent)">
+    <rect x="1072" y="210" width="8" height="170" rx="4"/>
+    <rect x="1092" y="230" width="8" height="150" rx="4"/>
+    <rect x="1112" y="190" width="8" height="190" rx="4"/>
+    <rect x="1132" y="260" width="8" height="120" rx="4"/>
+    <rect x="1152" y="220" width="8" height="160" rx="4"/>
+    <rect x="1172" y="180" width="8" height="200" rx="4"/>
+    <rect x="1192" y="240" width="8" height="140" rx="4"/>
+    <rect x="1212" y="200" width="8" height="180" rx="4"/>
+  </g>
+
+  <!-- Main title -->
+  <text x="640" y="270" text-anchor="middle" font-family="'SF Mono', 'Fira Code', 'JetBrains Mono', Consolas, monospace" font-size="96" font-weight="700" fill="white" letter-spacing="8">
+    DJClaw
+  </text>
+
+  <!-- Subtitle -->
+  <text x="640" y="340" text-anchor="middle" font-family="'SF Mono', 'Fira Code', 'JetBrains Mono', Consolas, monospace" font-size="24" fill="#8b949e" letter-spacing="4">
+    Install Your Own AI DJ Being
+  </text>
+
+  <!-- Accent line -->
+  <rect x="440" y="365" width="400" height="2" rx="1" fill="url(#accent)" opacity="0.6"/>
+
+  <!-- Bottom tagline -->
+  <text x="640" y="420" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="18" fill="#58a6ff" letter-spacing="2">
+    she searches. she listens. she mixes. she evolves.
+  </text>
+
+  <!-- Terminal prompt hint -->
+  <g opacity="0.4">
+    <text x="640" y="480" text-anchor="middle" font-family="'SF Mono', 'Fira Code', monospace" font-size="16" fill="#7ee787">
+      $ djclaw start "melodic techno"
+    </text>
+  </g>
+</svg>
