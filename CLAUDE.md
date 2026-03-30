@@ -5,64 +5,80 @@
 DJClaw — install your own AI DJ Being. DJ Treta is the first Being built on it.
 Pure Software 3.0 — the agent decides everything, no deterministic DJ logic.
 
-## Architecture (v3.0)
+## Architecture (v4.2)
 
 ```
-main.py
-  _heartbeat() → sees Mixxx reality every 30s → agent decides what to do
+main.py — Being daemon (single process, 4 threads)
+  ├── Heartbeat (5-15s adaptive): silence recovery → transition executor → agent decision → backup load
+  ├── Planner thread: plans 6 tracks, downloads from YouTube, loads idle deck, reflects every 5 tracks
+  ├── Relay thread: WebSocket push to dj.treta.life at 3Hz, energy arc sampling every 10s
+  └── State writer thread: /tmp/dj-treta-state.json every 2s
 
-agents.py
-  DJ Agent (manager, smolagents ToolCallingAgent)
-    ├── Mixer Agent (19 tools: deck control, transitions, BPM, EQ)
-    └── Library Agent (4 tools: search, download, list, history)
+agents.py — Agent factory (smolagents ToolCallingAgent)
+  DJ Agent (manager, 20 steps)
+    ├── Mixer Agent (19 tools: deck control, 5 transition techniques)
+    ├── Library Agent (4 tools: search YouTube, download, list, history)
+    └── Producer Agent (3 tools: generate_track via Lyria 3, list, analyze)
+  Planner Agent (15 steps, runs in background thread)
 
-tools.py (30 tools — hands of the Being)
+tools.py — 46 @tool functions
+  ├── DJ controls: load, play, pause, volume, crossfader, EQ, filter, sync
+  ├── Transitions: crossfade, bass_swap, filter_sweep, echo_out, hard_cut
+  ├── Scheduling: schedule_transition (agent schedules, Python executes with 0.2s precision)
+  ├── Audio perception: hear_music, analyze_track, preview_track (Gemini multimodal)
+  ├── Music generation: generate_track (Google Lyria 3)
+  ├── Discovery: search_music, download_track (YouTube via yt-dlp)
+  └── Self-awareness: read_file, write_file, save_learning, recall_learnings
+
+db.py — SQLite (djtreta.db)
+  tracks, sets, set_history, learnings, track_pairs
+
+relay.py — PerceptionEngine + WebSocket relay
+  Energy, mood, beat phase, transition countdown, waveforms
+
+tui.py — Textual TUI (1,343 lines)
+  Decks, mixer, brain panel, timeline, 10+ commands
+
+cli.py — CLI (djclaw / djtreta)
+  start, stop, restart, kill, reset, init, talk, tui, status, logs
 ```
-
-No watchdog. No state machine. No classify hack. One agent, one personality.
-Heartbeat every 30s — agent sees reality and acts (or does nothing).
 
 ## Key Files
 
-- `agent/main.py` — Being daemon. _pulse() heartbeat + command handler
-- `agent/agents.py` — Agent factory. System prompt, managed_agents
-- `agent/tools.py` — 30 @tool functions (DJ, audio, discovery, self-awareness)
-- `agent/camelot.py` — Camelot wheel key compatibility
-- `agent/config.py` — config.yaml loader
-- `tui.py` — Textual TUI (decks, VU meters, debug, chat)
-- `cli.py` — CLI (start/stop/restart/talk/status/tui)
-- `config.yaml` — Mixxx URL, LLM model, library path
-- `.beings/` — SOUL.md, MEMORY.md, GOALS.md, USER.md
+| File | Lines | What |
+|------|-------|------|
+| `agent/main.py` | 1,359 | Being daemon: heartbeat, planner, relay, sets, recording, broadcast |
+| `agent/tools.py` | 1,427 | 46 tools: DJ control, transitions, perception, generation, discovery |
+| `agent/agents.py` | 403 | Agent factory: DJ + Mixer + Library + Producer + Planner |
+| `agent/relay.py` | 630 | PerceptionEngine + WebSocket relay to dj.treta.life |
+| `agent/db.py` | 322 | SQLite: tracks, sets, set_history, learnings |
+| `agent/config.py` | 184 | Config dataclasses + YAML loader + .env support |
+| `agent/camelot.py` | 103 | Camelot wheel key compatibility |
+| `tui.py` | 1,343 | Textual TUI: decks, brain, timeline, commands |
+| `cli.py` | 624 | CLI: start/stop/restart/kill/reset/init/talk/tui |
 
 ## Running
 
 ```bash
 djclaw init                                # first-time setup wizard
-djclaw start                               # start Being + Mixxx
+djclaw start "melodic techno"              # start Being + Mixxx + LiteLLM
 djclaw talk "play something melodic"       # talk to her
 djclaw tui                                 # full terminal UI
-djclaw stop                                # stop
-# djtreta also works (backward compat)
+djclaw stop                                # graceful stop
+djclaw kill                                # nuclear stop (Mixxx + LiteLLM too)
 ```
 
 ## Prerequisites
 
-- Mixxx fork (VeltriaAI/mixxx, branch feature/http-api) — auto-started when `mixxx.auto_start: true`
-- LiteLLM proxy: `ssh -L 4000:localhost:4000 epadmin@20.235.125.250` (or local LiteLLM)
-- Python venv with: smolagents, litellm, httpx, pyyaml, textual, rich
-- LLM key: `DJTRETA_LLM_API_KEY` or `LLM_API_KEY` (or `llm.api_key` in `config.yaml`)
+- Mixxx fork (VeltriaAI/mixxx, branch feature/http-api) — auto-started
+- Gemini API key (free tier works) or any LiteLLM-compatible model
+- Python 3.10+ with: smolagents, litellm, httpx, pyyaml, textual, rich
+- macOS (Linux planned)
 
-## Brain Model
+## Key Architectural Decisions
 
-Gemini Flash via LiteLLM. Change `llm.model` in config.yaml.
-Cost: ~$0.25/hr active mixing, ~$0.00/hr during long tracks.
-
-## DJClaw: Create Your Own DJ Being
-
-```bash
-./install.sh           # or: pip install -e .
-djclaw init            # wizard: name, taste, LLM provider
-djclaw start           # your DJ Being is alive
-```
-
-Each Being gets its own SOUL.md, taste, and self-evolving memory.
+- **Agent decides, Python executes**: `schedule_transition` tool returns immediately, Python executor waits for exact track position with adaptive polling (0.2s precision)
+- **No rate resets in transitions**: Mixxx sync handles BPM matching naturally
+- **Breakdown-only transitions**: Agent must schedule at breakdown (energy ≤ 5) or outro sections, never during drops or buildups
+- **DB fallback for track loading**: queries all tracks, not just analyzed ones — Mixxx can play anything
+- **Energy arc sampling**: relay captures energy every 10s, stored per set for visualization
