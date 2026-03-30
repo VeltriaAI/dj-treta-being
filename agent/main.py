@@ -217,7 +217,10 @@ class DJTretaBeing:
         # Generation status for TUI
         self._generation_status = {}
 
-        # ADK v5.0
+        # ADK v5.0 — single persistent event loop (avoids LiteLLM Queue binding errors)
+        self._loop = asyncio.new_event_loop()
+        self._loop_thread = threading.Thread(target=self._loop.run_forever, daemon=True)
+        self._loop_thread.start()
         self._session_service = InMemorySessionService()
         self._dj_runner = None
         self._planner_runner = None
@@ -260,7 +263,7 @@ class DJTretaBeing:
         async def _init_sessions():
             self._dj_session = await self._session_service.create_session(app_name="dj-treta", user_id="dj")
             self._planner_session = await self._session_service.create_session(app_name="dj-treta-planner", user_id="planner")
-        asyncio.run(_init_sessions())
+        self._run_async(_init_sessions())
 
         # State writer for TUI (infrastructure)
         threading.Thread(target=self._state_loop, daemon=True).start()
@@ -579,7 +582,7 @@ class DJTretaBeing:
             all_tracks = glob.glob(str(self.config.library.music_path / "**/*.mp3"), recursive=True)
             # Prefer originals when youtube source is off
             if not self.config.sources.youtube and self.config.sources.treta_originals:
-                tracks = [t for t in all_tracks if "Treta-" in Path(t).name]
+                tracks = [t for t in all_tracks if "DJ Treta" in Path(t).name]
                 if not tracks:
                     tracks = all_tracks  # fallback — music never stops
             else:
@@ -604,21 +607,33 @@ class DJTretaBeing:
                 self._record_playing_tracks()
                 return
 
-            # Empty library — generate or download depending on sources
-            context = self._build_context(_get_status(url))
+            # Empty library — generate directly (bypass agent to avoid blocking)
             if self.config.sources.treta_originals:
-                result = self._invoke_agent(
-                    f"{context}\n\n"
-                    f"SILENCE! Empty library. Use the producer to generate a {self.mood or 'melodic-techno'} track, "
-                    f"then load on deck 1, play it, set crossfader to 0.0."
+                log.info("Emergency: generating track directly (no agent)")
+                from .tools import generate_track as _gen
+                result = _gen(
+                    prompt=f"Atmospheric {self.mood or 'melodic-techno'} track with driving rhythm and evolving textures",
+                    bpm=125, key="A minor", genre=self.mood or "melodic-techno",
+                    duration="clip", name="Emergency Pulse",
                 )
-            else:
+                log.info(f"Emergency generate: {result[:200]}")
+                # Try to load + play the generated track
+                if "Generated:" in result:
+                    filepath = result.split("Generated: ")[1].split(" |")[0]
+                    httpx.post(f"{url}/api/load", json={"deck": 1, "track": filepath}, timeout=5)
+                    time.sleep(2)
+                    httpx.post(f"{url}/api/play", json={"deck": 1}, timeout=3)
+                    httpx.post(f"{url}/api/crossfade", json={"position": 0.0}, timeout=3)
+                    log.info(f"Emergency play: {Path(filepath).stem[:50]}")
+                    self._record_playing_tracks()
+            elif self.config.sources.youtube:
                 result = self._invoke_agent(
-                    f"{context}\n\n"
+                    f"{self._build_context(_get_status(url))}\n\n"
                     f"SILENCE! Empty library. Search YouTube, download a {self.mood or 'melodic-techno'} track, "
                     f"load on deck 1, play it, set crossfader to 0.0."
                 )
-            log.info(f"Emergency play (agent): {result[:200]}")
+                log.info(f"Emergency play (agent): {result[:200]}")
+                self._record_playing_tracks()
             self._record_playing_tracks()
         except Exception as e:
             log.error(f"Emergency play error: {e}")
@@ -676,7 +691,7 @@ class DJTretaBeing:
         # When youtube source is off, prefer Treta originals
         if not self.config.sources.youtube and self.config.sources.treta_originals:
             originals = [c for c in candidates
-                         if c.get("artist") == "DJ Treta" or "Treta-" in c.get("title", "")]
+                         if c.get("artist") == "DJ Treta" or "DJ Treta" in c.get("title", "") or c.get("title", "").startswith("DJ Treta")]
             if originals:
                 candidates = originals
 
@@ -1200,41 +1215,50 @@ class DJTretaBeing:
             async def _reinit():
                 self._dj_session = await self._session_service.create_session(app_name="dj-treta", user_id="dj")
                 self._planner_session = await self._session_service.create_session(app_name="dj-treta-planner", user_id="planner")
-            asyncio.run(_reinit())
+            self._run_async(_reinit())
             return f"Source {source} → {'on' if enabled else 'off'} (agents rebuilt)"
 
         else:
             return f"Unknown: {cmd}"
 
+    def _run_async(self, coro, timeout=120):
+        """Run async coroutine on the persistent event loop. Thread-safe."""
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        return future.result(timeout=timeout)
+
+    async def _invoke_agent_async(self, instruction: str) -> str:
+        """Invoke DJ agent via ADK runner."""
+        message = types.Content(role="user", parts=[types.Part(text=instruction)])
+        result = ""
+        async for event in self._dj_runner.run_async(
+            session_id=self._dj_session.id, user_id="dj", new_message=message
+        ):
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    if part.text:
+                        result += part.text
+        return result
+
     def _invoke_agent(self, instruction: str) -> str:
-        """Invoke DJ agent via ADK runner. Sync wrapper."""
-        async def _run():
-            message = types.Content(role="user", parts=[types.Part(text=instruction)])
-            result = ""
-            async for event in self._dj_runner.run_async(
-                session_id=self._dj_session.id, user_id="dj", new_message=message
-            ):
-                if event.content and event.content.parts:
-                    for part in event.content.parts:
-                        if part.text:
-                            result += part.text
-            return result
-        return asyncio.run(_run())
+        """Invoke DJ agent. Sync wrapper using persistent event loop."""
+        return self._run_async(self._invoke_agent_async(instruction))
+
+    async def _invoke_planner_async(self, instruction: str) -> str:
+        """Invoke planner agent via ADK runner."""
+        message = types.Content(role="user", parts=[types.Part(text=instruction)])
+        result = ""
+        async for event in self._planner_runner.run_async(
+            session_id=self._planner_session.id, user_id="planner", new_message=message
+        ):
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    if part.text:
+                        result += part.text
+        return result
 
     def _invoke_planner(self, instruction: str) -> str:
-        """Invoke planner agent via ADK runner. Sync wrapper."""
-        async def _run():
-            message = types.Content(role="user", parts=[types.Part(text=instruction)])
-            result = ""
-            async for event in self._planner_runner.run_async(
-                session_id=self._planner_session.id, user_id="planner", new_message=message
-            ):
-                if event.content and event.content.parts:
-                    for part in event.content.parts:
-                        if part.text:
-                            result += part.text
-            return result
-        return asyncio.run(_run())
+        """Invoke planner. Sync wrapper using persistent event loop."""
+        return self._run_async(self._invoke_planner_async(instruction))
 
     def _agent_talk(self, message, cmd_id):
         """One agent, one personality. Always."""
