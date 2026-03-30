@@ -4,13 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "djclaw"
-version = "1.0.0"
-description = "Install your own AI DJ Being"
+version = "5.0.0"
+description = "Install your own AI DJ Being — powered by Google ADK"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
-    "smolagents[litellm]",
+    "google-adk",
+    "litellm",
     "httpx",
     "pyyaml",
     "textual",

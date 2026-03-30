@@ -1,4 +1,4 @@
-"""smolagents @tool functions — DJ Treta's hands, ears, and voice.
+"""DJ Treta tools — plain functions for Google ADK v5.0.
 
 These are ALL the capabilities the Being has:
 - DJ controls (Mixxx API)
@@ -16,7 +16,7 @@ import unicodedata
 from pathlib import Path
 
 import httpx
-from smolagents import tool
+# ADK v5.0: tools are plain functions, no decorator needed
 
 from .config import Config, load_config
 
@@ -108,7 +108,6 @@ def _dj_post(path: str, data: dict | None = None) -> dict:
 # DJ CONTROLS — Mixxx API
 # ═══════════════════════════════════════════════════════════════════════
 
-@tool
 def get_dj_status() -> dict:
     """Get full DJ status — both decks, crossfader, BPM, key, remaining time, what's playing."""
     data = _mixxx_get("/api/status")
@@ -117,7 +116,6 @@ def get_dj_status() -> dict:
     return data
 
 
-@tool
 def get_deck_info(deck: int) -> dict:
     """Get detailed info for a specific deck — track title, BPM, key, position, remaining time.
 
@@ -130,7 +128,6 @@ def get_deck_info(deck: int) -> dict:
     return status[f"deck{deck}"]
 
 
-@tool
 def load_track(deck: int, track_path: str) -> str:
     """Load a track onto a deck. Accepts full path OR partial name (will search library).
 
@@ -168,7 +165,6 @@ def load_track(deck: int, track_path: str) -> str:
     return f"ERROR: Mixxx rejected load: {result}"
 
 
-@tool
 def play_deck(deck: int) -> dict:
     """Start playback on a deck.
 
@@ -178,7 +174,6 @@ def play_deck(deck: int) -> dict:
     return _dj_post("/api/play", {"deck": deck})
 
 
-@tool
 def pause_deck(deck: int) -> dict:
     """Pause playback on a deck.
 
@@ -188,7 +183,6 @@ def pause_deck(deck: int) -> dict:
     return _dj_post("/api/pause", {"deck": deck})
 
 
-@tool
 def set_volume(deck: int, volume: float) -> dict:
     """Set deck volume level.
 
@@ -199,7 +193,6 @@ def set_volume(deck: int, volume: float) -> dict:
     return _dj_post("/api/volume", {"deck": deck, "volume": volume})
 
 
-@tool
 def set_crossfader(position: float) -> dict:
     """Set crossfader position between decks.
 
@@ -211,7 +204,6 @@ def set_crossfader(position: float) -> dict:
     return _dj_post("/api/crossfade", {"position": position})
 
 
-@tool
 def set_eq(deck: int, band: str, value: float) -> dict:
     """Set EQ band on a deck.
 
@@ -223,7 +215,6 @@ def set_eq(deck: int, band: str, value: float) -> dict:
     return _dj_post("/api/eq", {"deck": deck, "band": band, "value": value})
 
 
-@tool
 def set_filter(deck: int, value: float) -> dict:
     """Set quick-effect filter on a deck.
 
@@ -234,7 +225,6 @@ def set_filter(deck: int, value: float) -> dict:
     return _dj_post("/api/filter", {"deck": deck, "value": value})
 
 
-@tool
 def set_sync(deck: int, enabled: bool) -> dict:
     """Enable or disable beat sync on a deck.
 
@@ -245,13 +235,11 @@ def set_sync(deck: int, enabled: bool) -> dict:
     return _dj_post("/api/sync", {"deck": deck, "enabled": enabled})
 
 
-@tool
 def get_live_data() -> dict:
     """Get real-time data — VU meters, beat position, crossfader. For feeling the music."""
     return _dj_get("/api/live")
 
 
-@tool
 def get_track_info(deck: int) -> dict:
     """Get deep track metadata from Mixxx — title, artist, BPM, key, duration, waveform, cue points, beat grid.
 
@@ -265,7 +253,6 @@ def get_track_info(deck: int) -> dict:
 # BPM / RATE CONTROL
 # ═══════════════════════════════════════════════════════════════════════
 
-@tool
 def set_rate(deck: int, rate: float = 0.0) -> str:
     """Set the playback rate/pitch of a deck. Use to change BPM.
 
@@ -292,7 +279,6 @@ def set_rate(deck: int, rate: float = 0.0) -> str:
     return f"Deck {deck}: rate set to {rate}"
 
 
-@tool
 def reset_bpm(deck: int) -> str:
     """Reset a deck to its original BPM — undoes any sync or rate changes.
 
@@ -315,7 +301,6 @@ def reset_bpm(deck: int) -> str:
 # BEAT ALIGNMENT — Phase matching like a human DJ
 # ═══════════════════════════════════════════════════════════════════════
 
-@tool
 def align_beats(deck: int) -> str:
     """Align the beats of a deck to match the other playing deck.
     This is like a human DJ nudging the jog wheel to get kicks landing together.
@@ -331,7 +316,6 @@ def align_beats(deck: int) -> str:
     return f"Beats aligned on Deck {deck} — phase matched and quantize enabled"
 
 
-@tool
 def nudge_track(deck: int, direction: str = "forward", strength: float = 0.5) -> str:
     """Nudge a track forward or backward slightly — like touching the jog wheel.
     Use this to fine-tune beat alignment during a mix.
@@ -353,7 +337,6 @@ def nudge_track(deck: int, direction: str = "forward", strength: float = 0.5) ->
 # AUDIO PERCEPTION — Hear the music through Gemini
 # ═══════════════════════════════════════════════════════════════════════
 
-@tool
 def hear_music(deck: int = 0, duration: int = 10) -> str:
     """Listen to what's currently playing. Extracts audio from the track file
     at the current playback position and analyzes it with Gemini's audio model.
@@ -448,7 +431,6 @@ def hear_music(deck: int = 0, duration: int = 10) -> str:
         return f"Gemini audio error: {e}"
 
 
-@tool
 def analyze_track(track_path: str) -> str:
     """Deep analysis of a FULL track — sends entire audio to Gemini.
     Returns structured JSON: BPM, key, energy, timeline, mix points.
@@ -626,7 +608,6 @@ def analyze_track(track_path: str) -> str:
         return f"Analysis error: {e}"
 
 
-@tool
 def preview_track(track_path: str, position: int = 30, duration: int = 10) -> str:
     """Preview any track WITHOUT loading it on a deck — like a DJ listening in headphones.
     Extracts audio from the file and analyzes it with Gemini. Use this to evaluate
@@ -712,7 +693,6 @@ def preview_track(track_path: str, position: int = 30, duration: int = 10) -> st
 # TRANSITIONS — Brain-controlled mixing
 # ═══════════════════════════════════════════════════════════════════════
 
-@tool
 def do_transition(to_deck: int, duration: int = 60) -> str:
     """Execute a smooth crossfade transition to a deck.
     Uses Mixxx's C++ engine (20fps S-curve). After transition completes,
@@ -780,7 +760,6 @@ def do_transition(to_deck: int, duration: int = 60) -> str:
     return f"Transitioned to Deck {to_deck} over {duration}s. Deck {out_deck} ejected."
 
 
-@tool
 def do_bass_swap(to_deck: int, duration: int = 60) -> str:
     """Execute a bass-swap transition (techno style).
     Phase 1: Bring incoming with bass cut. Phase 2: Swap bass. Phase 3: Fade out old.
@@ -858,7 +837,6 @@ def do_bass_swap(to_deck: int, duration: int = 60) -> str:
     return f"Bass-swapped to Deck {to_deck} over {duration}s. Deck {out_deck} ejected."
 
 
-@tool
 def do_filter_sweep(to_deck: int, duration: int = 45) -> str:
     """Filter sweep transition — gradually reveal incoming track through a low-pass filter.
     Best for: progressive, melodic, atmospheric tracks.
@@ -920,7 +898,6 @@ def do_filter_sweep(to_deck: int, duration: int = 45) -> str:
     return f"Filter-swept to Deck {to_deck} over {duration}s. Deck {out_deck} ejected."
 
 
-@tool
 def do_hard_cut(to_deck: int) -> str:
     """Hard cut — instant switch to the other deck. No blend, no crossfade.
     Best for: genre changes, drop moments, high energy transitions.
@@ -946,7 +923,6 @@ def do_hard_cut(to_deck: int) -> str:
     return f"Hard-cut to Deck {to_deck}. Deck {out_deck} ejected."
 
 
-@tool
 def do_echo_out(to_deck: int, duration: int = 30) -> str:
     """Echo out — fade outgoing track with delay/echo tail, then drop incoming.
     Best for: energy shifts, mood changes, dramatic moments.
@@ -1013,7 +989,6 @@ def do_echo_out(to_deck: int, duration: int = 30) -> str:
     return f"Echo-out to Deck {to_deck} over {duration}s. Deck {out_deck} ejected."
 
 
-@tool
 def schedule_transition(to_deck: int, at_position: int, technique: str = "crossfade", duration: int = 45) -> str:
     """Schedule a transition at a specific track position. Returns immediately —
     Python executes the transition in the background when the track reaches at_position.
@@ -1077,7 +1052,6 @@ def schedule_transition(to_deck: int, at_position: int, technique: str = "crossf
 # MUSIC DISCOVERY — Search & Download
 # ═══════════════════════════════════════════════════════════════════════
 
-@tool
 def search_music(query: str, limit: int = 10) -> list:
     """Search YouTube for individual music tracks (NOT mixes or DJ sets).
 
@@ -1138,7 +1112,6 @@ def search_music(query: str, limit: int = 10) -> list:
     return results
 
 
-@tool
 def download_track(url: str, genre: str = "deep") -> str:
     """Download a track from YouTube into the music library.
 
@@ -1192,48 +1165,6 @@ def download_track(url: str, genre: str = "deep") -> str:
 # MUSIC PRODUCTION (Lyria 3)
 # ═══════════════════════════════════════════════════════════════════════
 
-GENERATION_QUEUE_FILE = Path("/tmp/dj-treta-generation-jobs.json")
-
-
-@tool
-def generate_track_async(prompt: str, bpm: int = 128, key: str = "C minor",
-                         genre: str = "dark-techno", duration: str = "full",
-                         name: str = "") -> str:
-    """Start generating a track in the BACKGROUND. Returns IMMEDIATELY.
-    The track auto-loads on the idle deck when ready. Use this when DJing live
-    so you stay free to DJ while the track produces.
-
-    Args:
-        prompt: Describe the track — mood, style, instruments, energy.
-        bpm: Tempo in BPM (60-200).
-        key: Musical key.
-        genre: Genre folder.
-        duration: "full" for ~3 min, "clip" for 30s.
-        name: Track name. If provided, skips AI naming.
-    """
-    import time as _time
-    job_id = f"gen-{_time.strftime('%H%M%S')}-{id(prompt) % 10000}"
-    job = {
-        "id": job_id,
-        "prompt": prompt, "bpm": bpm, "key": key,
-        "genre": genre, "duration": duration, "name": name,
-        "status": "pending", "requested_at": _time.time(),
-    }
-    # Append to jobs file — daemon's generation worker picks it up
-    jobs = []
-    if GENERATION_QUEUE_FILE.exists():
-        try:
-            jobs = json.loads(GENERATION_QUEUE_FILE.read_text())
-        except Exception:
-            pass
-    jobs.append(job)
-    GENERATION_QUEUE_FILE.write_text(json.dumps(jobs, indent=2))
-
-    display = name or "a new track"
-    return f"Producing '{display}'... will auto-load on idle deck when ready. Keep DJing."
-
-
-@tool
 def generate_track(prompt: str, bpm: int = 128, key: str = "C minor",
                    genre: str = "dark-techno", duration: str = "full",
                    name: str = "") -> str:
@@ -1470,7 +1401,6 @@ def generate_track(prompt: str, bpm: int = 128, key: str = "C minor",
 # LIBRARY MANAGEMENT
 # ═══════════════════════════════════════════════════════════════════════
 
-@tool
 def list_library_tracks() -> list:
     """List all tracks in the music library with file path, filename, and genre folder."""
     tracks = []
@@ -1488,7 +1418,6 @@ def list_library_tracks() -> list:
     return tracks
 
 
-@tool
 def get_set_history() -> list:
     """Get the list of tracks played in the current set with titles and timestamps."""
     state_file = Path("/tmp/dj-treta-state.json")
@@ -1502,7 +1431,6 @@ def get_set_history() -> list:
 # SELF-AWARENESS — Read own code, config, identity
 # ═══════════════════════════════════════════════════════════════════════
 
-@tool
 def read_file(file_path: str) -> str:
     """Read a file under the DJ Treta repo or configured music library only.
 
@@ -1521,7 +1449,6 @@ def read_file(file_path: str) -> str:
     return content
 
 
-@tool
 def write_file(file_path: str, content: str) -> str:
     """Write a file under the DJ Treta repo or configured music library only.
 
@@ -1538,7 +1465,6 @@ def write_file(file_path: str, content: str) -> str:
     return f"Written {len(content)} chars to {path}"
 
 
-@tool
 def list_files(directory: str = ".") -> list:
     """List files in a directory under the repo or music library.
 
@@ -1556,7 +1482,6 @@ def list_files(directory: str = ".") -> list:
     return [str(f.relative_to(path)) for f in sorted(path.iterdir()) if not f.name.startswith('.')]
 
 
-@tool
 def run_shell(command: str) -> str:
     """Run a shell command (disabled unless capabilities.allow_shell is true in config).
 
@@ -1585,7 +1510,6 @@ def run_shell(command: str) -> str:
 # SELF-IMPROVEMENT — Save learnings, update memory
 # ═══════════════════════════════════════════════════════════════════════
 
-@tool
 def save_learning(topic: str, content: str) -> str:
     """Save something you learned — a mixing technique that worked, a track combination,
     a preference, anything worth remembering for future sets.
@@ -1599,7 +1523,6 @@ def save_learning(topic: str, content: str) -> str:
     return f"Saved learning about '{topic}'."
 
 
-@tool
 def recall_learnings(topic: str = "") -> list:
     """Recall past learnings. Optionally filter by topic.
 

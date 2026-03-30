@@ -11,6 +11,7 @@ Usage:
 """
 
 import argparse
+import asyncio
 import json
 import logging
 import os
@@ -25,6 +26,9 @@ import httpx
 
 from .config import load_config, Config
 from .agents import create_agents
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
+from google.genai import types
 
 logging.basicConfig(
     level=logging.INFO,
@@ -210,11 +214,15 @@ class DJTretaBeing:
         # Scheduled transition — Python executes, agent is free
         self._transition_pending = False
 
-        # Music production — async generation via ThreadPoolExecutor
-        from concurrent.futures import ThreadPoolExecutor
-        self._producer_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="producer")
-        self._active_future = None
-        self._generation_status = {}  # {name, status} for TUI
+        # Generation status for TUI
+        self._generation_status = {}
+
+        # ADK v5.0
+        self._session_service = InMemorySessionService()
+        self._dj_runner = None
+        self._planner_runner = None
+        self._dj_session = None
+        self._planner_session = None
 
     def start(self):
         _check_single_instance()
@@ -229,10 +237,9 @@ class DJTretaBeing:
                 "DJTRETA_LLM_API_KEY / LLM_API_KEY"
             )
 
-        # Reset billing + playlist + generation queue for fresh session
+        # Reset billing + playlist for fresh session
         Path("/tmp/dj-treta-billing.json").unlink(missing_ok=True)
         PLAYLIST_FILE.unlink(missing_ok=True)
-        Path("/tmp/dj-treta-generation-jobs.json").unlink(missing_ok=True)
 
         # Init SQLite DB + scan library
         from .db import init_db, scan_library
@@ -243,17 +250,23 @@ class DJTretaBeing:
         _ensure_mixxx(self.config)
         self._restore_session()
 
-        log.info("Creating agents (DJ + planner, shared producer)...")
-        self.agent, self.planner_agent = create_agents(self.config)
+        log.info("Creating ADK agents (v5.0)...")
+        dj_agent, planner_agent = create_agents(self.config)
+        self.agent = dj_agent
+        self.planner_agent = planner_agent
+        self._dj_runner = Runner(agent=dj_agent, app_name="dj-treta", session_service=self._session_service)
+        self._planner_runner = Runner(agent=planner_agent, app_name="dj-treta-planner", session_service=self._session_service)
+
+        async def _init_sessions():
+            self._dj_session = await self._session_service.create_session(app_name="dj-treta", user_id="dj")
+            self._planner_session = await self._session_service.create_session(app_name="dj-treta-planner", user_id="planner")
+        asyncio.run(_init_sessions())
 
         # State writer for TUI (infrastructure)
         threading.Thread(target=self._state_loop, daemon=True).start()
 
         # Planner loop — background track planning
         threading.Thread(target=self._planner_loop, daemon=True).start()
-
-        # Generation worker — processes async generation jobs
-        threading.Thread(target=self._generation_worker, daemon=True).start()
 
         # Read startup mood if provided via CLI
         mood_file = Path("/tmp/dj-treta-mood.txt")
@@ -406,7 +419,7 @@ class DJTretaBeing:
 
             def _run():
                 try:
-                    result = str(self.agent.run(instruction))
+                    result = self._invoke_agent(instruction)
                     log.info(f"DJ decision: {result[:500]}")
                     self._record_playing_tracks()
                     self._check_set_duration()
@@ -594,18 +607,18 @@ class DJTretaBeing:
             # Empty library — generate or download depending on sources
             context = self._build_context(_get_status(url))
             if self.config.sources.treta_originals:
-                result = self.agent.run(
+                result = self._invoke_agent(
                     f"{context}\n\n"
                     f"SILENCE! Empty library. Use the producer to generate a {self.mood or 'melodic-techno'} track, "
                     f"then load on deck 1, play it, set crossfader to 0.0."
                 )
             else:
-                result = self.agent.run(
+                result = self._invoke_agent(
                     f"{context}\n\n"
                     f"SILENCE! Empty library. Search YouTube, download a {self.mood or 'melodic-techno'} track, "
                     f"load on deck 1, play it, set crossfader to 0.0."
                 )
-            log.info(f"Emergency play (agent): {str(result)[:200]}")
+            log.info(f"Emergency play (agent): {result[:200]}")
             self._record_playing_tracks()
         except Exception as e:
             log.error(f"Emergency play error: {e}")
@@ -878,7 +891,7 @@ class DJTretaBeing:
         """Periodic self-evolution — reflect on recent tracks."""
         try:
             recent = [t.get("title", "?") for t in self.tracks_played[-5:]]
-            self.agent.run(
+            self._invoke_agent(
                 f"REFLECTION: Last 5 tracks were: {recent}\n"
                 f"Use save_learning() to note what worked and what didn't.\n"
                 f"Then respond with a brief summary of your learnings."
@@ -1002,7 +1015,7 @@ class DJTretaBeing:
             current_info = f"{current_track} | BPM:{bpm:.0f} Key:{key} Energy:{energy}"
 
         log.info(f"Planner running — current: {current_track or 'nothing'}, {len(candidates)} candidates in DB")
-        result = str(self.planner_agent.run(
+        result = self._invoke_planner(
             f"Currently playing: {current_info}\n"
             f"Already played (DO NOT repeat): {played_list}\n\n"
             f"Tracks already in library:\n{candidate_text or '  (none)'}\n\n"
@@ -1011,7 +1024,7 @@ class DJTretaBeing:
             f"After creating/finding new tracks, analyze each one.\n"
             f"Then pick the best next 3 tracks from what's available.\n"
             f"For each: title, full path, BPM, key, energy, why it fits."
-        ))
+        )
         log.info(f"Planner done: {str(result)[:500]}")
 
         self._write_playlist(result, current_track)
@@ -1042,70 +1055,6 @@ class DJTretaBeing:
         if not self.config.sources.youtube and not self.config.sources.treta_originals:
             parts.append("Only use tracks already in the library.\n")
         return "".join(parts)
-
-    # ── Generation worker — async track production ─────────────────────
-
-    def _generation_worker(self):
-        """Background: poll for generation jobs, execute via ThreadPoolExecutor."""
-        JOBS_FILE = Path("/tmp/dj-treta-generation-jobs.json")
-        time.sleep(10)  # let system boot
-        while self._running:
-            try:
-                # Check for completed future → auto-load
-                if self._active_future and self._active_future.done():
-                    try:
-                        result = self._active_future.result()
-                        if "Generated:" in result:
-                            filepath = result.split("Generated: ")[1].split(" |")[0]
-                            self._auto_load_track(filepath)
-                        log.info(f"Generation complete: {result[:200]}")
-                    except Exception as e:
-                        log.warning(f"Generation failed: {e}")
-                    self._active_future = None
-                    self._generation_status = {}
-
-                # Skip if already generating
-                if self._active_future and not self._active_future.done():
-                    time.sleep(5)
-                    continue
-
-                # Pick up next job
-                if not JOBS_FILE.exists():
-                    time.sleep(5)
-                    continue
-
-                try:
-                    jobs = json.loads(JOBS_FILE.read_text())
-                except Exception:
-                    time.sleep(5)
-                    continue
-
-                pending = [j for j in jobs if j.get("status") == "pending"]
-                if not pending:
-                    time.sleep(5)
-                    continue
-
-                job = pending[0]
-                job["status"] = "generating"
-                self._generation_status = {
-                    "name": job.get("name") or "Untitled",
-                    "status": "generating",
-                }
-                JOBS_FILE.write_text(json.dumps(jobs, indent=2))
-                log.info(f"Generation starting: {job.get('name', 'Untitled')}")
-
-                # Submit to executor — non-blocking
-                from .tools import generate_track
-                self._active_future = self._producer_pool.submit(
-                    generate_track,
-                    prompt=job["prompt"], bpm=job["bpm"], key=job["key"],
-                    genre=job["genre"], duration=job["duration"],
-                    name=job.get("name", ""),
-                )
-
-            except Exception as e:
-                log.warning(f"Generation worker error: {e}")
-            time.sleep(3)
 
     def _auto_load_track(self, filepath):
         """Load a freshly generated track on the idle deck."""
@@ -1225,7 +1174,7 @@ class DJTretaBeing:
 
         elif cmd == "stop":
             threading.Thread(
-                target=lambda: self.agent.run("Fade out the current track gracefully over 30 seconds.") if self.agent else None,
+                target=lambda: self._invoke_agent("Fade out the current track gracefully over 30 seconds.") if self.agent else None,
                 daemon=True
             ).start()
             return "Fading out..."
@@ -1243,11 +1192,49 @@ class DJTretaBeing:
                 self.config.sources.treta_originals = enabled
             # Recreate agents with new tool access
             log.info(f"Source changed: {source} → {'on' if enabled else 'off'} — rebuilding agents")
-            self.agent, self.planner_agent = create_agents(self.config)
+            dj_agent, planner_agent = create_agents(self.config)
+            self.agent = dj_agent
+            self.planner_agent = planner_agent
+            self._dj_runner = Runner(agent=dj_agent, app_name="dj-treta", session_service=self._session_service)
+            self._planner_runner = Runner(agent=planner_agent, app_name="dj-treta-planner", session_service=self._session_service)
+            async def _reinit():
+                self._dj_session = await self._session_service.create_session(app_name="dj-treta", user_id="dj")
+                self._planner_session = await self._session_service.create_session(app_name="dj-treta-planner", user_id="planner")
+            asyncio.run(_reinit())
             return f"Source {source} → {'on' if enabled else 'off'} (agents rebuilt)"
 
         else:
             return f"Unknown: {cmd}"
+
+    def _invoke_agent(self, instruction: str) -> str:
+        """Invoke DJ agent via ADK runner. Sync wrapper."""
+        async def _run():
+            message = types.Content(role="user", parts=[types.Part(text=instruction)])
+            result = ""
+            async for event in self._dj_runner.run_async(
+                session_id=self._dj_session.id, user_id="dj", new_message=message
+            ):
+                if event.content and event.content.parts:
+                    for part in event.content.parts:
+                        if part.text:
+                            result += part.text
+            return result
+        return asyncio.run(_run())
+
+    def _invoke_planner(self, instruction: str) -> str:
+        """Invoke planner agent via ADK runner. Sync wrapper."""
+        async def _run():
+            message = types.Content(role="user", parts=[types.Part(text=instruction)])
+            result = ""
+            async for event in self._planner_runner.run_async(
+                session_id=self._planner_session.id, user_id="planner", new_message=message
+            ):
+                if event.content and event.content.parts:
+                    for part in event.content.parts:
+                        if part.text:
+                            result += part.text
+            return result
+        return asyncio.run(_run())
 
     def _agent_talk(self, message, cmd_id):
         """One agent, one personality. Always."""
@@ -1256,11 +1243,11 @@ class DJTretaBeing:
             history = self._format_history()
 
             with self._talk_lock:
-                result = str(self.agent.run(
+                result = self._invoke_agent(
                     f"{context}\n\n{history}\n\n"
                     f'The listener says: "{message}"\n\n'
                     f"Respond naturally. Use tools only if they asked you to DO something."
-                ))
+                )
 
             # Update conversation memory
             self._chat_history.append((message, result))
@@ -1282,13 +1269,13 @@ class DJTretaBeing:
             status = _get_status(self.config.mixxx.url)
             context = self._build_context(status)
             active, idle = _active_idle_decks(status) if status else (1, 2)
-            result = self.agent.run(
+            result = self._invoke_agent(
                 f"{context}\n\n"
                 f"ACTIVE deck: {active}, IDLE deck: {idle}. "
                 f"SKIP NOW. Find a new track, load it on deck {idle}, "
                 f"and do_transition quickly (20s). Go."
             )
-            self._last_result = f"Skipped: {str(result)[:150]}"
+            self._last_result = f"Skipped: {result[:150]}"
             self._write_state()
         except Exception as e:
             self._last_result = f"Skip error: {e}"
