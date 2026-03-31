@@ -618,7 +618,7 @@ class DJTretaBeing:
                 result = _gen(
                     prompt=f"Atmospheric {self.mood or 'melodic-techno'} track with driving rhythm and evolving textures",
                     bpm=125, key="A minor", genre=self.mood or "melodic-techno",
-                    duration="clip", name="Emergency Pulse",
+                    duration="full", name="Emergency Pulse",
                 )
                 log.info(f"Emergency generate: {result[:200]}")
                 # Try to load + play the generated track
