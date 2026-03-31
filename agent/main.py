@@ -27,7 +27,7 @@ import httpx
 from .config import load_config, Config
 from .agents import create_agents
 from google.adk.apps.app import App, EventsCompactionConfig
-from google.adk.runners import Runner
+from google.adk.runners import Runner, RunConfig
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
@@ -1269,12 +1269,14 @@ class DJTretaBeing:
             future.cancel()
             raise TimeoutError(f"ADK agent call timed out after {timeout}s")
 
-    async def _invoke_agent_async(self, instruction: str) -> str:
+    async def _invoke_agent_async(self, instruction: str, max_calls: int = 10) -> str:
         """Invoke DJ agent via ADK runner. Processes events for billing + thinking log."""
         message = types.Content(role="user", parts=[types.Part(text=instruction)])
+        run_config = RunConfig(max_llm_calls=max_calls)
         result = ""
         async for event in self._dj_runner.run_async(
-            session_id=self._dj_session.id, user_id="dj", new_message=message
+            session_id=self._dj_session.id, user_id="dj",
+            new_message=message, run_config=run_config,
         ):
             self._process_event(event)
             if event.content and event.content.parts:
@@ -1283,10 +1285,10 @@ class DJTretaBeing:
                         result += part.text
         return result
 
-    def _invoke_agent(self, instruction: str, timeout: int = 60) -> str:
+    def _invoke_agent(self, instruction: str, timeout: int = 90, max_calls: int = 10) -> str:
         """Invoke DJ agent. Sync wrapper with lock to prevent concurrent session access."""
         with self._agent_lock:
-            return self._run_async(self._invoke_agent_async(instruction), timeout=timeout)
+            return self._run_async(self._invoke_agent_async(instruction, max_calls), timeout=timeout)
 
     async def _invoke_planner_async(self, instruction: str) -> str:
         """Invoke planner agent via ADK runner. Processes events for billing + thinking log."""
@@ -1370,7 +1372,8 @@ class DJTretaBeing:
                 result = self._invoke_agent(
                     f"{context}\n\n{history}\n\n"
                     f'The listener says: "{message}"\n\n'
-                    f"Respond naturally. Use tools only if they asked you to DO something."
+                    f"Respond naturally. Use tools only if they asked you to DO something.",
+                    timeout=120, max_calls=20,  # talk needs more room for tool use
                 )
 
             # Update conversation memory
