@@ -26,6 +26,7 @@ import httpx
 
 from .config import load_config, Config
 from .agents import create_agents
+from google.adk.apps.app import App, EventsCompactionConfig
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
@@ -257,8 +258,17 @@ class DJTretaBeing:
         dj_agent, planner_agent = create_agents(self.config)
         self.agent = dj_agent
         self.planner_agent = planner_agent
-        self._dj_runner = Runner(agent=dj_agent, app_name="dj-treta", session_service=self._session_service)
-        self._planner_runner = Runner(agent=planner_agent, app_name="dj-treta-planner", session_service=self._session_service)
+
+        # Context compaction — summarize older messages periodically
+        compaction = EventsCompactionConfig(
+            compaction_interval=10,  # compact every 10 invocations (~5 min)
+            overlap_size=2,          # keep last 2 exchanges verbatim
+        )
+        dj_app = App(name="dj-treta", root_agent=dj_agent, events_compaction_config=compaction)
+        planner_app = App(name="dj-treta-planner", root_agent=planner_agent, events_compaction_config=compaction)
+
+        self._dj_runner = Runner(app=dj_app, session_service=self._session_service)
+        self._planner_runner = Runner(app=planner_app, session_service=self._session_service)
 
         async def _init_sessions():
             self._dj_session = await self._session_service.create_session(app_name="dj-treta", user_id="dj")
@@ -1216,8 +1226,11 @@ class DJTretaBeing:
             dj_agent, planner_agent = create_agents(self.config)
             self.agent = dj_agent
             self.planner_agent = planner_agent
-            self._dj_runner = Runner(agent=dj_agent, app_name="dj-treta", session_service=self._session_service)
-            self._planner_runner = Runner(agent=planner_agent, app_name="dj-treta-planner", session_service=self._session_service)
+            compaction = EventsCompactionConfig(compaction_interval=10, overlap_size=2)
+            dj_app = App(name="dj-treta", root_agent=dj_agent, events_compaction_config=compaction)
+            planner_app = App(name="dj-treta-planner", root_agent=planner_agent, events_compaction_config=compaction)
+            self._dj_runner = Runner(app=dj_app, session_service=self._session_service)
+            self._planner_runner = Runner(app=planner_app, session_service=self._session_service)
             async def _reinit():
                 self._dj_session = await self._session_service.create_session(app_name="dj-treta", user_id="dj")
                 self._planner_session = await self._session_service.create_session(app_name="dj-treta-planner", user_id="planner")
