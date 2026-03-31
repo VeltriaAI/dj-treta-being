@@ -1,4 +1,4 @@
-"""DJ Treta v3.0 — DJClaw
+"""DJ Treta v5.0 — DJClaw (ADK)
 
 The Being starts, stays alive, and decides everything.
 No watchdog. No state machine. No deterministic DJ logic.
@@ -43,6 +43,8 @@ COMMAND_FILE = Path("/tmp/dj-treta-command.json")
 PID_FILE = Path("/tmp/dj-treta.pid")
 PLAYLIST_FILE = Path("/tmp/dj-treta-playlist.json")
 PERSIST_FILE = Path(__file__).parent.parent / ".beings" / "session.json"
+THINKING_FILE = Path("/tmp/dj-treta-thinking.log")
+BILLING_FILE = Path("/tmp/dj-treta-billing.json")
 
 
 # ── Infrastructure helpers ────────────────────────────────────────────
@@ -215,6 +217,9 @@ class DJTretaBeing:
         # Scheduled transition — Python executes, agent is free
         self._transition_pending = False
 
+        # Serialize all DJ agent invocations (talk, heartbeat, skip, reflect)
+        self._agent_lock = threading.Lock()
+
         # Generation status for TUI
         self._generation_status = {}
 
@@ -241,8 +246,9 @@ class DJTretaBeing:
                 "DJTRETA_LLM_API_KEY / LLM_API_KEY"
             )
 
-        # Reset billing + playlist for fresh session
-        Path("/tmp/dj-treta-billing.json").unlink(missing_ok=True)
+        # Reset billing + thinking log + playlist for fresh session
+        BILLING_FILE.unlink(missing_ok=True)
+        THINKING_FILE.write_text("")
         PLAYLIST_FILE.unlink(missing_ok=True)
 
         # Init SQLite DB + scan library
@@ -495,22 +501,6 @@ class DJTretaBeing:
             return "past end"
         except Exception:
             return "unknown"
-
-    def _execute_transition(self, to_deck, duration):
-        """Execute transition. Only called by heartbeat. Uses _agent_busy to prevent re-entry."""
-        self._agent_busy = True
-
-        def _run():
-            try:
-                from .tools import do_transition
-                result = do_transition(to_deck, duration)
-                log.info(f"Transition result: {str(result)[:100]}")
-                self._record_playing_tracks()
-            except Exception as e:
-                log.error(f"Transition error: {e}")
-            finally:
-                self._agent_busy = False
-        threading.Thread(target=_run, daemon=True).start()
 
     def _execute_scheduled_transition(self, sched: dict):
         """Python-side transition executor. Waits for track position, then executes.
@@ -779,6 +769,10 @@ class DJTretaBeing:
                             self._deck_start_time[dk] = time.time()
                         if title and not any(t.get("title") == title for t in self.tracks_played):
                             self.tracks_played.append({"title": title, "time": time.time()})
+                            # Record in DB set_history
+                            if self.current_set:
+                                from .db import add_track_to_set
+                                add_track_to_set(self.current_set["id"], title, dk, "")
         except Exception:
             pass
 
@@ -918,6 +912,8 @@ class DJTretaBeing:
 
     def _agent_reflect(self):
         """Periodic self-evolution — reflect on recent tracks."""
+        if self._agent_busy:
+            return  # skip if agent is already working
         try:
             recent = [t.get("title", "?") for t in self.tracks_played[-5:]]
             self._invoke_agent(
@@ -1116,17 +1112,6 @@ class DJTretaBeing:
                     pass
         return ""
 
-    def _get_analysis_cache(self) -> str:
-        """Read cached track analyses for planner context."""
-        cache_dir = self.config.library.music_path / ".analysis"
-        if not cache_dir.exists():
-            return "(no analyses yet)"
-        lines = []
-        for f in sorted(cache_dir.glob("*.txt"))[:20]:
-            content = f.read_text()[:200]
-            lines.append(f"  {f.stem}: {content}")
-        return "\n".join(lines) if lines else "(no analyses yet)"
-
     def _write_playlist(self, planner_output, current_track):
         """Write planner output to playlist file."""
         playlist = {
@@ -1204,11 +1189,13 @@ class DJTretaBeing:
             return "processing..."
 
         elif cmd == "stop":
-            threading.Thread(
-                target=lambda: self._invoke_agent("Fade out the current track gracefully over 30 seconds.") if self.agent else None,
-                daemon=True
-            ).start()
-            return "Fading out..."
+            if self.agent and not self._agent_busy:
+                threading.Thread(
+                    target=lambda: self._invoke_agent("Fade out the current track gracefully over 30 seconds."),
+                    daemon=True
+                ).start()
+                return "Fading out..."
+            return "Agent busy — try again in a moment"
 
         elif cmd == "change_mood":
             self.mood = args.get("mood", self.mood)
@@ -1250,12 +1237,13 @@ class DJTretaBeing:
             raise TimeoutError(f"ADK agent call timed out after {timeout}s")
 
     async def _invoke_agent_async(self, instruction: str) -> str:
-        """Invoke DJ agent via ADK runner."""
+        """Invoke DJ agent via ADK runner. Processes events for billing + thinking log."""
         message = types.Content(role="user", parts=[types.Part(text=instruction)])
         result = ""
         async for event in self._dj_runner.run_async(
             session_id=self._dj_session.id, user_id="dj", new_message=message
         ):
+            self._process_event(event)
             if event.content and event.content.parts:
                 for part in event.content.parts:
                     if part.text:
@@ -1263,16 +1251,18 @@ class DJTretaBeing:
         return result
 
     def _invoke_agent(self, instruction: str, timeout: int = 60) -> str:
-        """Invoke DJ agent. Sync wrapper using persistent event loop."""
-        return self._run_async(self._invoke_agent_async(instruction), timeout=timeout)
+        """Invoke DJ agent. Sync wrapper with lock to prevent concurrent session access."""
+        with self._agent_lock:
+            return self._run_async(self._invoke_agent_async(instruction), timeout=timeout)
 
     async def _invoke_planner_async(self, instruction: str) -> str:
-        """Invoke planner agent via ADK runner."""
+        """Invoke planner agent via ADK runner. Processes events for billing + thinking log."""
         message = types.Content(role="user", parts=[types.Part(text=instruction)])
         result = ""
         async for event in self._planner_runner.run_async(
             session_id=self._planner_session.id, user_id="planner", new_message=message
         ):
+            self._process_event(event)
             if event.content and event.content.parts:
                 for part in event.content.parts:
                     if part.text:
@@ -1282,6 +1272,60 @@ class DJTretaBeing:
     def _invoke_planner(self, instruction: str) -> str:
         """Invoke planner. Sync wrapper — longer timeout for generation."""
         return self._run_async(self._invoke_planner_async(instruction), timeout=600)
+
+    def _process_event(self, event):
+        """Extract billing + thinking from ADK events → files for TUI."""
+        try:
+            agent_name = event.author or "agent"
+
+            # Thinking — text content from agent
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    if part.text and len(part.text.strip()) > 5:
+                        text = part.text.strip()
+                        if not text.startswith('{') and not text.startswith('['):
+                            with open(THINKING_FILE, "a") as f:
+                                f.write(f"[THINK:{agent_name}] {text[:500]}\n")
+
+            # Tool calls
+            func_calls = event.get_function_calls()
+            if func_calls:
+                for fc in func_calls:
+                    args_str = str(fc.args)[:200] if fc.args else ""
+                    with open(THINKING_FILE, "a") as f:
+                        f.write(f"[CALL:{agent_name}] {fc.name}({args_str})\n")
+
+            # Billing — usage_metadata
+            if event.usage_metadata:
+                um = event.usage_metadata
+                inp = um.prompt_token_count or 0
+                out = um.candidates_token_count or 0
+                if inp > 0 or out > 0:
+                    self._update_billing(agent_name, inp, out)
+        except Exception:
+            pass
+
+    def _update_billing(self, agent_name: str, inp: int, out: int):
+        """Update billing JSON file with token counts."""
+        try:
+            billing = json.loads(BILLING_FILE.read_text()) if BILLING_FILE.exists() else {
+                "total_input_tokens": 0, "total_output_tokens": 0, "total_cost_usd": 0.0,
+                "calls": 0, "by_agent": {}, "session_start": time.time()
+            }
+            billing["total_input_tokens"] += inp
+            billing["total_output_tokens"] += out
+            billing["calls"] += 1
+            cost = (inp / 1_000_000 * 0.10) + (out / 1_000_000 * 0.40)
+            billing["total_cost_usd"] += cost
+            if agent_name not in billing["by_agent"]:
+                billing["by_agent"][agent_name] = {"input": 0, "output": 0, "cost": 0.0, "calls": 0}
+            billing["by_agent"][agent_name]["input"] += inp
+            billing["by_agent"][agent_name]["output"] += out
+            billing["by_agent"][agent_name]["cost"] += cost
+            billing["by_agent"][agent_name]["calls"] += 1
+            BILLING_FILE.write_text(json.dumps(billing, indent=2))
+        except Exception:
+            pass
 
     def _agent_talk(self, message, cmd_id):
         """One agent, one personality. Always."""
@@ -1337,7 +1381,7 @@ class DJTretaBeing:
         lines = ["Recent conversation:"]
         for user_msg, response in self._chat_history[-5:]:
             lines.append(f"Listener: {user_msg}")
-            lines.append(f"DJ Treta: {response[:200]}")
+            lines.append(f"DJ Treta: {response[:500]}")
         return "\n".join(lines)
 
     # ── Context from reality ──────────────────────────────────────────

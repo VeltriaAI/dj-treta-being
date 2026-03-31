@@ -5,16 +5,16 @@
 DJClaw — install your own AI DJ Being. DJ Treta is the first Being built on it.
 Pure Software 3.0 — the agent decides everything, no deterministic DJ logic.
 
-## Architecture (v4.2)
+## Architecture (v5.0 — ADK)
 
 ```
 main.py — Being daemon (single process, 4 threads)
   ├── Heartbeat (5-15s adaptive): silence recovery → transition executor → agent decision → backup load
-  ├── Planner thread: plans 6 tracks, downloads from YouTube, loads idle deck, reflects every 5 tracks
+  ├── Planner thread: plans 6 tracks, downloads/generates, loads idle deck, reflects every 5 tracks
   ├── Relay thread: WebSocket push to dj.treta.life at 3Hz, energy arc sampling every 10s
   └── State writer thread: /tmp/dj-treta-state.json every 2s
 
-agents.py — Agent factory (smolagents ToolCallingAgent)
+agents.py — Agent factory (Google ADK LlmAgent)
   DJ Agent (manager, 20 steps)
     ├── Mixer Agent (19 tools: deck control, 5 transition techniques)
     ├── Library Agent (4 tools: search YouTube, download, list, history)
@@ -49,7 +49,8 @@ cli.py — CLI (djclaw / djtreta)
 |------|-------|------|
 | `agent/main.py` | 1,359 | Being daemon: heartbeat, planner, relay, sets, recording, broadcast |
 | `agent/tools.py` | 1,427 | 46 tools: DJ control, transitions, perception, generation, discovery |
-| `agent/agents.py` | 403 | Agent factory: DJ + Mixer + Library + Producer + Planner |
+| `agent/agents.py` | 298 | Agent factory (ADK): DJ + Mixer + Library + Producer + Planner |
+| `agent/audio_analysis.py` | 224 | Librosa-based real audio analysis: BPM, key, sections, energy |
 | `agent/relay.py` | 630 | PerceptionEngine + WebSocket relay to dj.treta.life |
 | `agent/db.py` | 322 | SQLite: tracks, sets, set_history, learnings |
 | `agent/config.py` | 184 | Config dataclasses + YAML loader + .env support |

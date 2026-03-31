@@ -1,4 +1,4 @@
-# AGENTS.md — DJClaw (v4.2)
+# AGENTS.md — DJClaw (v5.0 — ADK)
 
 ## Before you help with this repo
 
@@ -42,10 +42,12 @@ DJTretaBeing (main.py) — single process, 4 threads:
     └── Execute: crossfade / bass_swap / filter_sweep / echo_out / hard_cut
 ```
 
-### Agent Architecture (smolagents)
+### Agent Architecture (Google ADK)
+
+ADK uses `LlmAgent` with `sub_agents` for delegation. Context compaction every 10 invocations.
 
 ```
-DJ Agent (dj_treta) — Manager, 20 steps, planning_interval=5
+DJ Agent (dj_treta) — Root agent
 ├── Tools: schedule_transition, hear_music, analyze_track, preview_track,
 │          get_dj_status, get_live_data, save_learning, recall_learnings,
 │          read_file, write_file

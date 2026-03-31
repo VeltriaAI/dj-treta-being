@@ -94,7 +94,7 @@ Each Being gets its own `SOUL.md`, taste profile, and self-evolving memory. `djc
 │  "What's playing? What should happen next?"                 │
 │         │                                                   │
 │         ▼                                                   │
-│  DJ Agent (smolagents + Gemini Flash)                       │
+│  DJ Agent (Google ADK + Gemini Flash)                       │
 │    ├── Mixer Agent (19 tools)                               │
 │    │   load, play, EQ, crossfade, 5 transition techniques   │
 │    ├── Library Agent (4 tools)                              │
@@ -295,7 +295,7 @@ Environment variables override config:
 
 ## Built With
 
-- [smolagents](https://github.com/huggingface/smolagents) (HuggingFace) — Agent framework
+- [Google ADK](https://google.github.io/adk-docs/) (Google) — Agent Development Kit
 - [Gemini Flash](https://ai.google.dev/) (Google) — The brain ($0.001/hr)
 - [Mixxx](https://mixxx.org/) (forked) — C++ audio engine
 - [Lyria 3](https://deepmind.google/technologies/lyria/) (Google) — AI music generation

@@ -476,6 +476,36 @@ def analyze_track(track_path: str) -> str:
             "similar": existing.get("similar"),
         }, indent=2)
 
+    # Try librosa first — accurate signal processing, no LLM cost
+    try:
+        from .audio_analysis import analyze_audio
+        import time as _time
+        analysis = analyze_audio(str(path))
+        from .camelot import KEY_TO_CAMELOT
+        key_camelot = KEY_TO_CAMELOT.get(analysis["key"], "")
+        timeline_json = json.dumps(analysis["timeline"])
+        upsert_track(
+            path=str(path), title=title,
+            bpm=analysis["bpm"], key_musical=analysis["key"],
+            key_camelot=key_camelot, energy_peak=analysis["energy_peak"],
+            duration_seconds=analysis["duration_seconds"],
+            mix_in_seconds=analysis["mix_in_seconds"],
+            mix_out_seconds=analysis["mix_out_seconds"],
+            timeline=timeline_json,
+            analyzed_at=_time.time(),
+        )
+        return json.dumps({
+            "title": title, "bpm": analysis["bpm"], "key": analysis["key"],
+            "energy_peak": analysis["energy_peak"],
+            "duration_seconds": analysis["duration_seconds"],
+            "mix_in_seconds": analysis["mix_in_seconds"],
+            "mix_out_seconds": analysis["mix_out_seconds"],
+            "timeline": analysis["timeline"],
+        }, indent=2)
+    except Exception:
+        pass  # Fall through to Gemini
+
+    # Fallback: Gemini multimodal audio (slower, costs tokens)
     # Convert full track to low-quality WAV (mono 8kHz — small for API)
     wav_path = "/tmp/dj-treta-full-analysis.wav"
     try:
