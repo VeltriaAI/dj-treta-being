@@ -1388,19 +1388,34 @@ class DJTretaBeing:
             self._write_state()
 
     def _agent_skip(self):
-        """Agent decides skip — she picks track and technique."""
+        """Skip — direct fast crossfade, no agent needed."""
         try:
+            from .tools import do_transition
             status = _get_status(self.config.mixxx.url)
-            context = self._build_context(status)
-            active, idle = _active_idle_decks(status) if status else (1, 2)
-            result = self._invoke_agent(
-                f"{context}\n\n"
-                f"ACTIVE deck: {active}, IDLE deck: {idle}. "
-                f"SKIP NOW. Find a new track, load it on deck {idle}, "
-                f"and do_transition quickly (20s). Go."
-            )
-            self._last_result = f"Skipped: {result[:150]}"
+            if not status:
+                self._last_result = "Skip failed: Mixxx offline"
+                self._write_state()
+                return
+            active, idle = _active_idle_decks(status)
+            d_idle = status.get(f"deck{idle}", {})
+
+            # Load idle deck if empty
+            if not d_idle.get("track_loaded"):
+                self._load_next_on_idle(status)
+                time.sleep(2)
+                status = _get_status(self.config.mixxx.url)
+                d_idle = status.get(f"deck{idle}", {}) if status else {}
+                if not d_idle.get("track_loaded"):
+                    self._last_result = "Skip failed: no track to skip to"
+                    self._write_state()
+                    return
+
+            # Direct fast crossfade — 15s, no agent decision needed
+            result = do_transition(idle, 15)
+            self._last_result = f"Skipped to deck {idle}: {str(result)[:100]}"
+            self._record_playing_tracks()
             self._write_state()
+            log.info(f"Skip: {self._last_result}")
         except Exception as e:
             self._last_result = f"Skip error: {e}"
             self._write_state()
