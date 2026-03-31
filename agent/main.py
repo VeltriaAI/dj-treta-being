@@ -310,9 +310,7 @@ class DJTretaBeing:
         while self._running:
             try:
                 self._check_commands()
-
-                if not self._agent_busy:
-                    self._heartbeat()
+                self._heartbeat()
 
             except Exception as e:
                 log.warning(f"Loop error: {e}")
@@ -357,11 +355,12 @@ class DJTretaBeing:
         nothing_playing = (not status.get("deck1", {}).get("playing")
                            and not status.get("deck2", {}).get("playing"))
 
-        # === PRIORITY 1: SILENCE — emergency recovery ===
+        # === PRIORITY 1: SILENCE — emergency recovery (ALWAYS runs, even if agent busy) ===
         if nothing_playing:
             self._next_sleep = 5
-            if not self._agent_busy:
-                self._agent_busy = True
+            # Emergency runs regardless of _agent_busy — music must never stop
+            if not getattr(self, '_emergency_running', False):
+                self._emergency_running = True
                 threading.Thread(target=self._emergency_play, daemon=True).start()
             return
 
@@ -675,6 +674,7 @@ class DJTretaBeing:
             log.error(f"Emergency play error: {type(e).__name__}: {e}")
             log.error(traceback.format_exc()[:500])
         finally:
+            self._emergency_running = False
             self._agent_busy = False
 
     def _load_next_on_idle(self, status):
