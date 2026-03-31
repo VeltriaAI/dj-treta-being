@@ -368,7 +368,32 @@ class DJTretaBeing:
         idle_ready = idle_loaded and idle_remaining > 60
         duration = float(d_active.get("duration", 0) or 0)
 
-        # === PRIORITY 2: Execute scheduled transition (Python handles timing) ===
+        # === PRIORITY 2: Auto-transition when track about to end ===
+        # If track ending soon, idle deck ready, no transition pending → just do it
+        if (idle_ready and remaining < 30 and remaining > 0 and playing
+                and not self._transition_pending and not self._agent_busy):
+            log.info(f"Auto-transition: {remaining:.0f}s left, crossfading to deck {idle_deck}")
+            from .tools import do_transition
+            self._transition_pending = True
+            def _auto():
+                try:
+                    result = do_transition(idle_deck, 15)
+                    log.info(f"Auto-transition result: {str(result)[:200]}")
+                    if self.current_set and isinstance(self.current_set.get("energy_arc"), list):
+                        self.current_set["energy_arc"].append({
+                            "t": round(time.time() - self.current_set["started_at"]),
+                            "event": "transition", "technique": "auto_crossfade", "to_deck": idle_deck,
+                        })
+                    self._record_playing_tracks()
+                except Exception as e:
+                    log.error(f"Auto-transition error: {e}")
+                finally:
+                    self._transition_pending = False
+            threading.Thread(target=_auto, daemon=True).start()
+            self._next_sleep = 5
+            return
+
+        # === PRIORITY 3: Execute scheduled transition (Python handles timing) ===
         if not self._transition_pending:
             sched_file = Path("/tmp/dj-treta-scheduled-transition.json")
             if sched_file.exists():
@@ -383,7 +408,7 @@ class DJTretaBeing:
                     log.warning(f"Bad scheduled transition file: {e}")
                     sched_file.unlink(missing_ok=True)
 
-        # === PRIORITY 3: Agent decides transition (Software 3.0) ===
+        # === PRIORITY 4: Agent decides transition (Software 3.0) ===
         # Only ask after 50% played (saves tokens) and when idle deck ready
         # Don't ask if transition is already pending
         if (idle_ready and duration > 0 and position > (duration * 0.5)
@@ -421,6 +446,11 @@ class DJTretaBeing:
             active_key = active_meta.get("key_musical", "?") if active_meta else "?"
             idle_key = idle_meta.get("key_musical", "?") if idle_meta else "?"
 
+            # Tell agent if transition is already pending
+            pending_info = ""
+            if self._transition_pending:
+                pending_info = "\nTRANSITION ALREADY PENDING — do NOT schedule another. Just say 'transition pending'.\n"
+
             instruction = (
                 f"ACTIVE: '{active_track[:40]}' at {position:.0f}s/{duration:.0f}s "
                 f"({remaining:.0f}s left, BPM:{active_bpm:.0f}, Key:{active_key})\n"
@@ -428,7 +458,8 @@ class DJTretaBeing:
                 f"  TIMELINE: {active_timeline}\n\n"
                 f"NEXT: '{idle_track[:40]}' on deck {idle_deck} "
                 f"(BPM:{idle_bpm:.0f}, Key:{idle_key})\n"
-                f"  TIMELINE: {idle_timeline}\n\n"
+                f"  TIMELINE: {idle_timeline}\n"
+                f"{pending_info}\n"
                 f"You are the DJ. Look at the timelines.\n"
                 f"If you want to transition, call schedule_transition with the right track position.\n"
                 f"If not ready yet, just explain why you're waiting."
@@ -453,7 +484,7 @@ class DJTretaBeing:
             self._next_sleep = 15
             return
 
-        # === PRIORITY 4: Backup load — planner didn't load idle deck ===
+        # === PRIORITY 5: Backup load — planner didn't load idle deck ===
         # Trigger earlier for short tracks (generated tracks ~150s)
         load_threshold = min(120, duration * 0.4) if duration > 0 else 60
         if not idle_loaded and position > load_threshold and playing:
