@@ -270,15 +270,15 @@ class DJTretaBeing:
             compaction_interval=10,  # compact every 10 invocations (~5 min)
             overlap_size=2,          # keep last 2 exchanges verbatim
         )
-        dj_app = App(name="dj-treta", root_agent=dj_agent, events_compaction_config=compaction)
-        planner_app = App(name="dj-treta-planner", root_agent=planner_agent, events_compaction_config=compaction)
+        dj_app = App(name="dj_treta", root_agent=dj_agent, events_compaction_config=compaction)
+        planner_app = App(name="dj_treta_planner", root_agent=planner_agent, events_compaction_config=compaction)
 
         self._dj_runner = Runner(app=dj_app, session_service=self._session_service)
         self._planner_runner = Runner(app=planner_app, session_service=self._session_service)
 
         async def _init_sessions():
-            self._dj_session = await self._session_service.create_session(app_name="dj-treta", user_id="dj")
-            self._planner_session = await self._session_service.create_session(app_name="dj-treta-planner", user_id="planner")
+            self._dj_session = await self._session_service.create_session(app_name="dj_treta", user_id="dj")
+            self._planner_session = await self._session_service.create_session(app_name="dj_treta_planner", user_id="planner")
         self._run_async(_init_sessions())
 
         # State writer for TUI (infrastructure)
@@ -454,7 +454,9 @@ class DJTretaBeing:
             return
 
         # === PRIORITY 4: Backup load — planner didn't load idle deck ===
-        if not idle_loaded and position > 120 and playing:
+        # Trigger earlier for short tracks (generated tracks ~150s)
+        load_threshold = min(120, duration * 0.4) if duration > 0 else 60
+        if not idle_loaded and position > load_threshold and playing:
             self._next_sleep = 10
             log.warning("Backup: loading idle deck (planner missed it)")
             self._load_next_on_idle(status)
@@ -976,7 +978,7 @@ class DJTretaBeing:
                 import traceback
                 log.warning(f"Planner loop error: {type(e).__name__}: {e}")
                 log.warning(traceback.format_exc()[:500])
-            time.sleep(30)
+            time.sleep(15)  # 15s — fast enough for short generated tracks (~150s)
 
     def _run_planner(self, status, current_track):
         """Run planner agent with DB-powered track selection."""
@@ -1214,13 +1216,13 @@ class DJTretaBeing:
             self.agent = dj_agent
             self.planner_agent = planner_agent
             compaction = EventsCompactionConfig(compaction_interval=10, overlap_size=2)
-            dj_app = App(name="dj-treta", root_agent=dj_agent, events_compaction_config=compaction)
-            planner_app = App(name="dj-treta-planner", root_agent=planner_agent, events_compaction_config=compaction)
+            dj_app = App(name="dj_treta", root_agent=dj_agent, events_compaction_config=compaction)
+            planner_app = App(name="dj_treta_planner", root_agent=planner_agent, events_compaction_config=compaction)
             self._dj_runner = Runner(app=dj_app, session_service=self._session_service)
             self._planner_runner = Runner(app=planner_app, session_service=self._session_service)
             async def _reinit():
-                self._dj_session = await self._session_service.create_session(app_name="dj-treta", user_id="dj")
-                self._planner_session = await self._session_service.create_session(app_name="dj-treta-planner", user_id="planner")
+                self._dj_session = await self._session_service.create_session(app_name="dj_treta", user_id="dj")
+                self._planner_session = await self._session_service.create_session(app_name="dj_treta_planner", user_id="planner")
             self._run_async(_reinit())
             return f"Source {source} → {'on' if enabled else 'off'} (agents rebuilt)"
 
