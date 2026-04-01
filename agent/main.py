@@ -220,6 +220,9 @@ class DJTretaBeing:
         # Serialize all DJ agent invocations (talk, heartbeat, skip, reflect)
         self._agent_lock = threading.Lock()
 
+        # DJ → Planner communication: user intent from conversation
+        self.user_intent = ""  # e.g. "play some bhojpuri mix"
+
         # Generation status for TUI
         self._generation_status = {}
 
@@ -725,6 +728,15 @@ class DJTretaBeing:
         # Filter out tracks on EITHER deck
         candidates = [c for c in candidates if c.get("path") not in exclude_paths]
 
+        # Prefer tracks matching current mood/genre
+        if self.mood and candidates:
+            mood_match = [c for c in candidates
+                          if self.mood.lower() in (c.get("genre", "") or "").lower()
+                          or self.mood.lower() in (c.get("mood", "") or "").lower()
+                          or self.mood.lower() in (c.get("path", "") or "").lower()]
+            if mood_match:
+                candidates = mood_match
+
         # When youtube source is off, prefer Treta originals
         if not self.config.sources.youtube and self.config.sources.treta_originals:
             originals = [c for c in candidates
@@ -1074,12 +1086,19 @@ class DJTretaBeing:
             energy = current_meta.get('energy_peak') or '?'
             current_info = f"{current_track} | BPM:{bpm:.0f} Key:{key} Energy:{energy}"
 
+        # Include user intent if any — this is how conversation flows to planner
+        intent_line = ""
+        if self.user_intent:
+            intent_line = f"\nLISTENER REQUEST: \"{self.user_intent}\"\nThis is what the listener wants RIGHT NOW. Prioritize this above BPM/key matching.\n\n"
+            self.user_intent = ""  # clear after planner reads it
+
         log.info(f"Planner running — current: {current_track or 'nothing'}, {len(candidates)} candidates in DB")
         result = self._invoke_planner(
             f"Currently playing: {current_info}\n"
             f"Already played (DO NOT repeat): {played_list}\n\n"
             f"Tracks already in library:\n{candidate_text or '  (none)'}\n\n"
             f"Current mood/genre: {self.mood or 'melodic-techno'}.\n"
+            + intent_line
             + self._build_source_instructions() +
             f"After creating/finding new tracks, analyze each one.\n"
             f"Then pick the best next 3 tracks from what's available.\n"
@@ -1203,8 +1222,8 @@ class DJTretaBeing:
             if not self.agent:
                 return "Brain not ready"
 
-            # Extract mood from play requests
-            if any(w in message.lower() for w in ["play", "start", "baja", "shuru", "bajao"]):
+            # Extract mood + capture user intent for planner
+            if any(w in message.lower() for w in ["play", "start", "baja", "shuru", "bajao", "switch", "change"]):
                 for m in ["melodic", "techno", "deep", "dark", "progressive", "ambient",
                           "chill", "vocal", "house", "psychill", "minimal", "bhojpuri",
                           "trance", "lofi", "bollywood", "psytrance"]:
@@ -1213,6 +1232,8 @@ class DJTretaBeing:
                         break
                 if not self.mood:
                     self.mood = "deep"
+                # Capture full user intent — planner will see this
+                self.user_intent = message
 
             threading.Thread(target=self._agent_talk, args=(message, cmd_id), daemon=True).start()
             return "processing..."
