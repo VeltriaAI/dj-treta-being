@@ -1252,8 +1252,17 @@ class DJTretaBeing:
             return "Agent busy — try again in a moment"
 
         elif cmd == "change_mood":
-            self.mood = args.get("mood", self.mood)
-            return f"Mood changed to {self.mood}"
+            new_mood = args.get("mood", self.mood)
+            self.mood = new_mood
+            # Update current set's mood + genre
+            if self.current_set:
+                self.current_set["mood"] = new_mood
+                self.current_set["genre"] = new_mood
+            # Capture as user intent so planner picks it up immediately
+            self.user_intent = f"Switch to {new_mood} — listener changed mood"
+            # Force planner to replan
+            self._tracks_since_plan = self.config.planner.replan_every_n_tracks
+            return f"Mood changed to {new_mood}"
 
         elif cmd == "change_sources":
             source = args.get("source", "")
