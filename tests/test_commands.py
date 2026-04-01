@@ -43,7 +43,7 @@ class TestSkipCommand:
     def test_skip_does_direct_transition(self, being):
         """skip command should launch _agent_skip in a thread, not _invoke_agent directly."""
         with patch.object(being, "_agent_skip") as mock_skip:
-            with patch("agent.main.threading.Thread") as mock_thread:
+            with patch("agent.commands.threading.Thread") as mock_thread:
                 mock_thread_instance = MagicMock()
                 mock_thread.return_value = mock_thread_instance
 
@@ -62,7 +62,7 @@ class TestTalkCommand:
         """When user says 'play some bhojpuri', talk handler should capture
         the message as user_intent and extract mood."""
         with patch.object(being, "_agent_talk"):
-            with patch("agent.main.threading.Thread") as mock_thread:
+            with patch("agent.commands.threading.Thread") as mock_thread:
                 mock_thread.return_value = MagicMock()
 
                 being._handle_command("talk", {"message": "play some deep house"}, "cmd-5")
@@ -72,7 +72,7 @@ class TestTalkCommand:
 
     def test_talk_returns_processing(self, being):
         """talk command should return 'processing...' immediately (async)."""
-        with patch("agent.main.threading.Thread") as mock_thread:
+        with patch("agent.commands.threading.Thread") as mock_thread:
             mock_thread.return_value = MagicMock()
 
             result = being._handle_command("talk", {"message": "what are you playing?"}, "cmd-6")
@@ -88,10 +88,10 @@ class TestSourcesChange:
 
     def test_sources_change_rebuilds_agents(self, being):
         """Changing a source (youtube/originals) should recreate ADK agents."""
-        with patch("agent.main.create_agents", return_value=(MagicMock(), MagicMock())) as mock_create:
-            with patch("agent.main.App"), \
-                 patch("agent.main.Runner"), \
-                 patch("agent.main.EventsCompactionConfig"), \
+        with patch("agent.commands.create_agents", return_value=(MagicMock(), MagicMock())) as mock_create:
+            with patch("agent.commands.App"), \
+                 patch("agent.commands.Runner"), \
+                 patch("agent.commands.EventsCompactionConfig"), \
                  patch.object(being, "_run_async"):
                 being._handle_command("change_sources", {"source": "youtube", "enabled": False}, "cmd-8")
 

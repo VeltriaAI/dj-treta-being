@@ -72,7 +72,7 @@ class TestAutoTransition:
         being._agent_busy = False
         being._transition_pending = False
 
-        with patch("agent.main.threading.Thread") as mock_thread:
+        with patch("agent.heartbeat.threading.Thread") as mock_thread:
             mock_thread.return_value = MagicMock()
             being._heartbeat()
 
@@ -136,7 +136,7 @@ class TestScheduledTransition:
         mock_mixxx["status"]["deck2"]["remaining_seconds"] = 200.0
 
         with patch.object(being, "_execute_scheduled_transition") as mock_exec:
-            with patch("agent.main.threading.Thread") as mock_thread:
+            with patch("agent.heartbeat.threading.Thread") as mock_thread:
                 mock_thread_instance = MagicMock()
                 mock_thread.return_value = mock_thread_instance
 

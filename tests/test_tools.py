@@ -126,7 +126,7 @@ class TestScheduleTransition:
         from agent.config import Config
         test_cfg = Config()
 
-        with patch("agent.tools.load_config", return_value=test_cfg):
+        with patch("agent.tools.helpers.load_config", return_value=test_cfg):
             from agent.tools import schedule_transition
             result = schedule_transition(
                 to_deck=2, at_position=180, technique="bass_swap", duration=45,

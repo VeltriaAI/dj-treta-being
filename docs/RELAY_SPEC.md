@@ -412,3 +412,8 @@ DJTRETA_RELAY_TOKEN=dj-treta-prod-2026-secret
 - `harmonicMap` — Camelot wheel data (currentKey, nextKey, movement)
 - `brain.decisionLog[]` — timestamped entries for Neural Decision Log
 - `finishedSet` — one-shot field when set ends (for archive storage)
+
+**CRITICAL REQUEST (2026-03-28/29):**
+- **Waveform on connect**: When relay connects/reconnects to server, send waveform for BOTH decks on the FIRST push (not null). Fix: on relay startup/reconnect, always include waveform in the first few pushes.
+- **Waveform re-fetch for unanalyzed tracks**: When a track is freshly downloaded from YouTube and loaded, Mixxx hasn't analyzed the waveform yet — the summary is mostly zeros (1-2% nonzero). The relay should **re-fetch waveform_summary every 15-30 seconds** for each deck until >80% of points are nonzero, then send the full waveform. This ensures freshly downloaded tracks get their visualization.
+- Server now persists waveform to disk cache + shows partial data, but needs complete data from relay.

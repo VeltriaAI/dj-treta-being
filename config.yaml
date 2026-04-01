@@ -63,8 +63,8 @@ producer:
   genre_dir: "ai-generated"
 
 sources:
-  youtube: false
-  treta_originals: true
+  youtube: true
+  treta_originals: false
 
 set:
   default_mood: "techno-deep"
