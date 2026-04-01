@@ -288,6 +288,8 @@ def cmd_transition(deck: int = 2, technique: str = "blend", duration: int = 60):
 def cmd_start_brain(mood: str = "melodic-techno", duration: int = 60):
     """Start the brain daemon."""
     import subprocess
+    # Clear old log before starting — prevents TUI from showing stale "shutting down"
+    Path("/tmp/dj-treta-daemon.log").write_text("")
     venv_python = Path(__file__).parent / ".venv" / "bin" / "python3"
     subprocess.Popen(
         [str(venv_python), "-m", "agent", "--mood", mood, "--duration", str(duration)],

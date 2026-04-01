@@ -744,23 +744,14 @@ class DJTretaApp(App):
                 self._log_mtime = 0.0
             return
         try:
-            stat = DAEMON_LOG.stat()
-            mtime = stat.st_mtime
-
-            # Detect new daemon session: file was rewritten (smaller or newer)
-            if self._log_mtime > 0 and (mtime != self._log_mtime or stat.st_size < self._log_pos * 10):
-                content_check = DAEMON_LOG.read_text()
-                if len(content_check.split("\n")) < self._log_pos:
-                    self._log_pos = 0
-                    self.log_widget.write("[yellow]— New daemon session —[/yellow]")
-            self._log_mtime = mtime
-
             content = DAEMON_LOG.read_text()
             lines = content.split("\n")
+
+            # Detect new daemon session: file shorter than our position
             if self._log_pos > len(lines):
-                # File was truncated — reset position
                 self._log_pos = 0
                 self.log_widget.write("[yellow]— New daemon session —[/yellow]")
+
             new_lines = lines[self._log_pos:]
             self._log_pos = len(lines)
 
