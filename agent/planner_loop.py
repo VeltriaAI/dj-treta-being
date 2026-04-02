@@ -238,6 +238,24 @@ class PlannerMixin:
             if mood_match:
                 candidates = mood_match
 
+        # Genre override: if mood is set but NO compatible tracks match the genre,
+        # search DB by genre directly (ignore BPM matching for genre switches)
+        if self.mood and not candidates:
+            from .db import get_db
+            db = get_db()
+            try:
+                genre_tracks = [dict(r) for r in db.execute(
+                    "SELECT * FROM tracks WHERE (genre LIKE ? OR path LIKE ?) AND analyzed_at IS NOT NULL ORDER BY RANDOM() LIMIT 10",
+                    (f"%{self.mood}%", f"%{self.mood}%")
+                ).fetchall()]
+                candidates = [t for t in genre_tracks
+                              if t.get("path") not in exclude_paths
+                              and t.get("title") not in played_titles]
+                if candidates:
+                    log.info(f"Genre override: found {len(candidates)} {self.mood} tracks (bypassed BPM filter)")
+            finally:
+                db.close()
+
         # When youtube source is off, prefer Treta originals
         if not self.config.sources.youtube and self.config.sources.treta_originals:
             originals = [c for c in candidates
@@ -247,8 +265,8 @@ class PlannerMixin:
 
         if not candidates:
             # Fallback: get ANY track from DB (analyzed or not) — Mixxx can play anything
-            from .db import get_db
-            db = get_db()
+            from .db import get_db as _get_db
+            db = _get_db()
             try:
                 all_tracks = [dict(r) for r in db.execute(
                     "SELECT path, title FROM tracks ORDER BY RANDOM() LIMIT 20"
