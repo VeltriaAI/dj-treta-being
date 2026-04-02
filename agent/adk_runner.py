@@ -23,10 +23,17 @@ class ADKRunnerMixin:
             future.cancel()
             raise TimeoutError(f"ADK agent call timed out after {timeout}s")
 
-    async def _invoke_agent_async(self, instruction: str, max_calls: int = 10) -> str:
+    async def _invoke_agent_async(self, instruction: str, max_calls: int = 10, fresh_session: bool = False) -> str:
         """Invoke DJ agent via ADK runner. Processes events for billing + thinking log."""
         from google.genai import types
         from google.adk.runners import RunConfig
+
+        # Fresh session resets ADK routing back to root agent (dj_treta)
+        # Without this, sticky routing sends heartbeats to mixer sub-agent
+        if fresh_session:
+            self._dj_session = await self._session_service.create_session(
+                app_name="dj_treta", user_id="dj"
+            )
 
         message = types.Content(role="user", parts=[types.Part(text=instruction)])
         run_config = RunConfig(max_llm_calls=max_calls)
@@ -42,11 +49,11 @@ class ADKRunnerMixin:
                         result += part.text
         return result
 
-    def _invoke_agent(self, instruction: str, timeout: int = 90, max_calls: int = 10) -> str:
+    def _invoke_agent(self, instruction: str, timeout: int = 90, max_calls: int = 10, fresh_session: bool = False) -> str:
         """Invoke DJ agent. Sync wrapper with lock. Auto-recovers on tool errors."""
         with self._agent_lock:
             try:
-                return self._run_async(self._invoke_agent_async(instruction, max_calls), timeout=timeout)
+                return self._run_async(self._invoke_agent_async(instruction, max_calls, fresh_session), timeout=timeout)
             except (ValueError, RuntimeError) as e:
                 if "not found" in str(e).lower() or "tool" in str(e).lower():
                     log.warning(f"ADK tool error — recreating DJ session: {e}")

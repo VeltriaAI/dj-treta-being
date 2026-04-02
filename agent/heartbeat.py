@@ -146,16 +146,17 @@ class HeartbeatMixin:
                 f"(BPM:{idle_bpm:.0f}, Key:{idle_key})\n"
                 f"  TIMELINE: {idle_timeline}\n"
                 f"{pending_info}\n"
-                f"You are the DJ. Look at the timelines.\n"
-                f"If you want to transition, call schedule_transition with the right track position.\n"
-                f"If not ready yet, just explain why you're waiting."
+                f"ACTION REQUIRED: Look at the timelines and do ONE of these:\n"
+                f"1. CALL schedule_transition(to_deck={idle_deck}, at_position=<seconds>, technique='crossfade', duration=45) — if you see a breakdown or outro coming up\n"
+                f"2. Say 'waiting' in ONE sentence — if the track is in a drop or buildup\n\n"
+                f"Do NOT describe what you would do. CALL the tool or say waiting. Nothing else."
             )
 
             self._agent_busy = True
 
             def _run():
                 try:
-                    result = self._invoke_agent(instruction)
+                    result = self._invoke_agent(instruction, fresh_session=True)
                     log.info(f"DJ decision: {result[:500]}")
                     self._record_playing_tracks()
                     self._check_set_duration()

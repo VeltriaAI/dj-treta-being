@@ -157,7 +157,13 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent]:
     mixer = LlmAgent(
         name="mixer",
         model=model,
-        instruction="You control the Mixxx DJ decks. Execute the requested mixing operation.",
+        instruction=(
+            "You control the Mixxx DJ decks. Execute the requested mixing operation.\n\n"
+            "TRANSITIONS: Use schedule_transition to schedule transitions at specific track positions. "
+            "It handles sync, crossfade, cleanup — everything. "
+            "Do NOT just describe what you would do — CALL the tool.\n"
+            "Example: schedule_transition(to_deck=2, at_position=270, technique='crossfade', duration=45)"
+        ),
         tools=[
             _wrap(get_dj_status), _wrap(get_deck_info), _wrap(load_track),
             _wrap(play_deck), _wrap(pause_deck), _wrap(set_volume),
@@ -166,6 +172,7 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent]:
             _wrap(do_transition), _wrap(do_bass_swap), _wrap(set_rate),
             _wrap(reset_bpm), _wrap(align_beats), _wrap(nudge_track),
             _wrap(list_library_tracks),
+            _wrap(schedule_transition),
         ],
         description=(
             "Controls Mixxx DJ decks — load tracks, play, pause, EQ, filter, sync, "
