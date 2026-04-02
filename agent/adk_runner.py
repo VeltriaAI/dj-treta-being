@@ -43,9 +43,28 @@ class ADKRunnerMixin:
         return result
 
     def _invoke_agent(self, instruction: str, timeout: int = 90, max_calls: int = 10) -> str:
-        """Invoke DJ agent. Sync wrapper with lock to prevent concurrent session access."""
+        """Invoke DJ agent. Sync wrapper with lock. Auto-recovers on tool errors."""
         with self._agent_lock:
-            return self._run_async(self._invoke_agent_async(instruction, max_calls), timeout=timeout)
+            try:
+                return self._run_async(self._invoke_agent_async(instruction, max_calls), timeout=timeout)
+            except (ValueError, RuntimeError) as e:
+                if "not found" in str(e).lower() or "tool" in str(e).lower():
+                    log.warning(f"ADK tool error — recreating DJ session: {e}")
+                    self._recreate_dj_session()
+                    return self._run_async(self._invoke_agent_async(instruction, max_calls), timeout=timeout)
+                raise
+
+    def _recreate_dj_session(self):
+        """Recreate DJ session when ADK loses tool registry."""
+        try:
+            async def _reinit():
+                self._dj_session = await self._session_service.create_session(
+                    app_name="dj_treta", user_id="dj"
+                )
+            self._run_async(_reinit(), timeout=10)
+            log.info("DJ session recreated")
+        except Exception as e:
+            log.error(f"Session recreation failed: {e}")
 
     async def _invoke_planner_async(self, instruction: str) -> str:
         """Invoke planner agent via ADK runner. Processes events for billing + thinking log."""

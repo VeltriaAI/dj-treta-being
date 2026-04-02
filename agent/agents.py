@@ -13,7 +13,7 @@ from pathlib import Path
 
 from google.adk.agents import LlmAgent
 from google.adk.models.lite_llm import LiteLlm
-from google.adk.tools import LongRunningFunctionTool
+from google.adk.tools import FunctionTool, LongRunningFunctionTool
 
 from .config import Config
 from .tools import (
@@ -33,6 +33,11 @@ from .tools import (
     # Meta tools
     read_file, write_file, save_learning, recall_learnings,
 )
+
+
+def _wrap(func):
+    """Wrap a plain function in FunctionTool — prevents ADK losing it after compaction."""
+    return FunctionTool(func=func)
 
 
 def _load_system_prompt(config: Config) -> str:
@@ -154,11 +159,13 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent]:
         model=model,
         instruction="You control the Mixxx DJ decks. Execute the requested mixing operation.",
         tools=[
-            get_dj_status, get_deck_info, load_track, play_deck, pause_deck,
-            set_volume, set_crossfader, set_eq, set_filter, set_sync,
-            get_live_data, get_track_info, do_transition, do_bass_swap,
-            set_rate, reset_bpm, align_beats, nudge_track,
-            list_library_tracks,
+            _wrap(get_dj_status), _wrap(get_deck_info), _wrap(load_track),
+            _wrap(play_deck), _wrap(pause_deck), _wrap(set_volume),
+            _wrap(set_crossfader), _wrap(set_eq), _wrap(set_filter),
+            _wrap(set_sync), _wrap(get_live_data), _wrap(get_track_info),
+            _wrap(do_transition), _wrap(do_bass_swap), _wrap(set_rate),
+            _wrap(reset_bpm), _wrap(align_beats), _wrap(nudge_track),
+            _wrap(list_library_tracks),
         ],
         description=(
             "Controls Mixxx DJ decks — load tracks, play, pause, EQ, filter, sync, "
@@ -169,13 +176,13 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent]:
     )
 
     # --- Library agent ---
-    library_tools = [list_library_tracks, get_set_history]
+    library_tools = [_wrap(list_library_tracks), _wrap(get_set_history)]
     library_desc = (
         "Manages the DJ music library — list available tracks by genre folder, "
         "check what's been played."
     )
     if config.sources.youtube:
-        library_tools.extend([search_music, download_track])
+        library_tools.extend([_wrap(search_music), _wrap(download_track)])
         library_desc = (
             "Manages the DJ music library — list available tracks by genre folder, "
             "search YouTube for new music, download tracks, check what's been played "
@@ -200,8 +207,8 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent]:
         ),
         tools=[
             LongRunningFunctionTool(func=generate_track),
-            list_library_tracks,
-            analyze_track,
+            _wrap(list_library_tracks),
+            _wrap(analyze_track),
         ],
         description=(
             "AI music producer — generates original tracks with Lyria 3. "
@@ -215,11 +222,11 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent]:
         model=model,
         instruction=_load_system_prompt(config),
         tools=[
-            get_dj_status, get_live_data,
-            hear_music, analyze_track, preview_track,
-            schedule_transition,
-            save_learning, recall_learnings,
-            read_file, write_file,
+            _wrap(get_dj_status), _wrap(get_live_data),
+            _wrap(hear_music), _wrap(analyze_track), _wrap(preview_track),
+            _wrap(schedule_transition),
+            _wrap(save_learning), _wrap(recall_learnings),
+            _wrap(read_file), _wrap(write_file),
         ],
         sub_agents=[mixer, library, producer],
         description="DJ Treta — autonomous AI DJ",
@@ -236,8 +243,8 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent]:
         ),
         tools=[
             LongRunningFunctionTool(func=generate_track),
-            list_library_tracks,
-            analyze_track,
+            _wrap(list_library_tracks),
+            _wrap(analyze_track),
         ],
         description=(
             "AI music producer — generates original tracks with Lyria 3. "
@@ -246,9 +253,9 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent]:
     )
 
     # --- Planner agent (separate root) ---
-    planner_tools = [analyze_track, preview_track, list_library_tracks, recall_learnings, read_file]
+    planner_tools = [_wrap(analyze_track), _wrap(preview_track), _wrap(list_library_tracks), _wrap(recall_learnings), _wrap(read_file)]
     if config.sources.youtube:
-        planner_tools.extend([search_music, download_track])
+        planner_tools.extend([_wrap(search_music), _wrap(download_track)])
 
     planner_prompt = """You are DJ Treta's planning brain. You run in the background while tracks play.
 
