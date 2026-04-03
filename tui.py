@@ -692,13 +692,17 @@ Screen {
     padding: 0 1;
 }
 
-#playlist {
+#playlist-scroll {
     width: 42;
     height: 100%;
     border-top: solid $accent;
     border-left: solid $accent;
+    scrollbar-size: 1 1;
+}
+
+#playlist {
+    width: 100%;
     padding: 0 1;
-    overflow-y: auto;
 }
 
 #debug-log {
@@ -749,7 +753,8 @@ class DJTretaApp(App):
         yield BrainWidget(id="brain")
         with Horizontal(id="main-area"):
             yield RichLog(id="conversation", highlight=True, markup=True, wrap=True)
-            yield PlaylistWidget(id="playlist")
+            with ScrollableContainer(id="playlist-scroll"):
+                yield PlaylistWidget(id="playlist")
         yield RichLog(id="debug-log", highlight=True, markup=True, wrap=True)
         yield Input(placeholder="Talk to DJ Treta... (or /help)", id="prompt-input")
         yield Footer()
