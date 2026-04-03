@@ -317,6 +317,19 @@ def schedule_transition(to_deck: int, at_position: int, technique: str = "crossf
     """
     duration = max(10, min(120, duration))
 
+    # Don't schedule if one is already pending
+    sched_file = Path("/tmp/dj-treta-scheduled-transition.json")
+    if sched_file.exists():
+        try:
+            existing = json.loads(sched_file.read_text())
+            return (
+                f"Transition already scheduled: {existing.get('technique', 'crossfade')} "
+                f"to deck {existing.get('toDeck')} at {existing.get('atPosition')}s. "
+                f"Wait for it to execute."
+            )
+        except Exception:
+            pass
+
     # Get current track position
     status = _mixxx_get("/api/status")
     if not status or _mixxx_failed(status):
