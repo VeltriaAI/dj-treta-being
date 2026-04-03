@@ -56,9 +56,9 @@ class HeartbeatMixin:
 
         # === PRIORITY 2: Auto-transition when track about to end ===
         # If track ending soon, idle deck ready → just do it
-        # Override even if transition_pending — the scheduled one might never fire
+        # Skip if transition already in progress (prevents double auto-transition #66)
         if (idle_ready and remaining < 30 and remaining > 0 and playing
-                and not self._agent_busy):
+                and not self._agent_busy and not self._transition_pending):
             log.info(f"Auto-transition: {remaining:.0f}s left, crossfading to deck {idle_deck}")
             from .tools import do_transition
             self._transition_pending = True
@@ -86,6 +86,7 @@ class HeartbeatMixin:
             if sched_file.exists():
                 try:
                     sched = json.loads(sched_file.read_text())
+                    sched_file.unlink(missing_ok=True)  # delete BEFORE starting executor (#67)
                     self._transition_pending = True
                     threading.Thread(
                         target=self._execute_scheduled_transition,
