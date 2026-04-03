@@ -90,6 +90,15 @@ from .meta import (
     recall_learnings,
 )
 
+# Directive tools (Being → Agent communication)
+from .directives import (
+    set_dj_directive,
+    set_planner_directive,
+    set_mood,
+    get_directives,
+    clear_directives,
+)
+
 __all__ = [
     # helpers
     "_SELF_DIR", "_music_dir", "_roots", "_is_under_allowed_roots",
@@ -114,4 +123,7 @@ __all__ = [
     # meta
     "read_file", "write_file", "list_files", "run_shell",
     "save_learning", "recall_learnings",
+    # directives
+    "set_dj_directive", "set_planner_directive", "set_mood",
+    "get_directives", "clear_directives",
 ]

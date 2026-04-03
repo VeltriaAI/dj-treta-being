@@ -221,11 +221,11 @@ def cmd_status():
     """Show current status."""
     console.print(make_status_display())
 
-def cmd_talk(message: str):
-    """Talk to the brain."""
+def cmd_talk(message: str, readonly: bool = False):
+    """Talk to the brain. readonly=True for live web listeners (no control)."""
     console.print(f"\n[bold cyan]You:[/bold cyan] {message}")
     console.print("[dim]thinking...[/dim]", end="\r")
-    response = send_brain_command("talk", {"message": message})
+    response = send_brain_command("talk", {"message": message, "readonly": readonly})
     # Clear "thinking..."
     console.print(" " * 40, end="\r")
     console.print(f"[bold magenta]DJ Treta:[/bold magenta] {response}\n")

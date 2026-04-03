@@ -245,9 +245,10 @@ def being(config, test_db, mock_mixxx):
     """
     # Prevent ADK imports from failing in test
     with patch("agent.main.InMemorySessionService"), \
-         patch("agent.main.create_agents", return_value=(MagicMock(), MagicMock())):
+         patch("agent.main.create_agents", return_value=(MagicMock(), MagicMock(), MagicMock())):
         from agent.main import DJTretaBeing
         b = DJTretaBeing(config)
+        b.being_agent = MagicMock()
         b.agent = MagicMock()
         b.planner_agent = MagicMock()
         b._running = True

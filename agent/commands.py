@@ -17,7 +17,45 @@ log = logging.getLogger("dj-treta")
 COMMAND_FILE = Path("/tmp/dj-treta-command.json")
 
 
+MOOD_CHANGE_FILE = Path("/tmp/dj-treta-mood-change.json")
+DIRECTIVE_FILE = Path("/tmp/dj-treta-directives.json")
+
+
 class CommandsMixin:
+
+    def _pick_up_directives(self):
+        """Pick up directive changes from Being agent tools (file-based IPC)."""
+        # Mood change (from set_mood tool)
+        if MOOD_CHANGE_FILE.exists():
+            try:
+                data = json.loads(MOOD_CHANGE_FILE.read_text())
+                MOOD_CHANGE_FILE.unlink()
+                new_mood = data.get("mood", "")
+                if new_mood and new_mood != self.mood:
+                    self.mood = new_mood
+                    if self.current_set:
+                        self.current_set["mood"] = new_mood
+                        self.current_set["genre"] = new_mood
+                    # Force planner replan
+                    self._tracks_since_plan = getattr(self, '_tracks_since_plan', 0)
+                    if hasattr(self.config, 'planner'):
+                        self._tracks_since_plan = self.config.planner.replan_every_n_tracks
+                    log.info(f"Mood updated via directive: {new_mood}")
+            except Exception:
+                MOOD_CHANGE_FILE.unlink(missing_ok=True)
+
+        # DJ + Planner directives (from set_dj_directive / set_planner_directive tools)
+        if DIRECTIVE_FILE.exists():
+            try:
+                data = json.loads(DIRECTIVE_FILE.read_text())
+                dj_d = data.get("dj", {})
+                if dj_d.get("instruction"):
+                    self.dj_directive = dj_d["instruction"]
+                planner_d = data.get("planner", {})
+                if planner_d.get("instruction"):
+                    self.planner_directive = planner_d["instruction"]
+            except Exception:
+                pass
 
     def _check_commands(self):
         if not COMMAND_FILE.exists():
@@ -52,25 +90,15 @@ class CommandsMixin:
     def _handle_command(self, cmd, args, cmd_id):
         if cmd == "talk":
             message = args.get("message", "")
+            readonly = args.get("readonly", False)
             if not message:
                 return "No message"
-            if not self.agent:
+            if not hasattr(self, 'being_agent') or not self.being_agent:
                 return "Brain not ready"
 
-            # Extract mood + capture user intent for planner
-            if any(w in message.lower() for w in ["play", "start", "baja", "shuru", "bajao", "switch", "change"]):
-                for m in ["melodic", "techno", "deep", "dark", "progressive", "ambient",
-                          "chill", "vocal", "house", "psychill", "minimal", "bhojpuri",
-                          "trance", "lofi", "bollywood", "psytrance"]:
-                    if m in message.lower():
-                        self.mood = m
-                        break
-                if not self.mood:
-                    self.mood = "deep"
-                # Capture full user intent — planner will see this
-                self.user_intent = message
-
-            threading.Thread(target=self._agent_talk, args=(message, cmd_id), daemon=True).start()
+            threading.Thread(
+                target=self._being_talk, args=(message, cmd_id, readonly), daemon=True
+            ).start()
             return "processing..."
 
         elif cmd == "skip":
@@ -108,15 +136,19 @@ class CommandsMixin:
                 self.config.sources.treta_originals = enabled
             # Recreate agents with new tool access
             log.info(f"Source changed: {source} → {'on' if enabled else 'off'} — rebuilding agents")
-            dj_agent, planner_agent = create_agents(self.config)
+            being_agent, dj_agent, planner_agent = create_agents(self.config)
+            self.being_agent = being_agent
             self.agent = dj_agent
             self.planner_agent = planner_agent
             compaction = EventsCompactionConfig(compaction_interval=10, overlap_size=2)
+            being_app = App(name="treta_being", root_agent=being_agent, events_compaction_config=compaction)
             dj_app = App(name="dj_treta", root_agent=dj_agent, events_compaction_config=compaction)
             planner_app = App(name="dj_treta_planner", root_agent=planner_agent, events_compaction_config=compaction)
+            self._being_runner = Runner(app=being_app, session_service=self._session_service)
             self._dj_runner = Runner(app=dj_app, session_service=self._session_service)
             self._planner_runner = Runner(app=planner_app, session_service=self._session_service)
             async def _reinit():
+                self._being_session = await self._session_service.create_session(app_name="treta_being", user_id="listener")
                 self._dj_session = await self._session_service.create_session(app_name="dj_treta", user_id="dj")
                 self._planner_session = await self._session_service.create_session(app_name="dj_treta_planner", user_id="planner")
             self._run_async(_reinit())
@@ -125,20 +157,30 @@ class CommandsMixin:
         else:
             return f"Unknown: {cmd}"
 
-    def _agent_talk(self, message, cmd_id):
-        """One agent, one personality. Always."""
+    def _being_talk(self, message, cmd_id, readonly=False):
+        """Being handles ALL conversation. She thinks, responds, and optionally directs agents."""
         from .main import _get_status
 
         try:
             context = self._build_context(_get_status(self.config.mixxx.url))
             history = self._format_history()
 
+            readonly_tag = ""
+            if readonly:
+                readonly_tag = (
+                    "\n\nMODE: READONLY — this is a live web listener. "
+                    "You can ONLY respond conversationally. Do NOT call set_dj_directive, "
+                    "set_planner_directive, set_mood, or any control tools. "
+                    "Just chat, share your thoughts on the music, describe the vibe.\n"
+                )
+
             with self._talk_lock:
-                result = self._invoke_agent(
-                    f"{context}\n\n{history}\n\n"
+                result = self._invoke_being(
+                    f"{context}\n\n{history}\n{readonly_tag}\n"
                     f'The listener says: "{message}"\n\n'
-                    f"Respond naturally. Use tools only if they asked you to DO something.",
-                    timeout=120, max_calls=20,  # talk needs more room for tool use
+                    f"Respond naturally. Set directives only if they asked you to DO something "
+                    f"(change mood, play something specific, etc).",
+                    timeout=120, max_calls=20 if not readonly else 5,
                 )
 
             # Update conversation memory
@@ -149,7 +191,7 @@ class CommandsMixin:
             self._last_command_id = cmd_id
             self._last_result = result
             self._write_state()
-            log.info(f"Talk done: {result[:500]}")
+            log.info(f"Being talk {'(readonly)' if readonly else ''}: {result[:500]}")
         except Exception as e:
             self._last_command_id = cmd_id
             self._last_result = f"Error: {e}"

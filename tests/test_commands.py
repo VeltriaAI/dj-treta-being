@@ -58,17 +58,28 @@ class TestSkipCommand:
 
 class TestTalkCommand:
 
-    def test_talk_captures_user_intent_on_play_request(self, being):
-        """When user says 'play some bhojpuri', talk handler should capture
-        the message as user_intent and extract mood."""
-        with patch.object(being, "_agent_talk"):
-            with patch("agent.commands.threading.Thread") as mock_thread:
-                mock_thread.return_value = MagicMock()
+    def test_talk_routes_to_being_talk(self, being):
+        """talk command should route to _being_talk (Being agent handles conversation)."""
+        with patch("agent.commands.threading.Thread") as mock_thread:
+            mock_thread.return_value = MagicMock()
 
-                being._handle_command("talk", {"message": "play some deep house"}, "cmd-5")
+            result = being._handle_command("talk", {"message": "play some deep house"}, "cmd-5")
 
-                # user_intent should capture the full message
-                assert being.user_intent == "play some deep house"
+            assert result == "processing..."
+            mock_thread.assert_called_once()
+            call_kwargs = mock_thread.call_args
+            assert call_kwargs[1]["target"] == being._being_talk
+
+    def test_talk_readonly_passes_flag(self, being):
+        """talk with readonly=True should pass the flag to _being_talk."""
+        with patch("agent.commands.threading.Thread") as mock_thread:
+            mock_thread.return_value = MagicMock()
+
+            being._handle_command("talk", {"message": "what are you playing?", "readonly": True}, "cmd-6")
+
+            call_kwargs = mock_thread.call_args
+            # Args should include readonly=True
+            assert call_kwargs[1]["args"] == ("what are you playing?", "cmd-6", True)
 
     def test_talk_returns_processing(self, being):
         """talk command should return 'processing...' immediately (async)."""
@@ -88,7 +99,7 @@ class TestSourcesChange:
 
     def test_sources_change_rebuilds_agents(self, being):
         """Changing a source (youtube/originals) should recreate ADK agents."""
-        with patch("agent.commands.create_agents", return_value=(MagicMock(), MagicMock())) as mock_create:
+        with patch("agent.commands.create_agents", return_value=(MagicMock(), MagicMock(), MagicMock())) as mock_create:
             with patch("agent.commands.App"), \
                  patch("agent.commands.Runner"), \
                  patch("agent.commands.EventsCompactionConfig"), \

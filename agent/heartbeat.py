@@ -138,7 +138,13 @@ class HeartbeatMixin:
             if self._transition_pending:
                 pending_info = "\nTRANSITION ALREADY PENDING — do NOT schedule another. Just say 'transition pending'.\n"
 
+            # v6.0: Being's directive to DJ agent
+            directive_info = ""
+            if self.dj_directive:
+                directive_info = f"\nDIRECTIVE FROM TRETA: {self.dj_directive}\nFollow this directive when making your decision.\n"
+
             instruction = (
+                f"{directive_info}"
                 f"ACTIVE: '{active_track[:40]}' at {position:.0f}s/{duration:.0f}s "
                 f"({remaining:.0f}s left, BPM:{active_bpm:.0f}, Key:{active_key})\n"
                 f"  NOW IN: {active_section}\n"
@@ -159,6 +165,10 @@ class HeartbeatMixin:
                 try:
                     result = self._invoke_agent(instruction, fresh_session=True)
                     log.info(f"DJ decision: {result[:500]}")
+                    # Clear directive after DJ has read it
+                    if self.dj_directive:
+                        log.info(f"DJ directive consumed: {self.dj_directive[:80]}")
+                        self.dj_directive = ""
                     self._record_playing_tracks()
                     self._check_set_duration()
                 except Exception as e:

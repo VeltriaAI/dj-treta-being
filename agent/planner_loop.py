@@ -131,11 +131,18 @@ class PlannerMixin:
             energy = current_meta.get('energy_peak') or '?'
             current_info = f"{current_track} | BPM:{bpm:.0f} Key:{key} Energy:{energy}"
 
-        # Include user intent if any — this is how conversation flows to planner
+        # v6.0: Being's directive to Planner agent (replaces user_intent band-aid)
+        directive_line = ""
+        if self.planner_directive:
+            directive_line = f"\nDIRECTIVE FROM TRETA: {self.planner_directive}\nThis is a direct instruction from the Being. Prioritize this above BPM/key matching.\n\n"
+            log.info(f"Planner directive consumed: {self.planner_directive[:80]}")
+            self.planner_directive = ""
+
+        # Legacy: user_intent still supported (from talk command mood extraction)
         intent_line = ""
         if self.user_intent:
             intent_line = f"\nLISTENER REQUEST: \"{self.user_intent}\"\nThis is what the listener wants RIGHT NOW. Prioritize this above BPM/key matching.\n\n"
-            self.user_intent = ""  # clear after planner reads it
+            self.user_intent = ""
 
         log.info(f"Planner running — current: {current_track or 'nothing'}, {len(candidates)} candidates in DB")
         result = self._invoke_planner(
@@ -143,6 +150,7 @@ class PlannerMixin:
             f"Already played (DO NOT repeat): {played_list}\n\n"
             f"Tracks already in library:\n{candidate_text or '  (none)'}\n\n"
             f"Current mood/genre: {self.mood or 'melodic-techno'}.\n"
+            + directive_line
             + intent_line
             + self._build_source_instructions() +
             f"After creating/finding new tracks, analyze each one.\n"

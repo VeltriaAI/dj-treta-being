@@ -73,6 +73,29 @@ class ADKRunnerMixin:
         except Exception as e:
             log.error(f"Session recreation failed: {e}")
 
+    async def _invoke_being_async(self, instruction: str, max_calls: int = 15) -> str:
+        """Invoke Being agent — the brain. Handles conversation + directives."""
+        from google.genai import types
+        from google.adk.runners import RunConfig
+
+        message = types.Content(role="user", parts=[types.Part(text=instruction)])
+        run_config = RunConfig(max_llm_calls=max_calls)
+        result = ""
+        async for event in self._being_runner.run_async(
+            session_id=self._being_session.id, user_id="listener",
+            new_message=message, run_config=run_config,
+        ):
+            self._process_event(event)
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    if part.text:
+                        result += part.text
+        return result
+
+    def _invoke_being(self, instruction: str, timeout: int = 120, max_calls: int = 15) -> str:
+        """Invoke Being agent. Sync wrapper. Being has its own session — no lock needed with DJ."""
+        return self._run_async(self._invoke_being_async(instruction, max_calls), timeout=timeout)
+
     async def _invoke_planner_async(self, instruction: str) -> str:
         """Invoke planner agent via ADK runner. Processes events for billing + thinking log."""
         from google.genai import types

@@ -1,4 +1,4 @@
-"""DJ Treta v5.0 — DJClaw (ADK)
+"""DJ Treta v6.0 — DJClaw (Being as Brain)
 
 The Being starts, stays alive, and decides everything.
 No watchdog. No state machine. No deterministic DJ logic.
@@ -240,13 +240,19 @@ class DJTretaBeing(
         # Generation status for TUI
         self._generation_status = {}
 
+        # v6.0 Directive system — Being sets, agents read
+        self.dj_directive = ""
+        self.planner_directive = ""
+
         # ADK v5.0 — single persistent event loop (avoids LiteLLM Queue binding errors)
         self._loop = asyncio.new_event_loop()
         self._loop_thread = threading.Thread(target=self._loop.run_forever, daemon=True)
         self._loop_thread.start()
         self._session_service = InMemorySessionService()
+        self._being_runner = None
         self._dj_runner = None
         self._planner_runner = None
+        self._being_session = None
         self._dj_session = None
         self._planner_session = None
 
@@ -277,8 +283,9 @@ class DJTretaBeing(
         _ensure_mixxx(self.config)
         self._restore_session()
 
-        log.info("Creating ADK agents (v5.0)...")
-        dj_agent, planner_agent = create_agents(self.config)
+        log.info("Creating ADK agents (v6.0)...")
+        being_agent, dj_agent, planner_agent = create_agents(self.config)
+        self.being_agent = being_agent
         self.agent = dj_agent
         self.planner_agent = planner_agent
 
@@ -287,13 +294,16 @@ class DJTretaBeing(
             compaction_interval=10,  # compact every 10 invocations (~5 min)
             overlap_size=2,          # keep last 2 exchanges verbatim
         )
+        being_app = App(name="treta_being", root_agent=being_agent, events_compaction_config=compaction)
         dj_app = App(name="dj_treta", root_agent=dj_agent, events_compaction_config=compaction)
         planner_app = App(name="dj_treta_planner", root_agent=planner_agent, events_compaction_config=compaction)
 
+        self._being_runner = Runner(app=being_app, session_service=self._session_service)
         self._dj_runner = Runner(app=dj_app, session_service=self._session_service)
         self._planner_runner = Runner(app=planner_app, session_service=self._session_service)
 
         async def _init_sessions():
+            self._being_session = await self._session_service.create_session(app_name="treta_being", user_id="listener")
             self._dj_session = await self._session_service.create_session(app_name="dj_treta", user_id="dj")
             self._planner_session = await self._session_service.create_session(app_name="dj_treta_planner", user_id="planner")
         self._run_async(_init_sessions())
@@ -327,6 +337,7 @@ class DJTretaBeing(
         while self._running:
             try:
                 self._check_commands()
+                self._pick_up_directives()
                 self._heartbeat()
 
             except Exception as e:

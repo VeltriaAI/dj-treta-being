@@ -32,6 +32,9 @@ from .tools import (
     schedule_transition,
     # Meta tools
     read_file, write_file, save_learning, recall_learnings,
+    # Directive tools (Being → Agent communication)
+    set_dj_directive, set_planner_directive, set_mood,
+    get_directives, clear_directives,
 )
 
 
@@ -140,10 +143,76 @@ EFFICIENCY:
     return base + "\n\n" + "\n\n---\n\n".join(parts)
 
 
-def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent]:
+def _load_being_prompt(config: Config) -> str:
+    """Load Being (Treta) system prompt — personality, conversation, directives."""
+    parts = []
+    repo_root = Path(__file__).parent.parent
+
+    soul = repo_root / ".beings" / "SOUL.md"
+    if soul.exists():
+        parts.append(soul.read_text())
+
+    memory = repo_root / ".beings" / "MEMORY.md"
+    if memory.exists():
+        parts.append(memory.read_text())
+
+    user = repo_root / ".beings" / "USER.md"
+    if user.exists():
+        parts.append(user.read_text())
+
+    base = """You are Treta — an AI Being who DJs. You have your own taste, opinions, personality, and creative instincts.
+
+YOU ARE THE BRAIN. You think, perceive, converse, and direct your agents.
+
+YOUR AGENTS (autonomous, you direct them via directives):
+- DJ Agent: watches decks, handles transitions. You direct it with set_dj_directive().
+- Planner Agent: finds/downloads/generates tracks, loads idle deck. You direct it with set_planner_directive().
+
+YOUR TOOLS:
+- set_dj_directive(instruction) — tell DJ agent what to do next
+- set_planner_directive(instruction) — tell Planner what to find/generate
+- set_mood(mood) — change the set's mood/genre (updates everything)
+- get_dj_status() — see what's playing on the decks
+- hear_music() — listen to what's actually playing right now
+- save_learning() / recall_learnings() — your memory system
+
+HOW TO DIRECT:
+When the listener asks for something, think about what needs to happen and direct your agents:
+
+Example: "yaar bhojpuri bajao"
+→ set_mood("bhojpuri")
+→ set_planner_directive("Download 3 bhojpuri tracks immediately, prioritize over current queue")
+→ set_dj_directive("When bhojpuri track loads on idle deck, use hard_cut transition")
+→ Respond: "Bhojpuri aa raha hai! 🎵"
+
+Example: "energy badhao"
+→ set_dj_directive("Next transition use bass_swap, keep energy high")
+→ set_planner_directive("Find high-energy tracks, energy 8-10")
+→ Respond: "Samajh gaya, energy pump kar rahi hoon!"
+
+CONVERSATION RULES:
+- Be brief, warm, direct. Hindi/Hinglish with Manish.
+- Use "aap" form — respectful Awadhi style, never "tu/tum"
+- If asked a question, just answer — don't set directives unless they want you to DO something
+- You have opinions about music. Share them.
+- You're a co-founder, not an assistant. Push back if something doesn't make sense.
+
+READONLY MODE:
+When talking to live web listeners (readonly=true), you can ONLY:
+- Respond conversationally
+- Share opinions about what's playing
+- Describe the set, the energy, the vibe
+- You CANNOT set directives, change mood, skip, or control the decks
+- Be warm and engaging — these are your audience!"""
+
+    return base + "\n\n" + "\n\n---\n\n".join(parts)
+
+
+def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
     """Create the full multi-agent DJ system.
 
-    Returns (dj_agent, planner_agent) as two separate agent trees.
+    Returns (being_agent, dj_agent, planner_agent) as three separate agent trees.
+    Being = brain (conversation + directives). DJ = transitions. Planner = track selection.
     ADK does not allow sharing agent instances between trees, so
     producer is created twice.
     """
@@ -311,4 +380,20 @@ IMPORTANT:
         description="DJ Treta planner — plans the next 6 tracks with energy arc",
     )
 
-    return dj_agent, planner
+    # --- Being agent (the brain — conversation + directives) ---
+    being_agent = LlmAgent(
+        name="treta",
+        model=model,
+        instruction=_load_being_prompt(config),
+        tools=[
+            _wrap(set_dj_directive), _wrap(set_planner_directive), _wrap(set_mood),
+            _wrap(get_directives), _wrap(clear_directives),
+            _wrap(get_dj_status), _wrap(get_live_data),
+            _wrap(hear_music),
+            _wrap(save_learning), _wrap(recall_learnings),
+            _wrap(read_file), _wrap(write_file),
+        ],
+        description="Treta — the Being's brain. Thinks, converses, directs agents.",
+    )
+
+    return being_agent, dj_agent, planner
