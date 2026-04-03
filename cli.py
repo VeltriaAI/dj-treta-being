@@ -287,9 +287,14 @@ def cmd_transition(deck: int = 2, technique: str = "blend", duration: int = 60):
 
 def cmd_start_brain(mood: str = "melodic-techno", duration: int = 60):
     """Start the brain daemon."""
-    import subprocess
-    # Clear old log before starting — prevents TUI from showing stale "shutting down"
+    import subprocess, shutil
+    # Clear old log + bytecache before starting
     Path("/tmp/dj-treta-daemon.log").write_text("")
+    for cache_dir in [Path(__file__).parent / "agent" / "__pycache__",
+                      Path(__file__).parent / "agent" / "tools" / "__pycache__",
+                      Path(__file__).parent / "__pycache__"]:
+        if cache_dir.exists():
+            shutil.rmtree(cache_dir)
     venv_python = Path(__file__).parent / ".venv" / "bin" / "python3"
     subprocess.Popen(
         [str(venv_python), "-m", "agent", "--mood", mood, "--duration", str(duration)],
@@ -458,9 +463,13 @@ def _reset(hard=False):
               "/tmp/dj-treta-playlist.json"]:
         Path(f).unlink(missing_ok=True)
 
-    # Clean session (always)
+    # Clean session + bytecache (always)
     DJ_HOME = Path.home() / "beings" / "dj-treta"
     (DJ_HOME / ".beings" / "session.json").unlink(missing_ok=True)
+    import shutil as _shutil
+    for cache_dir in [DJ_HOME / "agent" / "__pycache__", DJ_HOME / "agent" / "tools" / "__pycache__", DJ_HOME / "__pycache__"]:
+        if cache_dir.exists():
+            _shutil.rmtree(cache_dir)
 
     music_dir = Path.home() / "Music" / "DJTreta"
 
