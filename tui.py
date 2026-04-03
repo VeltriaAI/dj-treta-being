@@ -903,7 +903,7 @@ class DJTretaApp(App):
                     "Talk result", "Talk done", "Talk ack", "processing...", "Result: processing",
                     "Unmapped finish_reason", "malformed_function_call", "TOKENS:", "TokenUsage",
                     "mixer ←", "dj_treta →", "dj_treta ←", "library ←", "library →", "mixer →",
-                    "HTTP Request:"]
+                    "HTTP Request:", "shutting down", "Broadcast stopped"]
 
             for line in new_lines:
                 if not line.strip():
