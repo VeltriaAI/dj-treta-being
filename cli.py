@@ -396,6 +396,14 @@ def _daemon_cmd(action):
             try:
                 pid = int(PID_FILE.read_text().strip())
                 os.kill(pid, 15)  # SIGTERM
+                # Wait for process to actually die before continuing
+                import time
+                for _ in range(30):  # 3s max
+                    time.sleep(0.1)
+                    try:
+                        os.kill(pid, 0)  # check if alive
+                    except ProcessLookupError:
+                        break  # dead
                 console.print(f"[yellow]Stopped (PID {pid})[/yellow]")
                 PID_FILE.unlink(missing_ok=True)
             except (ProcessLookupError, ValueError):
@@ -406,7 +414,7 @@ def _daemon_cmd(action):
                 return
         if action == "restart":
             import time
-            time.sleep(2)
+            time.sleep(1)
 
     if action in ("start", "restart"):
         if PID_FILE.exists():
@@ -419,10 +427,12 @@ def _daemon_cmd(action):
                 PID_FILE.unlink(missing_ok=True)
 
         PID_FILE.unlink(missing_ok=True)
+        # Truncate log AFTER old daemon is dead — clean slate for TUI
+        LOG.write_text("")
         subprocess.Popen(
             [str(PYTHON), "-m", "agent"],
             cwd=str(DJ_HOME),
-            stdout=open(str(LOG), "w"),
+            stdout=open(str(LOG), "a"),  # append — don't clobber our truncation
             stderr=subprocess.STDOUT,
         )
         import time

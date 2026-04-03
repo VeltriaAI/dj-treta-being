@@ -120,7 +120,9 @@ class TestScheduleTransition:
     def test_schedule_transition_writes_file(self, mock_mixxx):
         """schedule_transition should write a JSON file to /tmp."""
         sched_path = Path("/tmp/dj-treta-scheduled-transition.json")
+        lock_path = Path("/tmp/dj-treta-transition-pending.lock")
         sched_path.unlink(missing_ok=True)
+        lock_path.unlink(missing_ok=True)
 
         # Patch load_config to return test config
         from agent.config import Config
@@ -140,6 +142,7 @@ class TestScheduleTransition:
         assert "Scheduled" in result
 
         sched_path.unlink(missing_ok=True)
+        lock_path.unlink(missing_ok=True)
 
 
 class TestFormatTimeline:
