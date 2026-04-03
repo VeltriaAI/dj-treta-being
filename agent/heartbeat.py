@@ -55,9 +55,10 @@ class HeartbeatMixin:
         duration = float(d_active.get("duration", 0) or 0)
 
         # === PRIORITY 2: Auto-transition when track about to end ===
-        # If track ending soon, idle deck ready, no transition pending → just do it
+        # If track ending soon, idle deck ready → just do it
+        # Override even if transition_pending — the scheduled one might never fire
         if (idle_ready and remaining < 30 and remaining > 0 and playing
-                and not self._transition_pending and not self._agent_busy):
+                and not self._agent_busy):
             log.info(f"Auto-transition: {remaining:.0f}s left, crossfading to deck {idle_deck}")
             from .tools import do_transition
             self._transition_pending = True
