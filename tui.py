@@ -343,7 +343,34 @@ class DeckWidget(Static):
 
 
 class PlaylistWidget(Static):
-    """Live set playlist — played tracks, now playing, up next."""
+    """Live set playlist — energy curve, set details, tracklist."""
+
+    def _energy_sparkline(self, arc: list, width: int = 38) -> str:
+        """Render energy arc as a terminal sparkline."""
+        if not arc:
+            return "[dim]No energy data yet[/dim]"
+        blocks = " ▁▂▃▄▅▆▇█"
+        energies = [a.get("e", 0) for a in arc]
+        # Resample to fit width
+        if len(energies) > width:
+            step = len(energies) / width
+            sampled = [energies[int(i * step)] for i in range(width)]
+        else:
+            sampled = energies
+        # Build sparkline with color gradient
+        chars = []
+        for e in sampled:
+            idx = min(int(e / 10 * 8), 8)
+            ch = blocks[idx]
+            if e >= 8:
+                chars.append(f"[bold red]{ch}[/bold red]")
+            elif e >= 6:
+                chars.append(f"[yellow]{ch}[/yellow]")
+            elif e >= 4:
+                chars.append(f"[green]{ch}[/green]")
+            else:
+                chars.append(f"[cyan]{ch}[/cyan]")
+        return "".join(chars)
 
     def update_playlist(self, state: dict | None):
         if not state:
@@ -356,9 +383,32 @@ class PlaylistWidget(Static):
         next_track = state.get("next_track")
         current_title = current.get("title", "")
 
-        lines = ["[bold underline]SET PLAYLIST[/bold underline]"]
+        lines = []
 
-        # Get played tracks from DB
+        # ── Set details ──
+        if set_data:
+            title = set_data.get("title", "?")
+            genre = set_data.get("genre", set_data.get("mood", ""))
+            elapsed = set_data.get("elapsed", 0)
+            target = set_data.get("target_minutes", 0)
+            peak = set_data.get("peak_energy", 0)
+            lines.append(f"[bold underline]{title}[/bold underline]")
+            lines.append(f"[dim]{genre} | {fmt_time(elapsed)}/{fmt_time(target*60)}[/dim]")
+
+            # ── Energy curve ──
+            arc = set_data.get("energy_arc", [])
+            if arc:
+                sparkline = self._energy_sparkline(arc)
+                peak_str = f"[bold]{peak:.0f}[/bold]" if peak else ""
+                lines.append(f"⚡ {sparkline} {peak_str}")
+            else:
+                lines.append("[dim]⚡ Waiting for energy data…[/dim]")
+        else:
+            lines.append("[bold underline]SET PLAYLIST[/bold underline]")
+
+        lines.append("")  # spacer
+
+        # ── Tracklist ──
         played = []
         if set_id:
             try:
@@ -367,31 +417,43 @@ class PlaylistWidget(Static):
                 pass
 
         if not played and not current_title:
-            lines.append("[dim]Empty — waiting for first track[/dim]")
+            lines.append("[dim]Waiting for first track…[/dim]")
             self.update("\n".join(lines))
             return
 
-        # Show played tracks (most recent at bottom)
         for i, t in enumerate(played, 1):
             title = t.get("title", "?")
-            # Truncate for sidebar width
-            display = title[:35] + "…" if len(title) > 36 else title
+            # Get energy from DB
+            energy_str = ""
+            try:
+                track_data = get_track_by_path(t.get("file_path", "")) if t.get("file_path") else None
+                if not track_data:
+                    # Try by title match
+                    db = get_db()
+                    row = db.execute("SELECT energy_peak FROM tracks WHERE title=? LIMIT 1", (title,)).fetchone()
+                    db.close()
+                    if row and row["energy_peak"]:
+                        energy_str = f" E:{row['energy_peak']:.0f}"
+                elif track_data.get("energy_peak"):
+                    energy_str = f" E:{track_data['energy_peak']:.0f}"
+            except Exception:
+                pass
+            display = title[:30] + "…" if len(title) > 31 else title
             if title == current_title:
-                # Currently playing — highlight
-                lines.append(f"[bold green]▶ {i}. {display}[/bold green]")
+                lines.append(f"[bold green]▶ {i}. {display}{energy_str}[/bold green]")
             else:
-                lines.append(f"[dim]  {i}. {display}[/dim]")
+                lines.append(f"[dim]  {i}. {display}{energy_str}[/dim]")
 
-        # If current track not in set_history yet, show it
+        # Current track not in history yet
         if current_title and not any(t.get("title") == current_title for t in played):
             idx = len(played) + 1
-            display = current_title[:35] + "…" if len(current_title) > 36 else current_title
+            display = current_title[:30] + "…" if len(current_title) > 31 else current_title
             lines.append(f"[bold green]▶ {idx}. {display}[/bold green]")
 
         # Up next
         if next_track and next_track.get("title"):
             nt = next_track["title"]
-            display = nt[:35] + "…" if len(nt) > 36 else nt
+            display = nt[:30] + "…" if len(nt) > 31 else nt
             lines.append(f"[bold cyan]↳ {display}[/bold cyan]")
 
         self.update("\n".join(lines))

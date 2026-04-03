@@ -62,6 +62,9 @@ class SessionMixin:
                 s = self.current_set
                 elapsed_secs = time.time() - s["started_at"]
                 target_secs = s["target_duration"] * 60
+                # Energy arc — compact: last 60 samples (10 min) for TUI sparkline
+                arc = s.get("energy_arc", [])
+                compact_arc = [{"t": a["t"], "e": a.get("energy", 0)} for a in arc[-60:]]
                 set_data = {
                     "id": s["id"],
                     "number": s.get("set_number", 0),
@@ -71,6 +74,8 @@ class SessionMixin:
                     "elapsed": elapsed_secs,
                     "remaining": max(0, target_secs - elapsed_secs),
                     "target_minutes": s["target_duration"],
+                    "peak_energy": s.get("peak_energy", 0),
+                    "energy_arc": compact_arc,
                 }
 
             # Read billing
