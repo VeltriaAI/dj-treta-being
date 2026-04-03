@@ -235,7 +235,7 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent]:
             _wrap(save_learning), _wrap(recall_learnings),
             _wrap(read_file), _wrap(write_file),
         ],
-        sub_agents=[mixer, library, producer],
+        sub_agents=[mixer, library] + ([producer] if config.sources.treta_originals else []),
         description="DJ Treta — autonomous AI DJ",
     )
 
@@ -300,12 +300,14 @@ IMPORTANT:
 - Let tracks play FULLY — never suggest transitioning before 3 min
 - Transition duration 30-60 seconds, NEVER less than 20s"""
 
+    planner_sub_agents = [producer_for_planner] if config.sources.treta_originals else []
+
     planner = LlmAgent(
         name="planner",
         model=model,
         instruction=planner_prompt,
         tools=planner_tools,
-        sub_agents=[producer_for_planner],
+        sub_agents=planner_sub_agents,
         description="DJ Treta planner — plans the next 6 tracks with energy arc",
     )
 
