@@ -81,3 +81,4 @@ class TransitionMixin:
         finally:
             self._transition_pending = False
             Path("/tmp/dj-treta-scheduled-transition.json").unlink(missing_ok=True)
+            Path("/tmp/dj-treta-transition-pending.lock").unlink(missing_ok=True)

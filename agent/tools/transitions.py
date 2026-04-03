@@ -318,10 +318,12 @@ def schedule_transition(to_deck: int, at_position: int, technique: str = "crossf
     duration = max(10, min(120, duration))
 
     # Don't schedule if one is already pending
+    # Check both the schedule file AND the lock file (lock survives P3 deletion)
+    lock_file = Path("/tmp/dj-treta-transition-pending.lock")
     sched_file = Path("/tmp/dj-treta-scheduled-transition.json")
-    if sched_file.exists():
+    if lock_file.exists() or sched_file.exists():
         try:
-            existing = json.loads(sched_file.read_text())
+            existing = json.loads(sched_file.read_text()) if sched_file.exists() else {}
             return (
                 f"Transition already scheduled: {existing.get('technique', 'crossfade')} "
                 f"to deck {existing.get('toDeck')} at {existing.get('atPosition')}s. "
@@ -367,6 +369,8 @@ def schedule_transition(to_deck: int, at_position: int, technique: str = "crossf
     Path("/tmp/dj-treta-scheduled-transition.json").write_text(
         json.dumps(scheduled, indent=2)
     )
+    # Lock file survives P3 deletion of schedule file — prevents duplicate scheduling
+    Path("/tmp/dj-treta-transition-pending.lock").write_text(str(at_position))
 
     return (
         f"Scheduled {technique} to deck {to_deck} at position {at_position}s "

@@ -274,6 +274,7 @@ class DJTretaBeing(
         THINKING_FILE.write_text("")
         PLAYLIST_FILE.unlink(missing_ok=True)
         Path("/tmp/dj-treta-scheduled-transition.json").unlink(missing_ok=True)
+        Path("/tmp/dj-treta-transition-pending.lock").unlink(missing_ok=True)
         Path("/tmp/dj-treta-directives.json").unlink(missing_ok=True)
         Path("/tmp/dj-treta-mood-change.json").unlink(missing_ok=True)
 
