@@ -144,9 +144,11 @@ def find_compatible_tracks(bpm: float, key_camelot: str, energy: int,
             params.extend(compatible_keys)
 
         if played_titles:
-            placeholders = ",".join("?" * len(played_titles))
-            query += f" AND title NOT IN ({placeholders})"
-            params.extend(played_titles)
+            # Substring match — Mixxx titles may differ from DB titles
+            # e.g. DB: "Afterlife - Anyma - Sentient", Mixxx: "Anyma - Sentient"
+            for pt in played_titles:
+                query += " AND title NOT LIKE ?"
+                params.append(f"%{pt}%")
 
         query += " ORDER BY RANDOM() LIMIT ?"
         params.append(limit)
