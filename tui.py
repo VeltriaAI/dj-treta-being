@@ -342,6 +342,61 @@ class DeckWidget(Static):
         )
 
 
+class PlaylistWidget(Static):
+    """Live set playlist — played tracks, now playing, up next."""
+
+    def update_playlist(self, state: dict | None):
+        if not state:
+            self.update("[dim]No set[/dim]")
+            return
+
+        set_data = state.get("set", {})
+        set_id = set_data.get("id", "")
+        current = state.get("current_track", {})
+        next_track = state.get("next_track")
+        current_title = current.get("title", "")
+
+        lines = ["[bold underline]SET PLAYLIST[/bold underline]"]
+
+        # Get played tracks from DB
+        played = []
+        if set_id:
+            try:
+                played = get_set_tracks(set_id)
+            except Exception:
+                pass
+
+        if not played and not current_title:
+            lines.append("[dim]Empty — waiting for first track[/dim]")
+            self.update("\n".join(lines))
+            return
+
+        # Show played tracks (most recent at bottom)
+        for i, t in enumerate(played, 1):
+            title = t.get("title", "?")
+            # Truncate for sidebar width
+            display = title[:35] + "…" if len(title) > 36 else title
+            if title == current_title:
+                # Currently playing — highlight
+                lines.append(f"[bold green]▶ {i}. {display}[/bold green]")
+            else:
+                lines.append(f"[dim]  {i}. {display}[/dim]")
+
+        # If current track not in set_history yet, show it
+        if current_title and not any(t.get("title") == current_title for t in played):
+            idx = len(played) + 1
+            display = current_title[:35] + "…" if len(current_title) > 36 else current_title
+            lines.append(f"[bold green]▶ {idx}. {display}[/bold green]")
+
+        # Up next
+        if next_track and next_track.get("title"):
+            nt = next_track["title"]
+            display = nt[:35] + "…" if len(nt) > 36 else nt
+            lines.append(f"[bold cyan]↳ {display}[/bold cyan]")
+
+        self.update("\n".join(lines))
+
+
 class MixerWidget(Static):
     """Center mixer — crossfader, master VU, master vol, headphone."""
 
@@ -563,10 +618,25 @@ Screen {
     border-top: solid $accent;
 }
 
-#conversation {
+#main-area {
     height: 1fr;
+    layout: horizontal;
+}
+
+#conversation {
+    width: 1fr;
+    height: 100%;
     border-top: solid $accent;
     padding: 0 1;
+}
+
+#playlist {
+    width: 42;
+    height: 100%;
+    border-top: solid $accent;
+    border-left: solid $accent;
+    padding: 0 1;
+    overflow-y: auto;
 }
 
 #debug-log {
@@ -615,7 +685,9 @@ class DJTretaApp(App):
             yield DeckWidget(2, id="deck2")
         yield MixerWidget(id="mixer")
         yield BrainWidget(id="brain")
-        yield RichLog(id="conversation", highlight=True, markup=True, wrap=True)
+        with Horizontal(id="main-area"):
+            yield RichLog(id="conversation", highlight=True, markup=True, wrap=True)
+            yield PlaylistWidget(id="playlist")
         yield RichLog(id="debug-log", highlight=True, markup=True, wrap=True)
         yield Input(placeholder="Talk to DJ Treta... (or /help)", id="prompt-input")
         yield Footer()
@@ -735,6 +807,10 @@ class DJTretaApp(App):
             mixer_w.update("[red]No connection to Mixxx[/red]")
 
         brain_w.update_brain(state, status)
+
+        # Update playlist sidebar
+        playlist_w = self.query_one("#playlist", PlaylistWidget)
+        playlist_w.update_playlist(state)
 
     def poll_daemon_log(self) -> None:
         if not DAEMON_LOG.exists():
