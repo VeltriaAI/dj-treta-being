@@ -12,7 +12,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/cost-$0.04_for_30hrs-brightgreen.svg" alt="Cost: $0.04 for 30hrs">
-  <img src="https://img.shields.io/badge/lines-6.6k_python-lightgrey.svg" alt="6.6k lines">
+  <img src="https://img.shields.io/badge/lines-10k_python-lightgrey.svg" alt="10k lines">
   <a href="https://dj.treta.life"><img src="https://img.shields.io/badge/live_demo-dj.treta.life-ff69b4.svg" alt="Live Demo"></a>
 </p>
 
@@ -32,7 +32,7 @@ DJClaw is a framework for creating autonomous AI DJ Beings. Each Being has its o
 
 The first Being built on it — **DJ Treta** — has played 145+ tracks across 9 sets, running 30+ hours autonomously. Total LLM cost: **$0.04**.
 
-This is not a playlist shuffler. There is zero hardcoded DJ logic. An AI agent sees the state of the decks, reads track timelines, and makes decisions — search for tracks, download them, analyze audio with Gemini, schedule transitions at precise breakdown points, or do nothing. **Software 3.0.**
+This is not a playlist shuffler. There is zero hardcoded DJ logic. A Being agent thinks, converses with listeners, and directs two autonomous agents — a DJ that controls the decks and a Planner that finds tracks. **Software 3.0.**
 
 | Traditional DJ Software | DJClaw |
 |---|---|
@@ -72,9 +72,12 @@ djclaw init
 # Start
 djclaw start
 
-# Talk to her
+# Talk to her (Being brain handles conversation + directives)
 djclaw talk "play something dreamy"
 djclaw talk "go darker"
+
+# Readonly mode for live web listeners (chat only, no deck control)
+djclaw talk --readonly "what's playing?"
 
 # Full terminal UI
 djclaw tui
@@ -87,32 +90,38 @@ Each Being gets its own `SOUL.md`, taste profile, and self-evolving memory. `djc
 ## How It Works
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     DJClaw Being                            │
-│                                                             │
-│  Heartbeat (5-15s adaptive)                                 │
-│  "What's playing? What should happen next?"                 │
-│         │                                                   │
-│         ▼                                                   │
-│  DJ Agent (Google ADK + Gemini Flash)                       │
-│    ├── Mixer Agent (19 tools)                               │
-│    │   load, play, EQ, crossfade, 5 transition techniques   │
-│    ├── Library Agent (4 tools)                              │
-│    │   search YouTube, download, list, set history          │
-│    └── Producer Agent                                       │
-│        generate original tracks (Google Lyria 3)            │
-│         │                                                   │
-│         ▼                                                   │
-│  Mixxx (forked, HTTP API on :7778)                          │
-│  The actual C++ audio engine — two decks, sync, EQ, FX     │
-│         │                                                   │
-│         ▼                                                   │
-│  Relay → dj.treta.life (WebSocket, 3Hz state push)          │
-│  Energy arc, waveforms, transition countdown, deck state    │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                     DJClaw Being (v6.0)                      │
+│                                                              │
+│  Being Agent (treta) — The Brain                             │
+│  Conversation, mood, directives to DJ + Planner              │
+│  "Bhojpuri bajao" → set_mood() + set_planner_directive()     │
+│         │                                                    │
+│         ├── set_dj_directive() ──────┐                       │
+│         └── set_planner_directive() ─┤                       │
+│                                      ▼                       │
+│  DJ Agent (Google ADK + Gemini Flash)                        │
+│    ├── Mixer Agent (19 tools)                                │
+│    │   load, play, EQ, crossfade, 5 transition techniques    │
+│    ├── Library Agent (4 tools)                               │
+│    │   search YouTube, download, list, set history           │
+│    └── Producer Agent                                        │
+│        generate original tracks (Google Lyria 3)             │
+│                                                              │
+│  Planner Agent (background, 30s cycle)                       │
+│    plans 6 tracks, downloads, generates, loads idle deck     │
+│         │                                                    │
+│         ▼                                                    │
+│  Mixxx (forked, HTTP API on :7778)                           │
+│  The actual C++ audio engine — two decks, sync, EQ, FX      │
+│         │                                                    │
+│         ▼                                                    │
+│  Relay → dj.treta.life (WebSocket, 3Hz state push)           │
+│  Energy arc, waveforms, transition countdown, deck state     │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-**There is no state machine.** No transition scheduler. No playlist queue. The agent sees Mixxx reality — what's playing on each deck, position, BPM, key, energy — and makes a decision. Sometimes it downloads a new track. Sometimes it schedules a transition at exactly second 270 of the current track (the breakdown). Sometimes it does nothing. This is what makes it a Being, not a bot.
+**There is no state machine.** No transition scheduler. No playlist queue. The Being thinks, converses with listeners, and sets directives. The DJ agent sees Mixxx reality — what's playing on each deck, position, BPM, key, energy — and makes a decision. Sometimes it downloads a new track. Sometimes it schedules a transition at exactly second 270 of the current track (the breakdown). Sometimes it does nothing. This is what makes it a Being, not a bot.
 
 ### Transition Architecture
 
@@ -138,8 +147,15 @@ Five techniques, each for different musical moments:
 
 ## Features
 
+### Being as Brain (v6.0)
+Three-agent architecture. The Being agent (`treta`) handles all conversation and directs the DJ and Planner agents via directives:
+- `set_dj_directive()` — tell the DJ what to do next (e.g. "use bass_swap for next transition")
+- `set_planner_directive()` — tell the Planner what to find (e.g. "download 3 bhojpuri tracks")
+- `set_mood()` — change the set's genre/mood (triggers replanning)
+- **Readonly mode** — `djclaw talk --readonly` for live web listeners (chat only, no deck control)
+
 ### Autonomous Mixing
-Two-deck mixing with 46 tools. The agent picks tracks based on BPM compatibility (±10), key matching (Camelot wheel), and energy flow. Transitions fire at musically correct moments — breakdowns and outros, never during drops or buildups.
+Two-deck mixing with 56 tools across 8 modules. The DJ agent picks tracks based on BPM compatibility (±10), key matching (Camelot wheel), and energy flow. Transitions fire at musically correct moments — breakdowns and outros, never during drops or buildups.
 
 ### Audio Perception
 Gemini multimodal audio — she hears actual sound, not just metadata:
@@ -172,6 +188,7 @@ Real-time WebSocket relay pushes state to [dj.treta.life](https://dj.treta.life)
 ### Terminal UI
 Full DJ console in the terminal — `djclaw tui`:
 - Two-deck display with VU meters, EQ knobs, BPM, key, sync status
+- Playlist sidebar: energy sparkline, set details, tracklist with now-playing/next indicators
 - Track timeline with highlighted current section
 - BrainWidget: set info, agent/planner/relay status, DJ decisions, transition countdown, billing
 - Commands: `/set`, `/queue`, `/brain`, `/stats`, `/relay`, `/cost`
@@ -202,9 +219,9 @@ DJ Treta's first autonomous run (no human intervention after start):
 | Autonomous transitions | 100+ |
 | Emergency recoveries | 3 (all self-healed) |
 | Crashes | 0 |
-| Lines of Python | 6,634 |
-| Commits | 123 |
-| Built in | 5 days |
+| Lines of Python | ~10,000 |
+| Agents | 3 (Being + DJ + Planner) |
+| Tool modules | 8 (56 tools) |
 
 ## Ecosystem
 
@@ -227,7 +244,8 @@ djclaw kill           Nuclear stop (kills Mixxx + LiteLLM too)
 djclaw reset          Soft reset (clear state, keep tracks)
 djclaw reset --hard   Nuclear reset (delete everything)
 djclaw tui            Full terminal UI
-djclaw talk "msg"     Talk to your DJ
+djclaw talk "msg"     Talk to the Being (brain)
+djclaw talk --readonly "msg"  Readonly (live web listeners, no deck control)
 djclaw status         Quick deck status
 djclaw logs           Tail daemon log
 ```
@@ -333,7 +351,7 @@ I built DJ Treta because I wanted to know: can an AI actually DJ? Not shuffle a 
 
 She was built in a single 12-hour session. By hour 3, she was playing Shiva Tandava Stotram on a JBL PartyBox 310 and I knew this was something real.
 
-Five days and 123 commits later, she's played 30+ hours autonomously, built a 248-track library from scratch, started generating her own music, and costs less than a cup of chai to run all night.
+She's now at v6.0 — a three-agent architecture where the Being thinks and directs, the DJ mixes autonomously, and the Planner finds tracks. 30+ hours of autonomous play, a 248-track library built from scratch, original music generation, and it costs less than a cup of chai to run all night.
 
 DJClaw is the framework so you can build your own.
 
