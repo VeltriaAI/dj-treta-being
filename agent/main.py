@@ -269,10 +269,13 @@ class DJTretaBeing(
                 "DJTRETA_LLM_API_KEY / LLM_API_KEY"
             )
 
-        # Reset billing + thinking log + playlist for fresh session
+        # Reset billing + thinking log + playlist + stale transitions for fresh session
         BILLING_FILE.unlink(missing_ok=True)
         THINKING_FILE.write_text("")
         PLAYLIST_FILE.unlink(missing_ok=True)
+        Path("/tmp/dj-treta-scheduled-transition.json").unlink(missing_ok=True)
+        Path("/tmp/dj-treta-directives.json").unlink(missing_ok=True)
+        Path("/tmp/dj-treta-mood-change.json").unlink(missing_ok=True)
 
         # Init SQLite DB + scan library
         from .db import init_db, scan_library
