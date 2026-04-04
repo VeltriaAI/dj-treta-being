@@ -1,4 +1,5 @@
 """Heartbeat mixin — monitors deck state and triggers transitions.
+# v7.0 Evolution Protocol — self-improving DJ
 
 Priority order:
 1. Silence → emergency recovery
