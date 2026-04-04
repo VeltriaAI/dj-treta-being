@@ -1254,9 +1254,9 @@ class DJTretaApp(App):
         playlist_w.update_playlist(state)
 
     def poll_daemon_log(self) -> None:
+        """File-based log polling — reuses _apply_ws_log for consistent formatting + tab routing."""
         if not DAEMON_LOG.exists():
             if self._log_pos > 0:
-                # Log file was deleted (clean slate) — reset
                 self._log_pos = 0
                 self._log_mtime = 0.0
             return
@@ -1264,7 +1264,6 @@ class DJTretaApp(App):
             content = DAEMON_LOG.read_text()
             lines = content.split("\n")
 
-            # Detect new daemon session: file shorter than our position
             if self._log_pos > len(lines):
                 self._log_pos = 0
                 self.log_widget.write("[yellow]— New daemon session —[/yellow]")
@@ -1277,54 +1276,15 @@ class DJTretaApp(App):
                     "Talk result", "Talk done", "Talk ack", "processing...", "Result: processing",
                     "Unmapped finish_reason", "malformed_function_call", "TOKENS:", "TokenUsage",
                     "mixer ←", "dj_treta →", "dj_treta ←", "library ←", "library →", "mixer →",
-                    "HTTP Request:"]
+                    "HTTP Request:", "Retrying request"]
 
             for line in new_lines:
                 if not line.strip():
                     continue
-                if not any(k in line for k in ["INFO", "WARNING", "ERROR"]):
-                    continue
                 if any(s in line for s in skip):
                     continue
-                parts = line.strip().split("] ", 1)
-                if len(parts) < 2 or not parts[1].strip():
-                    continue
-
-                msg = parts[1].strip()
-                if "ERROR" in line or "WARNING" in line:
-                    self.log_widget.write(f"[red]  {msg}[/red]")
-                elif "DJ decision:" in msg:
-                    self.log_widget.write(f"[bold bright_blue]  {msg}[/bold bright_blue]")
-                elif "Final answer:" in msg:
-                    self.log_widget.write(f"[bold blue]  {msg}[/bold blue]")
-                elif "Playing:" in msg or "now playing" in msg.lower():
-                    self.log_widget.write(f"[green]  {msg}[/green]")
-                elif "Next:" in msg:
-                    self.log_widget.write(f"[cyan]  {msg}[/cyan]")
-                elif "Transition" in msg or "transition" in msg or "Bass-swap" in msg or "bass_swap" in msg:
-                    self.log_widget.write(f"[blue]  {msg}[/blue]")
-                elif "Set started:" in msg or "Set ended:" in msg:
-                    self.log_widget.write(f"[bold yellow]  {msg}[/bold yellow]")
-                elif "Emergency" in msg or "emergency" in msg:
-                    self.log_widget.write(f"[bold red]  {msg}[/bold red]")
-                elif "Generated track:" in msg or "Lyria" in msg or "generate_track" in msg:
-                    self.log_widget.write(f"[bold bright_magenta]  {msg}[/bold bright_magenta]")
-                elif "Planner done:" in msg:
-                    # Show full planner plan from playlist file
-                    self.log_widget.write(f"[bold yellow]  Planner done — new plan:[/bold yellow]")
-                    self._show_planner_plan()
-                elif "Planner" in msg or "planner" in msg.lower():
-                    self.log_widget.write(f"[yellow]  {msg}[/yellow]")
-                elif "preparing" in msg.lower() or "brain" in msg.lower():
-                    self.log_widget.write(f"[yellow]  {msg}[/yellow]")
-                elif "sync" in msg.lower() or "Loaded" in msg:
-                    self.log_widget.write(f"[magenta]  {msg}[/magenta]")
-                elif "schedule_transition" in msg.lower():
-                    self.log_widget.write(f"[bold cyan]  {msg}[/bold cyan]")
-                elif "hear" in msg.lower() or "listen" in msg.lower():
-                    self.log_widget.write(f"[bright_green]  {msg}[/bright_green]")
-                else:
-                    self.log_widget.write(f"[dim]  {msg}[/dim]")
+                # Route through the same formatter that WS uses
+                self._apply_ws_log(line)
         except Exception:
             pass
 
