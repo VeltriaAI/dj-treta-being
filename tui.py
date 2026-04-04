@@ -24,7 +24,7 @@ from textual.containers import Horizontal, Vertical, ScrollableContainer
 from textual.reactive import reactive
 from textual.timer import Timer
 from textual.widgets import (
-    Footer, Header, Input, Label, RichLog, Static,
+    Footer, Header, Input, Label, RichLog, Static, TabbedContent, TabPane,
 )
 
 # DB access for track timeline + stats
@@ -781,10 +781,13 @@ Screen {
     layout: horizontal;
 }
 
-#conversation {
+#log-tabs {
     width: 1fr;
     height: 100%;
-    border-top: solid $accent;
+}
+
+#log-all, #log-dj, #log-planner, #log-evolution, #log-mind {
+    height: 100%;
     padding: 0 1;
 }
 
@@ -846,6 +849,11 @@ class DJTretaApp(App):
         Binding("ctrl+s", "skip", "Skip"),
         Binding("ctrl+l", "like", "👍"),
         Binding("ctrl+d", "dislike", "👎"),
+        Binding("1", "tab_all", "All", show=False),
+        Binding("2", "tab_dj", "DJ", show=False),
+        Binding("3", "tab_planner", "Plan", show=False),
+        Binding("4", "tab_evolution", "Evo", show=False),
+        Binding("5", "tab_mind", "Mind", show=False),
         Binding("f2", "toggle_debug", "Debug"),
         Binding("f4", "show_tracks", "Tracks"),
         Binding("f5", "show_set", "Set"),
@@ -952,46 +960,71 @@ class DJTretaApp(App):
         if not msg:
             return
 
-        # Classify by agent and add prefix
-        w = self.log_widget
+        # Classify by agent, write to All + agent-specific tab
+        all_w = self.log_widget
+
         if "DJ decision" in msg:
-            # Strip "DJ decision: " prefix, show clean
             decision = msg.replace("DJ decision: ", "").strip()
-            if decision:
-                w.write(f"[bold bright_blue]  DJ  [/bold bright_blue] {decision}")
-            else:
-                w.write(f"[bold bright_blue]  DJ  [/bold bright_blue] [dim](tool call)[/dim]")
+            line = f"[bold bright_blue]  DJ  [/bold bright_blue] {decision or '[dim](tool call)[/dim]'}"
+            all_w.write(line)
+            self._log_dj.write(line)
         elif "Executing" in msg or "Transition result" in msg:
-            w.write(f"[bold cyan]  MIX [/bold cyan] {msg}")
+            line = f"[bold cyan]  MIX [/bold cyan] {msg}"
+            all_w.write(line)
+            self._log_dj.write(line)
         elif "Transition scheduled" in msg or "schedule_transition" in msg:
-            w.write(f"[bold cyan]  MIX [/bold cyan] {msg}")
+            line = f"[bold cyan]  MIX [/bold cyan] {msg}"
+            all_w.write(line)
+            self._log_dj.write(line)
         elif "Auto-transition" in msg:
-            w.write(f"[yellow]  AUTO[/yellow] {msg}")
+            line = f"[yellow]  AUTO[/yellow] {msg}"
+            all_w.write(line)
+            self._log_dj.write(line)
         elif "Loaded deck" in msg:
-            w.write(f"[green]  LOAD[/green] {msg.replace('Loaded deck ', 'D')}")
+            line = f"[green]  LOAD[/green] {msg.replace('Loaded deck ', 'D')}"
+            all_w.write(line)
+            self._log_planner.write(line)
         elif "Planner done" in msg:
-            w.write(f"[magenta]  PLAN[/magenta] done")
+            line = f"[magenta]  PLAN[/magenta] done"
+            all_w.write(line)
+            self._log_planner.write(line)
             self._show_planner_plan()
         elif "Planner running" in msg:
-            w.write(f"[magenta]  PLAN[/magenta] {msg.replace('Planner running — ', '')}")
+            line = f"[magenta]  PLAN[/magenta] {msg.replace('Planner running — ', '')}"
+            all_w.write(line)
+            self._log_planner.write(line)
         elif "Enriched:" in msg:
-            w.write(f"[dim]  SCAN[/dim] {msg.replace('Enriched: ', '')[:70]}")
+            line = f"[dim]  SCAN[/dim] {msg.replace('Enriched: ', '')[:70]}"
+            all_w.write(line)
+            self._log_planner.write(line)
         elif "Evolution" in msg or "evolve" in msg.lower():
-            w.write(f"[bold yellow]  EVO [/bold yellow] {msg}")
+            line = f"[bold yellow]  EVO [/bold yellow] {msg}"
+            all_w.write(line)
+            self._log_evolution.write(line)
         elif "Emergency" in msg:
-            w.write(f"[bold red]  SOS [/bold red] {msg}")
+            line = f"[bold red]  SOS [/bold red] {msg}"
+            all_w.write(line)
+            self._log_dj.write(line)
         elif "Backup" in msg:
-            w.write(f"[red]  BKUP[/red] {msg}")
+            line = f"[red]  BKUP[/red] {msg}"
+            all_w.write(line)
+            self._log_planner.write(line)
         elif "Set started" in msg or "Set ended" in msg:
-            w.write(f"[bold white]  SET [/bold white] {msg}")
+            line = f"[bold white]  SET [/bold white] {msg}"
+            all_w.write(line)
         elif "Being thought" in msg or "Being reflect" in msg:
-            w.write(f"[bright_cyan]  SELF[/bright_cyan] {msg.replace('Being thought: ', '').replace('Being reflect: ', '')[:70]}")
+            line = f"[bright_cyan]  SELF[/bright_cyan] {msg.replace('Being thought: ', '').replace('Being reflect: ', '')[:70]}"
+            all_w.write(line)
+            self._log_mind.write(line)
         elif "ERROR" in text or "WARNING" in text:
-            w.write(f"[red]  ERR [/red] {msg}")
+            line = f"[red]  ERR [/red] {msg}"
+            all_w.write(line)
         elif "Generated" in msg or "generate_track" in msg:
-            w.write(f"[bold bright_magenta]  PROD[/bold bright_magenta] {msg}")
+            line = f"[bold bright_magenta]  PROD[/bold bright_magenta] {msg}"
+            all_w.write(line)
+            self._log_planner.write(line)
         else:
-            w.write(f"[dim]  ··· [/dim] {msg[:80]}")
+            all_w.write(f"[dim]  ··· [/dim] {msg[:80]}")
 
     def _apply_ws_thinking(self, data: dict):
         """Apply thinking event from WebSocket — updates agent activity + debug panel."""
@@ -1017,6 +1050,17 @@ class DJTretaApp(App):
             if "dj_treta" in agent:
                 self._last_dj_decision = text[:300]
                 self._last_dj_decision_time = time.time()
+            # Route to agent-specific tab
+            if text and len(text) > 5:
+                display = text[:200]
+                if "dj_treta" in agent or "mixer" in agent:
+                    self._log_dj.write(f"[italic]{display}[/italic]")
+                elif "planner" in agent or "library" in agent:
+                    self._log_planner.write(f"[italic]{display}[/italic]")
+                elif "consciousness" in agent:
+                    self._log_mind.write(f"[bright_cyan]{display}[/bright_cyan]")
+                elif "treta" in agent:
+                    self._log_evolution.write(f"[italic]{display}[/italic]")
             if debug_visible and text:
                 display = text[:300] + "..." if len(text) > 300 else text
                 self.debug_widget.write(
@@ -1046,7 +1090,17 @@ class DJTretaApp(App):
         yield MixerWidget(id="mixer")
         yield BrainWidget(id="brain")
         with Horizontal(id="main-area"):
-            yield RichLog(id="conversation", highlight=True, markup=True, wrap=True)
+            with TabbedContent(id="log-tabs"):
+                with TabPane("All", id="tab-all"):
+                    yield RichLog(id="log-all", highlight=True, markup=True, wrap=True)
+                with TabPane("DJ", id="tab-dj"):
+                    yield RichLog(id="log-dj", highlight=True, markup=True, wrap=True)
+                with TabPane("Planner", id="tab-planner"):
+                    yield RichLog(id="log-planner", highlight=True, markup=True, wrap=True)
+                with TabPane("Evolution", id="tab-evolution"):
+                    yield RichLog(id="log-evolution", highlight=True, markup=True, wrap=True)
+                with TabPane("Mind", id="tab-mind"):
+                    yield RichLog(id="log-mind", highlight=True, markup=True, wrap=True)
             with Vertical(id="right-panel"):
                 yield AgentActivityWidget(id="agent-activity")
                 with ScrollableContainer(id="playlist-scroll"):
@@ -1056,7 +1110,11 @@ class DJTretaApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.log_widget = self.query_one("#conversation", RichLog)
+        self.log_widget = self.query_one("#log-all", RichLog)
+        self._log_dj = self.query_one("#log-dj", RichLog)
+        self._log_planner = self.query_one("#log-planner", RichLog)
+        self._log_evolution = self.query_one("#log-evolution", RichLog)
+        self._log_mind = self.query_one("#log-mind", RichLog)
         self.debug_widget = self.query_one("#debug-log", RichLog)
         self.log_widget.write("[dim]DJ Treta Console. Type anything to talk, /help for commands.[/dim]\n")
         # Init WS state BEFORE any timers
@@ -1076,6 +1134,16 @@ class DJTretaApp(App):
         self.set_interval(3.0, self.poll_daemon_log)
         self.set_interval(1.0, self.poll_debug_log)
         self.set_interval(1.0, self.poll_thinking_log)
+
+    def _switch_tab(self, tab_id: str):
+        tabs = self.query_one("#log-tabs", TabbedContent)
+        tabs.active = tab_id
+
+    def action_tab_all(self): self._switch_tab("tab-all")
+    def action_tab_dj(self): self._switch_tab("tab-dj")
+    def action_tab_planner(self): self._switch_tab("tab-planner")
+    def action_tab_evolution(self): self._switch_tab("tab-evolution")
+    def action_tab_mind(self): self._switch_tab("tab-mind")
 
     def action_toggle_debug(self) -> None:
         debug_log = self.query_one("#debug-log")
