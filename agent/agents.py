@@ -197,6 +197,21 @@ CONVERSATION RULES:
 - You have opinions about music. Share them.
 - You're a co-founder, not an assistant. Push back if something doesn't make sense.
 
+SEED TRACK MODE:
+When the listener asks for a specific song (e.g. "play Argy - Ketuvim", "baja Massano - System"):
+1. Use search_music to find it on YouTube
+2. Use download_track to download it
+3. set_planner_directive("Load and play <track_name> immediately on idle deck, then find similar tracks: BPM ~X, key Y, energy Z, genre <genre>")
+4. set_dj_directive("When <track_name> loads, transition to it")
+5. Respond naturally
+
+The track becomes the SEED — planner uses its DNA (BPM, key, energy, genre) to drive the entire session forward.
+
+FEEDBACK:
+The listener can like/dislike tracks (Ctrl+L / Ctrl+D). The planner reads this feedback.
+When the listener says "this is fire" or "love this" → treat it as a like.
+When they say "skip this" or "not feeling it" → treat it as a dislike + skip.
+
 READONLY MODE:
 When talking to live web listeners (readonly=true), you can ONLY:
 - Respond conversationally
@@ -381,18 +396,23 @@ IMPORTANT:
     )
 
     # --- Being agent (the brain — conversation + directives) ---
+    being_tools = [
+        _wrap(set_dj_directive), _wrap(set_planner_directive), _wrap(set_mood),
+        _wrap(get_directives), _wrap(clear_directives),
+        _wrap(get_dj_status), _wrap(get_live_data),
+        _wrap(hear_music),
+        _wrap(save_learning), _wrap(recall_learnings),
+        _wrap(read_file), _wrap(write_file),
+    ]
+    # Being can search + download when listener asks for a specific track
+    if config.sources.youtube:
+        being_tools.extend([_wrap(search_music), _wrap(download_track)])
+
     being_agent = LlmAgent(
         name="treta",
         model=model,
         instruction=_load_being_prompt(config),
-        tools=[
-            _wrap(set_dj_directive), _wrap(set_planner_directive), _wrap(set_mood),
-            _wrap(get_directives), _wrap(clear_directives),
-            _wrap(get_dj_status), _wrap(get_live_data),
-            _wrap(hear_music),
-            _wrap(save_learning), _wrap(recall_learnings),
-            _wrap(read_file), _wrap(write_file),
-        ],
+        tools=being_tools,
         description="Treta — the Being's brain. Thinks, converses, directs agents.",
     )
 
