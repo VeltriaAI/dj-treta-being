@@ -792,7 +792,7 @@ TabPane {
     padding: 0;
 }
 
-#log-all, #log-dj, #log-planner, #log-evolution, #log-mind {
+#log-all, #log-dj, #log-planner, #log-treta {
     height: 1fr;
     padding: 0 1;
 }
@@ -858,10 +858,9 @@ class DJTretaApp(App):
         Binding("ctrl+l", "like", "👍"),
         Binding("ctrl+d", "dislike", "👎"),
         Binding("f6", "tab_all", "All"),
-        Binding("f7", "tab_dj", "DJ"),
-        Binding("f8", "tab_planner", "Plan"),
-        Binding("f9", "tab_evolution", "Evo"),
-        Binding("f10", "tab_mind", "Mind"),
+        Binding("f7", "tab_treta", "Treta"),
+        Binding("f8", "tab_dj", "DJ"),
+        Binding("f9", "tab_planner", "Plan"),
         Binding("f2", "toggle_debug", "Debug"),
         Binding("f4", "show_tracks", "Tracks"),
         Binding("f5", "show_set", "Set"),
@@ -1010,7 +1009,7 @@ class DJTretaApp(App):
         elif "Evolution" in msg or "evolve" in msg.lower():
             line = f"[bold yellow]  EVO [/bold yellow] {msg}"
             all_w.write(line)
-            self._log_evolution.write(line)
+            self._log_treta.write(line)
         elif "Emergency" in msg:
             line = f"[bold red]  SOS [/bold red] {msg}"
             all_w.write(line)
@@ -1025,7 +1024,7 @@ class DJTretaApp(App):
         elif "Being thought" in msg or "Being reflect" in msg:
             line = f"[bright_cyan]  SELF[/bright_cyan] {msg.replace('Being thought: ', '').replace('Being reflect: ', '')[:70]}"
             all_w.write(line)
-            self._log_mind.write(line)
+            self._log_treta.write(line)
         elif "ERROR" in text or "WARNING" in text:
             line = f"[red]  ERR [/red] {msg}"
             all_w.write(line)
@@ -1068,9 +1067,9 @@ class DJTretaApp(App):
                 elif "planner" in agent or "library" in agent:
                     self._log_planner.write(f"[italic]{display}[/italic]")
                 elif "consciousness" in agent:
-                    self._log_mind.write(f"[bright_cyan]{display}[/bright_cyan]")
+                    self._log_treta.write(f"[bright_cyan]{display}[/bright_cyan]")
                 elif "treta" in agent:
-                    self._log_evolution.write(f"[italic]{display}[/italic]")
+                    self._log_treta.write(f"[italic]{display}[/italic]")
             if debug_visible and text:
                 display = text[:300] + "..." if len(text) > 300 else text
                 self.debug_widget.write(
@@ -1103,14 +1102,12 @@ class DJTretaApp(App):
             with TabbedContent(id="log-tabs"):
                 with TabPane("All", id="tab-all"):
                     yield RichLog(id="log-all", highlight=True, markup=True, wrap=True)
+                with TabPane("Treta", id="tab-treta"):
+                    yield RichLog(id="log-treta", highlight=True, markup=True, wrap=True)
                 with TabPane("DJ", id="tab-dj"):
                     yield RichLog(id="log-dj", highlight=True, markup=True, wrap=True)
                 with TabPane("Planner", id="tab-planner"):
                     yield RichLog(id="log-planner", highlight=True, markup=True, wrap=True)
-                with TabPane("Evolution", id="tab-evolution"):
-                    yield RichLog(id="log-evolution", highlight=True, markup=True, wrap=True)
-                with TabPane("Mind", id="tab-mind"):
-                    yield RichLog(id="log-mind", highlight=True, markup=True, wrap=True)
             with Vertical(id="right-panel"):
                 yield AgentActivityWidget(id="agent-activity")
                 with ScrollableContainer(id="playlist-scroll"):
@@ -1123,8 +1120,7 @@ class DJTretaApp(App):
         self.log_widget = self.query_one("#log-all", RichLog)
         self._log_dj = self.query_one("#log-dj", RichLog)
         self._log_planner = self.query_one("#log-planner", RichLog)
-        self._log_evolution = self.query_one("#log-evolution", RichLog)
-        self._log_mind = self.query_one("#log-mind", RichLog)
+        self._log_treta = self.query_one("#log-treta", RichLog)
         self.debug_widget = self.query_one("#debug-log", RichLog)
         self.log_widget.write("[dim]DJ Treta Console. Type anything to talk, /help for commands.[/dim]\n")
         # Init WS state BEFORE any timers
@@ -1150,10 +1146,9 @@ class DJTretaApp(App):
         tabs.active = tab_id
 
     def action_tab_all(self): self._switch_tab("tab-all")
+    def action_tab_treta(self): self._switch_tab("tab-treta")
     def action_tab_dj(self): self._switch_tab("tab-dj")
     def action_tab_planner(self): self._switch_tab("tab-planner")
-    def action_tab_evolution(self): self._switch_tab("tab-evolution")
-    def action_tab_mind(self): self._switch_tab("tab-mind")
 
     def action_toggle_debug(self) -> None:
         debug_log = self.query_one("#debug-log")
