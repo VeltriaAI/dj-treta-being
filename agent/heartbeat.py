@@ -7,6 +7,7 @@ Priority order:
 4. Agent decides (past 50% played)
 5. Backup load (idle empty, past threshold)
 """
+# v7.0 — Energy-aware transition selection
 
 import json
 import logging
