@@ -784,10 +784,16 @@ Screen {
 #log-tabs {
     width: 1fr;
     height: 100%;
+    border-top: solid $accent;
+}
+
+TabPane {
+    height: 1fr;
+    padding: 0;
 }
 
 #log-all, #log-dj, #log-planner, #log-evolution, #log-mind {
-    height: 100%;
+    height: 1fr;
     padding: 0 1;
 }
 
@@ -828,11 +834,13 @@ Screen {
 
 #prompt-input {
     width: 100%;
-    dock: bottom;
+    height: 3;
+    margin-bottom: 0;
 }
 
 Footer {
     height: 1;
+    dock: bottom;
 }
 """
 
