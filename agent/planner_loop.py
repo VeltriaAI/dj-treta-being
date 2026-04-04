@@ -144,6 +144,27 @@ class PlannerMixin:
             intent_line = f"\nLISTENER REQUEST: \"{self.user_intent}\"\nThis is what the listener wants RIGHT NOW. Prioritize this above BPM/key matching.\n\n"
             self.user_intent = ""
 
+        # Listener feedback — what they like/dislike shapes selection
+        feedback_line = ""
+        try:
+            from .db import get_liked_tracks, get_disliked_tracks
+            liked = get_liked_tracks(10)
+            disliked = get_disliked_tracks(10)
+            if liked:
+                genres = set(l.get("genre", "") for l in liked if l.get("genre"))
+                bpms = [l.get("bpm", 0) for l in liked if l.get("bpm")]
+                liked_names = [l["track_title"] for l in liked]
+                feedback_line += f"\nLISTENER LIKES: {', '.join(liked_names[:5])}"
+                if genres:
+                    feedback_line += f"\n  Preferred genres: {', '.join(genres)}"
+                if bpms:
+                    feedback_line += f"\n  Preferred BPM range: {min(bpms):.0f}-{max(bpms):.0f}"
+                feedback_line += "\n  Prioritize tracks SIMILAR to what the listener liked.\n"
+            if disliked:
+                feedback_line += f"\nLISTENER DISLIKES (AVOID similar tracks): {', '.join(disliked[:5])}\n"
+        except Exception:
+            pass
+
         log.info(f"Planner running — current: {current_track or 'nothing'}, {len(candidates)} candidates in DB")
         result = self._invoke_planner(
             f"Currently playing: {current_info}\n"
@@ -152,6 +173,7 @@ class PlannerMixin:
             f"Current mood/genre: {self.mood or 'melodic-techno'}.\n"
             + directive_line
             + intent_line
+            + feedback_line
             + self._build_source_instructions() +
             f"After creating/finding new tracks, analyze each one.\n"
             f"Then pick the best next 3 tracks from what's available.\n"

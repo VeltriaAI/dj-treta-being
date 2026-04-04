@@ -87,6 +87,15 @@ def init_db():
         notes TEXT,
         created_at REAL DEFAULT (strftime('%s','now'))
     );
+
+    CREATE TABLE IF NOT EXISTS feedback (
+        id INTEGER PRIMARY KEY,
+        track_title TEXT NOT NULL,
+        track_path TEXT,
+        feedback TEXT NOT NULL,  -- 'like' or 'dislike'
+        set_id TEXT,
+        created_at REAL DEFAULT (strftime('%s','now'))
+    );
     """)
     db.commit()
     db.close()
@@ -319,6 +328,46 @@ def get_set_tracks(set_id: str) -> list[dict]:
     try:
         return [dict(r) for r in db.execute(
             "SELECT * FROM set_history WHERE set_id=? ORDER BY played_at", (set_id,)
+        ).fetchall()]
+    finally:
+        db.close()
+
+
+def add_feedback(track_title: str, feedback: str, track_path: str = "", set_id: str = ""):
+    """Record like/dislike feedback for a track."""
+    db = get_db()
+    try:
+        db.execute(
+            "INSERT INTO feedback (track_title, track_path, feedback, set_id) VALUES (?, ?, ?, ?)",
+            (track_title, track_path, feedback, set_id)
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
+def get_liked_tracks(limit: int = 20) -> list[dict]:
+    """Get recently liked tracks with their metadata."""
+    db = get_db()
+    try:
+        return [dict(r) for r in db.execute("""
+            SELECT f.track_title, f.feedback, t.bpm, t.key_camelot, t.energy_peak, t.genre, t.mood
+            FROM feedback f
+            LEFT JOIN tracks t ON t.title LIKE '%' || f.track_title || '%'
+            WHERE f.feedback = 'like'
+            ORDER BY f.created_at DESC LIMIT ?
+        """, (limit,)).fetchall()]
+    finally:
+        db.close()
+
+
+def get_disliked_tracks(limit: int = 20) -> list[str]:
+    """Get recently disliked track titles."""
+    db = get_db()
+    try:
+        return [r["track_title"] for r in db.execute(
+            "SELECT track_title FROM feedback WHERE feedback='dislike' ORDER BY created_at DESC LIMIT ?",
+            (limit,)
         ).fetchall()]
     finally:
         db.close()

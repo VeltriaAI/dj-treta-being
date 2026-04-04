@@ -416,6 +416,16 @@ class PlaylistWidget(Static):
             except Exception:
                 pass
 
+        # Load feedback for this set
+        feedback_map = {}
+        try:
+            db = get_db()
+            for row in db.execute("SELECT track_title, feedback FROM feedback ORDER BY created_at").fetchall():
+                feedback_map[row["track_title"]] = row["feedback"]
+            db.close()
+        except Exception:
+            pass
+
         if not played and not current_title:
             lines.append("[dim]Waiting for first track…[/dim]")
             self.update("\n".join(lines))
@@ -423,6 +433,12 @@ class PlaylistWidget(Static):
 
         for i, t in enumerate(played, 1):
             title = t.get("title", "?")
+            # Feedback icon
+            fb = ""
+            for fb_title, fb_type in feedback_map.items():
+                if fb_title in title or title in fb_title:
+                    fb = " 👍" if fb_type == "like" else " 👎"
+                    break
             # Get energy from DB
             energy_str = ""
             try:
@@ -438,11 +454,11 @@ class PlaylistWidget(Static):
                     energy_str = f" E:{track_data['energy_peak']:.0f}"
             except Exception:
                 pass
-            display = title[:30] + "…" if len(title) > 31 else title
+            display = title[:28] + "…" if len(title) > 29 else title
             if title == current_title:
-                lines.append(f"[bold green]▶ {i}. {display}{energy_str}[/bold green]")
+                lines.append(f"[bold green]▶ {i}. {display}{energy_str}{fb}[/bold green]")
             else:
-                lines.append(f"[dim]  {i}. {display}{energy_str}[/dim]")
+                lines.append(f"[dim]  {i}. {display}{energy_str}{fb}[/dim]")
 
         # Current track not in history yet
         if current_title and not any(t.get("title") == current_title for t in played):
@@ -737,6 +753,8 @@ class DJTretaApp(App):
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit"),
         Binding("ctrl+s", "skip", "Skip"),
+        Binding("ctrl+l", "like", "👍"),
+        Binding("ctrl+d", "dislike", "👎"),
         Binding("f2", "toggle_debug", "Debug"),
         Binding("f4", "show_tracks", "Tracks"),
         Binding("f5", "show_set", "Set"),
@@ -1036,6 +1054,8 @@ class DJTretaApp(App):
                 "  [cyan]/stats[/cyan]             Show library stats from DB\n"
                 "  [cyan]/relay[/cyan]             Show relay status\n"
                 "  [cyan]/tracks[/cyan]            List library\n"
+                "  [cyan]/like[/cyan]              👍 Like current track\n"
+                "  [cyan]/dislike[/cyan]           👎 Dislike current track\n"
                 "  [cyan]/sources[/cyan] <src> on|off  Toggle music sources (yt, originals)\n"
                 "  [cyan]/cost[/cyan]              Show billing details\n"
                 "  [cyan]/start[/cyan]             Start Being daemon\n"
@@ -1085,6 +1105,12 @@ class DJTretaApp(App):
             self.show_db_stats()
         elif cmd == "relay":
             self.show_relay_status()
+        elif cmd == "like":
+            self.run_brain_command("feedback", {"type": "like"})
+            self.log_widget.write("[green]  👍 Liked![/green]")
+        elif cmd == "dislike":
+            self.run_brain_command("feedback", {"type": "dislike"})
+            self.log_widget.write("[red]  👎 Disliked — will avoid similar[/red]")
         elif cmd == "sources" and args:
             source = args[0].lower()
             enabled = args[1].lower() in ("on", "true", "1") if len(args) > 1 else True
@@ -1487,6 +1513,14 @@ class DJTretaApp(App):
     def action_skip(self):
         self.log_widget.write("[yellow]  Skipping...[/yellow]")
         self.run_brain_command("skip", {})
+
+    def action_like(self):
+        self.run_brain_command("feedback", {"type": "like"})
+        self.log_widget.write("[green]  👍 Liked![/green]")
+
+    def action_dislike(self):
+        self.run_brain_command("feedback", {"type": "dislike"})
+        self.log_widget.write("[red]  👎 Disliked[/red]")
 
     def action_show_tracks(self):
         self.show_tracks()

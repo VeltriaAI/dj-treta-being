@@ -127,6 +127,33 @@ class CommandsMixin:
             self._tracks_since_plan = self.config.planner.replan_every_n_tracks
             return f"Mood changed to {new_mood}"
 
+        elif cmd == "feedback":
+            feedback_type = args.get("type", "like")  # 'like' or 'dislike'
+            from .main import _get_status
+            from .db import add_feedback
+            status = _get_status(self.config.mixxx.url)
+            if not status:
+                return "Mixxx offline"
+            # Get current playing track
+            track_title = ""
+            track_path = ""
+            for dk in [1, 2]:
+                if status.get(f"deck{dk}", {}).get("playing"):
+                    try:
+                        tinfo = httpx.get(f"{self.config.mixxx.url}/api/deck/{dk}/track_info", timeout=2).json()
+                        track_title = tinfo.get("title", "")
+                        track_path = tinfo.get("file_path", "")
+                    except Exception:
+                        pass
+                    break
+            if not track_title:
+                return "No track playing"
+            set_id = self.current_set["id"] if self.current_set else ""
+            add_feedback(track_title, feedback_type, track_path, set_id)
+            emoji = "👍" if feedback_type == "like" else "👎"
+            log.info(f"Feedback: {emoji} {track_title}")
+            return f"{emoji} {feedback_type.upper()}: {track_title}"
+
         elif cmd == "change_sources":
             source = args.get("source", "")
             enabled = args.get("enabled", True)
