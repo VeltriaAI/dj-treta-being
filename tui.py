@@ -7,6 +7,7 @@ Usage:
     djtreta tui
 """
 
+import asyncio
 import json
 import os
 import sys
@@ -15,6 +16,7 @@ import time
 from pathlib import Path
 
 import httpx
+import websockets
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -37,6 +39,7 @@ COMMAND_FILE = Path("/tmp/dj-treta-command.json")
 DAEMON_LOG = Path("/tmp/dj-treta-daemon.log")
 THINKING_LOG = Path("/tmp/dj-treta-thinking.log")
 MUSIC_DIR = Path.home() / "Music" / "DJTreta"
+WS_URL = "ws://localhost:7779"
 
 KEY_MAP = {
     1: "C", 2: "Db", 3: "D", 4: "Eb", 5: "E", 6: "F",
@@ -762,6 +765,173 @@ class DJTretaApp(App):
 
     debug_mode = reactive(False)
 
+    # ── WebSocket real-time connection ───────────────────────────────
+
+    def _start_ws_client(self):
+        """Connect to daemon WebSocket for real-time updates."""
+        self._ws = None
+        self._ws_connected = False
+        self._ws_event_loop = None
+        threading.Thread(target=self._ws_thread, daemon=True).start()
+
+    def _ws_thread(self):
+        """WebSocket client thread — runs its own event loop."""
+        self._ws_event_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._ws_event_loop)
+        self._ws_event_loop.run_until_complete(self._ws_loop())
+
+    async def _ws_loop(self):
+        """Connect to daemon WS and receive events. Auto-reconnects."""
+        while True:
+            try:
+                async with websockets.connect(WS_URL, ping_interval=20, ping_timeout=10) as ws:
+                    self._ws = ws
+                    self._ws_connected = True
+                    self.call_from_thread(self._on_ws_connected)
+                    async for raw in ws:
+                        try:
+                            msg = json.loads(raw)
+                            self._handle_ws_message(msg)
+                        except json.JSONDecodeError:
+                            pass
+            except Exception:
+                pass
+            # Disconnected — reset and retry
+            self._ws_connected = False
+            self._ws = None
+            self.call_from_thread(self._on_ws_disconnected)
+            await asyncio.sleep(3)
+
+    def _on_ws_connected(self):
+        """Called on main thread when WS connects."""
+        self.log_widget.write("[green]  ⚡ WebSocket connected — real-time mode[/green]")
+
+    def _on_ws_disconnected(self):
+        """Called on main thread when WS disconnects."""
+        pass  # Silent — file polling takes over as fallback
+
+    def _handle_ws_message(self, msg: dict):
+        """Route incoming WebSocket messages to handlers (called from WS thread)."""
+        msg_type = msg.get("type", "")
+
+        if msg_type == "event":
+            event = msg.get("event", "")
+            data = msg.get("data", {})
+
+            if event == "state":
+                self.call_from_thread(self._apply_ws_state, data)
+            elif event == "log":
+                text = data.get("text", "")
+                if text:
+                    self.call_from_thread(self._apply_ws_log, text)
+            elif event == "thinking":
+                self.call_from_thread(self._apply_ws_thinking, data)
+            elif event == "talk_response":
+                # Talk responses come back here when sent via WS
+                pass
+
+        elif msg_type == "response":
+            # Command responses — currently commands go via file, so this is future-use
+            pass
+
+        elif msg_type == "error":
+            error = msg.get("error", "Unknown error")
+            self.call_from_thread(
+                lambda e=error: self.log_widget.write(f"[red]  WS error: {e}[/red]")
+            )
+
+    def _apply_ws_state(self, data: dict):
+        """Apply state update from WebSocket event."""
+        self._ws_state = data
+
+    def _apply_ws_log(self, text: str):
+        """Apply a log line from WebSocket event — same filtering as poll_daemon_log."""
+        skip = ["LiteLLM", "Wrapper:", "completion() model", "─", "│", "╭", "╰",
+                "Observations:", "Step ", "Calling tool", "TRACK:", "TECHNIQUE:", "ENERGY:",
+                "Talk result", "Talk done", "Talk ack", "processing...", "Result: processing",
+                "Unmapped finish_reason", "malformed_function_call", "TOKENS:", "TokenUsage",
+                "mixer ←", "dj_treta →", "dj_treta ←", "library ←", "library →", "mixer →",
+                "HTTP Request:"]
+        if any(s in text for s in skip):
+            return
+        # Must contain a log level
+        if not any(k in text for k in ["INFO", "WARNING", "ERROR"]):
+            return
+        # Extract message after "] "
+        parts = text.strip().split("] ", 1)
+        if len(parts) < 2 or not parts[1].strip():
+            return
+        msg = parts[1].strip()
+
+        # Color by content — same patterns as poll_daemon_log
+        if "ERROR" in text or "WARNING" in text:
+            self.log_widget.write(f"[red]  {msg}[/red]")
+        elif "DJ decision:" in msg:
+            self.log_widget.write(f"[bold bright_blue]  {msg}[/bold bright_blue]")
+        elif "Final answer:" in msg:
+            self.log_widget.write(f"[bold blue]  {msg}[/bold blue]")
+        elif "Playing:" in msg or "now playing" in msg.lower():
+            self.log_widget.write(f"[green]  {msg}[/green]")
+        elif "Next:" in msg:
+            self.log_widget.write(f"[cyan]  {msg}[/cyan]")
+        elif "Transition" in msg or "transition" in msg or "Bass-swap" in msg or "bass_swap" in msg:
+            self.log_widget.write(f"[blue]  {msg}[/blue]")
+        elif "Set started:" in msg or "Set ended:" in msg:
+            self.log_widget.write(f"[bold yellow]  {msg}[/bold yellow]")
+        elif "Emergency" in msg or "emergency" in msg:
+            self.log_widget.write(f"[bold red]  {msg}[/bold red]")
+        elif "Generated track:" in msg or "Lyria" in msg or "generate_track" in msg:
+            self.log_widget.write(f"[bold bright_magenta]  {msg}[/bold bright_magenta]")
+        elif "Planner done:" in msg:
+            self.log_widget.write(f"[bold yellow]  Planner done — new plan:[/bold yellow]")
+            self._show_planner_plan()
+        elif "Planner" in msg or "planner" in msg.lower():
+            self.log_widget.write(f"[yellow]  {msg}[/yellow]")
+        elif "preparing" in msg.lower() or "brain" in msg.lower():
+            self.log_widget.write(f"[yellow]  {msg}[/yellow]")
+        elif "sync" in msg.lower() or "Loaded" in msg:
+            self.log_widget.write(f"[magenta]  {msg}[/magenta]")
+        elif "schedule_transition" in msg.lower():
+            self.log_widget.write(f"[bold cyan]  {msg}[/bold cyan]")
+        elif "hear" in msg.lower() or "listen" in msg.lower():
+            self.log_widget.write(f"[bright_green]  {msg}[/bright_green]")
+        else:
+            self.log_widget.write(f"[dim]  {msg}[/dim]")
+
+    def _apply_ws_thinking(self, data: dict):
+        """Apply thinking event from WebSocket — same logic as poll_thinking_log."""
+        agent = data.get("agent", "?")
+        think_type = data.get("type", "")
+        text = data.get("text", "")
+
+        debug_visible = self.query_one("#debug-log").has_class("visible")
+
+        if think_type == "think":
+            # Surface DJ decisions to BrainWidget
+            if "dj_treta" in agent:
+                self._last_dj_decision = text[:300]
+                self._last_dj_decision_time = time.time()
+            if debug_visible and text:
+                display = text[:300] + "..." if len(text) > 300 else text
+                self.debug_widget.write(
+                    f"[bold bright_white]  {agent}:[/bold bright_white] [italic]{display}[/italic]"
+                )
+
+        elif think_type == "call":
+            if debug_visible and text:
+                self.debug_widget.write(f"[cyan]  {agent} -> {text}[/cyan]")
+
+        elif think_type == "observation":
+            if debug_visible and text:
+                display = text[:150] + "..." if len(text) > 150 else text
+                self.debug_widget.write(f"[dim green]  {agent} <- {display}[/dim green]")
+
+        elif think_type == "tokens":
+            if debug_visible and text:
+                self.debug_widget.write(f"[dim yellow]  {text}[/dim yellow]")
+
+    # ── End WebSocket ────────────────────────────────────────────────
+
     def compose(self) -> ComposeResult:
         yield Header()
         with Horizontal(id="decks"):
@@ -789,9 +959,13 @@ class DJTretaApp(App):
         self._thinking_pos = 0
         self._last_dj_decision = ""
         self._last_dj_decision_time = 0.0
+        # File-based polling as fallback (runs always, WS events supplement/override)
         self.set_interval(3.0, self.poll_daemon_log)
         self.set_interval(1.0, self.poll_debug_log)
         self.set_interval(1.0, self.poll_thinking_log)
+        # Start WebSocket client for real-time updates
+        self._ws_state = None
+        self._start_ws_client()
 
     def action_toggle_debug(self) -> None:
         debug_log = self.query_one("#debug-log")
@@ -860,7 +1034,11 @@ class DJTretaApp(App):
     def refresh_status(self) -> None:
         status = mixxx_get("/api/status")
         live = mixxx_get("/api/live")
-        state = read_state()
+        # Prefer WebSocket state when connected, fall back to file
+        if self._ws_connected and self._ws_state:
+            state = self._ws_state
+        else:
+            state = read_state()
 
         deck1_w = self.query_one("#deck1", DeckWidget)
         deck2_w = self.query_one("#deck2", DeckWidget)

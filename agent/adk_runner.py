@@ -129,6 +129,13 @@ class ADKRunnerMixin:
                         if not text.startswith('{') and not text.startswith('['):
                             with open(THINKING_FILE, "a") as f:
                                 f.write(f"[THINK:{agent_name}] {text[:500]}\n")
+                            # Broadcast thinking via WebSocket
+                            if hasattr(self, '_ws_broadcast'):
+                                self._ws_broadcast("thinking", {
+                                    "agent": agent_name,
+                                    "type": "think",
+                                    "text": text[:500],
+                                })
 
             # Tool calls
             func_calls = event.get_function_calls()
@@ -137,6 +144,14 @@ class ADKRunnerMixin:
                     args_str = str(fc.args)[:200] if fc.args else ""
                     with open(THINKING_FILE, "a") as f:
                         f.write(f"[CALL:{agent_name}] {fc.name}({args_str})\n")
+                    # Broadcast tool call via WebSocket
+                    if hasattr(self, '_ws_broadcast'):
+                        self._ws_broadcast("thinking", {
+                            "agent": agent_name,
+                            "type": "call",
+                            "tool": fc.name,
+                            "args": args_str,
+                        })
 
             # Billing — usage_metadata
             if event.usage_metadata:

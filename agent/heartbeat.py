@@ -61,6 +61,8 @@ class HeartbeatMixin:
         if (idle_ready and remaining < 30 and remaining > 0 and playing
                 and not self._agent_busy and not self._transition_pending):
             log.info(f"Auto-transition: {remaining:.0f}s left, crossfading to deck {idle_deck}")
+            if hasattr(self, '_ws_broadcast'):
+                self._ws_broadcast("log", {"text": f"Auto-transition: {remaining:.0f}s left, crossfading to deck {idle_deck}"})
             from .tools import do_transition
             self._transition_pending = True
             def _auto():
@@ -167,6 +169,8 @@ class HeartbeatMixin:
                 try:
                     result = self._invoke_agent(instruction, fresh_session=True)
                     log.info(f"DJ decision: {result[:500]}")
+                    if hasattr(self, '_ws_broadcast'):
+                        self._ws_broadcast("log", {"text": f"DJ decision: {result[:200]}"})
                     # Clear directive after DJ has read it
                     if self.dj_directive:
                         log.info(f"DJ directive consumed: {self.dj_directive[:80]}")

@@ -185,6 +185,8 @@ class PlannerMixin:
             f"For each: title, full path, BPM, key, energy, why it fits."
         )
         log.info(f"Planner done: {str(result)[:500]}")
+        if hasattr(self, '_ws_broadcast'):
+            self._ws_broadcast("log", {"text": f"Planner done: {str(result)[:200]}"})
 
         self._write_playlist(result, current_track)
 
@@ -329,6 +331,8 @@ class PlannerMixin:
 
             if result.get("ok"):
                 log.info(f"Loaded deck {idle_deck}: {next_track.get('title', '?')[:50]}")
+                if hasattr(self, '_ws_broadcast'):
+                    self._ws_broadcast("log", {"text": f"Loaded deck {idle_deck}: {next_track.get('title', '?')[:50]}"})
 
                 # Save duration from Mixxx (Gemini analysis often misses it)
                 try:

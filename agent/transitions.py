@@ -44,6 +44,8 @@ class TransitionMixin:
                 if gap <= 0:
                     # Time to execute — right on the mark
                     log.info(f"Executing {technique} to deck {to_deck} at {current_pos:.1f}s (target: {at_position}s)")
+                    if hasattr(self, '_ws_broadcast'):
+                        self._ws_broadcast("log", {"text": f"Executing {technique} to deck {to_deck} at {current_pos:.1f}s"})
                     if technique == "bass_swap":
                         result = do_bass_swap(to_deck, duration)
                     elif technique == "filter_sweep":
@@ -55,6 +57,8 @@ class TransitionMixin:
                     else:
                         result = do_transition(to_deck, duration)
                     log.info(f"Transition result: {str(result)[:200]}")
+                    if hasattr(self, '_ws_broadcast'):
+                        self._ws_broadcast("log", {"text": f"Transition result: {str(result)[:200]}"})
                     # Mark transition event in energy arc
                     if self.current_set and isinstance(self.current_set.get("energy_arc"), list):
                         self.current_set["energy_arc"].append({
