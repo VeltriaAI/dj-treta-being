@@ -37,6 +37,7 @@ from .commands import CommandsMixin
 from .adk_runner import ADKRunnerMixin
 from .session import SessionMixin
 from .evolution import EvolutionMixin
+from .ws_server import WSServerMixin
 
 logging.basicConfig(
     level=logging.INFO,
@@ -194,6 +195,7 @@ class DJTretaBeing(
     ADKRunnerMixin,
     SessionMixin,
     EvolutionMixin,
+    WSServerMixin,
 ):
 
     def __init__(self, config: Config):
@@ -326,6 +328,9 @@ class DJTretaBeing(
             self.mood = mood_file.read_text().strip()
             mood_file.unlink()
             log.info(f"Startup mood: {self.mood}")
+
+        # WebSocket server for MCP and other clients
+        self._start_ws_server()
 
         # Start broadcast + recording + set
         self._start_broadcast()
