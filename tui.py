@@ -478,6 +478,83 @@ class PlaylistWidget(Static):
         self.update("\n".join(lines))
 
 
+class AgentActivityWidget(Static):
+    """Real-time agent activity dashboard — who's doing what."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._agents = {
+            "treta": {"status": "idle", "last": "", "time": 0},
+            "dj_treta": {"status": "idle", "last": "", "time": 0},
+            "planner": {"status": "idle", "last": "", "time": 0},
+            "consciousness": {"status": "idle", "last": "", "time": 0},
+            "mixer": {"status": "idle", "last": "", "time": 0},
+        }
+
+    def update_agent(self, agent: str, status: str = "", text: str = "", tool: str = ""):
+        """Update an agent's activity from WS thinking events."""
+        if agent not in self._agents:
+            self._agents[agent] = {"status": "idle", "last": "", "time": 0}
+
+        entry = self._agents[agent]
+        entry["time"] = time.time()
+
+        if tool:
+            entry["status"] = "tool"
+            entry["last"] = f"{tool}()"
+        elif text:
+            entry["status"] = "thinking"
+            entry["last"] = text[:60]
+        elif status:
+            entry["status"] = status
+
+        self._render()
+
+    def set_idle(self, agent: str):
+        """Mark an agent as idle (no activity for a while)."""
+        if agent in self._agents:
+            self._agents[agent]["status"] = "idle"
+            self._render()
+
+    def _render(self):
+        """Render the activity panel."""
+        icons = {
+            "treta": "🧠",
+            "dj_treta": "🎧",
+            "planner": "📋",
+            "consciousness": "💭",
+            "mixer": "🎛",
+        }
+        status_colors = {
+            "idle": "dim",
+            "thinking": "yellow",
+            "tool": "cyan",
+        }
+
+        lines = ["[bold underline]AGENT ACTIVITY[/bold underline]"]
+
+        now = time.time()
+        for name, entry in self._agents.items():
+            icon = icons.get(name, "⚙")
+            color = status_colors.get(entry["status"], "white")
+            age = now - entry["time"] if entry["time"] > 0 else 999
+
+            # Auto-idle if no activity for 30s
+            if age > 30 and entry["status"] != "idle":
+                entry["status"] = "idle"
+                color = "dim"
+
+            if entry["status"] == "idle":
+                lines.append(f"[dim]{icon} {name}: idle[/dim]")
+            elif entry["status"] == "tool":
+                lines.append(f"[{color}]{icon} {name}: [bold]{entry['last']}[/bold][/{color}]")
+            else:
+                text = entry["last"][:45] + "…" if len(entry["last"]) > 45 else entry["last"]
+                lines.append(f"[{color}]{icon} {name}: {text}[/{color}]")
+
+        self.update("\n".join(lines))
+
+
 class MixerWidget(Static):
     """Center mixer — crossfader, master VU, master vol, headphone."""
 
@@ -711,11 +788,22 @@ Screen {
     padding: 0 1;
 }
 
-#playlist-scroll {
-    width: 42;
+#right-panel {
+    width: 44;
     height: 100%;
-    border-top: solid $accent;
     border-left: solid $accent;
+}
+
+#agent-activity {
+    height: auto;
+    max-height: 9;
+    padding: 0 1;
+    border-top: solid $accent;
+    border-bottom: solid $accent;
+}
+
+#playlist-scroll {
+    height: 1fr;
     scrollbar-size: 1 1;
 }
 
@@ -843,6 +931,15 @@ class DJTretaApp(App):
     def _apply_ws_state(self, data: dict):
         """Apply state update from WebSocket event."""
         self._ws_state = data
+        # Update agent activity from state
+        try:
+            activity = self.query_one("#agent-activity", AgentActivityWidget)
+            if data.get("agent_busy"):
+                activity.update_agent("dj_treta", status="thinking")
+            if data.get("planner_status") == "busy":
+                activity.update_agent("planner", status="thinking")
+        except Exception:
+            pass
 
     def _apply_ws_log(self, text: str):
         """Apply a log line from WebSocket event — same filtering as poll_daemon_log."""
@@ -899,10 +996,21 @@ class DJTretaApp(App):
             self.log_widget.write(f"[dim]  {msg}[/dim]")
 
     def _apply_ws_thinking(self, data: dict):
-        """Apply thinking event from WebSocket — same logic as poll_thinking_log."""
+        """Apply thinking event from WebSocket — updates agent activity + debug panel."""
         agent = data.get("agent", "?")
         think_type = data.get("type", "")
         text = data.get("text", "")
+        tool = data.get("tool", "")
+
+        # Update agent activity panel
+        try:
+            activity = self.query_one("#agent-activity", AgentActivityWidget)
+            if think_type == "call":
+                activity.update_agent(agent, tool=tool or text)
+            elif think_type == "think" and text:
+                activity.update_agent(agent, text=text)
+        except Exception:
+            pass
 
         debug_visible = self.query_one("#debug-log").has_class("visible")
 
@@ -941,8 +1049,10 @@ class DJTretaApp(App):
         yield BrainWidget(id="brain")
         with Horizontal(id="main-area"):
             yield RichLog(id="conversation", highlight=True, markup=True, wrap=True)
-            with ScrollableContainer(id="playlist-scroll"):
-                yield PlaylistWidget(id="playlist")
+            with Vertical(id="right-panel"):
+                yield AgentActivityWidget(id="agent-activity")
+                with ScrollableContainer(id="playlist-scroll"):
+                    yield PlaylistWidget(id="playlist")
         yield RichLog(id="debug-log", highlight=True, markup=True, wrap=True)
         yield Input(placeholder="Talk to DJ Treta... (or /help)", id="prompt-input")
         yield Footer()
