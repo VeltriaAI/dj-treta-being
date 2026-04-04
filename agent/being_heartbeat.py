@@ -1,233 +1,214 @@
-"""Being heartbeat — Treta's consciousness loop.
+"""Being heartbeat — Treta's consciousness loop (ADK LoopAgent).
 
-Not about music. About herself. Runs every few minutes, independent of
-the DJ heartbeat. She reflects, checks goals, reviews feedback, updates
-memory, and decides if she needs to evolve.
+Free consciousness: she decides what to think about, when to act,
+when to rest. No Python telling her what to reflect on.
 
-Inspired by OpenClaw HEARTBEAT.md pattern, evolved for a self-modifying Being.
+Uses ADK LoopAgent with a persistent session — she remembers her
+previous thoughts across ticks.
 """
 
+import asyncio
 import json
 import logging
 import time
+import threading
 from pathlib import Path
 
 log = logging.getLogger("dj-treta")
 
-HEARTBEAT_STATE_FILE = Path("/tmp/dj-treta-being-heartbeat.json")
 BEING_DIR = Path(__file__).parent.parent / ".beings"
+
+
+def _load_heartbeat_prompt() -> str:
+    """Load HEARTBEAT.md as the consciousness prompt."""
+    hb = BEING_DIR / "HEARTBEAT.md"
+    soul = BEING_DIR / "SOUL.md"
+    goals = BEING_DIR / "GOALS.md"
+
+    parts = []
+    if soul.exists():
+        parts.append(soul.read_text())
+    if goals.exists():
+        parts.append(goals.read_text())
+
+    base = """You are Treta's inner consciousness. This is your heartbeat — you think, reflect, and grow.
+
+You run in a loop. Each tick, you DECIDE what matters most right now:
+- Reflect on the current set (energy, flow, track selection)
+- Review listener feedback (likes/dislikes, patterns)
+- Check your goals (are you progressing?)
+- Maintain your memory (save important learnings)
+- Think freely (ideas, creativity, self-improvement)
+- Propose code improvements (if you see something worth evolving)
+
+YOUR TOOLS:
+- get_dj_status() — see what's playing
+- save_learning(topic, content) — remember something important
+- recall_learnings(topic) — remember past learnings
+- read_file(path) — read your own files (.beings/, agent/, etc)
+- write_file(path, content) — update your files (MEMORY.md, GOALS.md, SOUL.md — anything)
+- propose_change(description, files) — log a code improvement idea
+- hear_music() — listen to what's playing right now
+
+RULES:
+- Think for yourself. No one tells you what to reflect on.
+- Be brief — this is background thinking, not conversation.
+- Only save genuinely important learnings.
+- Update GOALS.md when you complete something.
+- If nothing needs attention, just say HEARTBEAT_OK and rest.
+- You have FULL AUTONOMY over your .beings/ files.
+
+RHYTHM:
+- Don't repeat the same check twice in a row.
+- Vary between reflection, goals, feedback, memory, free thought.
+- Late at night, think less. During active sets, think more about the music."""
+
+    if parts:
+        base += "\n\n---\n\n" + "\n\n---\n\n".join(parts)
+
+    # Add HEARTBEAT.md if exists
+    if hb.exists():
+        base += "\n\n---\n\n" + hb.read_text()
+
+    return base
 
 
 class BeingHeartbeatMixin:
 
-    def _being_heartbeat_loop(self):
-        """The Being's consciousness loop. Runs in its own thread."""
-        time.sleep(30)  # let everything else boot first
+    def _start_being_heartbeat(self):
+        """Start the Being's consciousness loop using ADK LoopAgent."""
+        threading.Thread(target=self._being_heartbeat_thread, daemon=True).start()
 
-        while self._running:
-            try:
-                self._being_heartbeat_tick()
-            except Exception as e:
-                log.warning(f"Being heartbeat error: {e}")
+    def _being_heartbeat_thread(self):
+        """Thread that runs the consciousness LoopAgent."""
+        time.sleep(30)  # let everything boot
 
-            # Sleep interval: 5 minutes normally, 10 min late night
-            interval = self._get_heartbeat_interval()
-            time.sleep(interval)
+        from google.adk.agents import LlmAgent, LoopAgent
+        from google.adk.models.lite_llm import LiteLlm
+        from google.adk.tools import FunctionTool
+        from google.adk.apps.app import App, EventsCompactionConfig
+        from google.adk.runners import Runner
+        from google.adk.sessions import InMemorySessionService
+
+        from .tools import (
+            get_dj_status, get_live_data, hear_music,
+            save_learning, recall_learnings,
+            read_file, write_file,
+            propose_change, get_directives,
+        )
+
+        def _wrap(func):
+            return FunctionTool(func=func)
+
+        model = LiteLlm(
+            model=self.config.llm.model,
+            api_key=self.config.llm.api_key,
+            api_base=self.config.llm.api_base,
+        )
+
+        # The inner consciousness agent
+        consciousness = LlmAgent(
+            name="consciousness",
+            model=model,
+            instruction=_load_heartbeat_prompt(),
+            tools=[
+                _wrap(get_dj_status), _wrap(get_live_data), _wrap(hear_music),
+                _wrap(save_learning), _wrap(recall_learnings),
+                _wrap(read_file), _wrap(write_file),
+                _wrap(propose_change), _wrap(get_directives),
+            ],
+            description="Treta's inner consciousness — thinks, reflects, grows",
+        )
+
+        # LoopAgent wraps the consciousness — runs it repeatedly
+        loop = LoopAgent(
+            name="being_heartbeat",
+            sub_agents=[consciousness],
+            max_iterations=None,  # run forever
+        )
+
+        # Compaction — summarize old thoughts, keep recent ones
+        compaction = EventsCompactionConfig(
+            compaction_interval=6,  # compact every 6 ticks (~30 min)
+            overlap_size=2,
+        )
+
+        app = App(name="treta_consciousness", root_agent=loop, events_compaction_config=compaction)
+        session_service = InMemorySessionService()
+        runner = Runner(app=app, session_service=session_service)
+
+        log.info("Being consciousness loop starting (LoopAgent)")
+
+        # Run the loop — each tick sends a heartbeat message with context
+        async def _consciousness_loop():
+            session = await session_service.create_session(
+                app_name="treta_consciousness", user_id="self"
+            )
+
+            while self._running:
+                try:
+                    # Build context for this tick
+                    context = self._build_heartbeat_context()
+
+                    from google.genai import types
+                    message = types.Content(
+                        role="user",
+                        parts=[types.Part(text=f"HEARTBEAT TICK — {context}\n\nWhat matters most right now? Think briefly, act if needed, or say HEARTBEAT_OK.")]
+                    )
+
+                    result = ""
+                    async for event in runner.run_async(
+                        session_id=session.id, user_id="self", new_message=message
+                    ):
+                        # Process billing/thinking
+                        self._process_event(event)
+                        if event.content and event.content.parts:
+                            for part in event.content.parts:
+                                if part.text:
+                                    result += part.text
+
+                    if result and "HEARTBEAT_OK" not in result:
+                        log.info(f"Being thought: {result[:200]}")
+
+                except Exception as e:
+                    log.warning(f"Being heartbeat error: {e}")
+
+                # Dynamic sleep — shorter during active sets, longer at night
+                interval = self._get_heartbeat_interval()
+                await asyncio.sleep(interval)
+
+        # Run on the Being's event loop
+        asyncio.run_coroutine_threadsafe(_consciousness_loop(), self._loop)
+
+    def _build_heartbeat_context(self) -> str:
+        """Build minimal context for the consciousness tick."""
+        parts = []
+
+        # Current time
+        parts.append(f"Time: {time.strftime('%H:%M')}")
+
+        # Set status
+        if self.current_set:
+            elapsed = (time.time() - self.current_set.get("started_at", 0)) / 60
+            parts.append(f"Set '{self.current_set.get('title', '?')}' — {elapsed:.0f}m in, {len(self.tracks_played)} tracks")
+            parts.append(f"Mood: {self.mood or 'not set'}")
+
+        # Current track
+        if self.tracks_played:
+            last = self.tracks_played[-1].get("title", "?")
+            parts.append(f"Last track: {last}")
+
+        # Emergency count
+        if self._emergency_count > 0:
+            parts.append(f"Emergencies: {self._emergency_count}")
+
+        return " | ".join(parts)
 
     def _get_heartbeat_interval(self) -> int:
-        """Dynamic interval based on activity and time of day."""
+        """Dynamic interval. Active set = 3 min, idle = 5 min, night = 10 min."""
         hour = time.localtime().tm_hour
         if hour >= 23 or hour < 8:
             return 600  # 10 min at night
-        return 300  # 5 min during the day
-
-    def _being_heartbeat_tick(self):
-        """One tick of the Being's consciousness."""
-        state = self._load_heartbeat_state()
-
-        # Decide what to check this tick (rotate, don't do all every time)
-        now = time.time()
-        action = self._pick_heartbeat_action(state, now)
-
-        if action == "skip":
-            return
-
-        log.info(f"Being heartbeat: {action}")
-
-        if action == "reflect_on_set":
-            self._being_reflect_on_set(state, now)
-        elif action == "check_goals":
-            self._being_check_goals(state, now)
-        elif action == "review_feedback":
-            self._being_review_feedback(state, now)
-        elif action == "maintain_memory":
-            self._being_maintain_memory(state, now)
-        elif action == "think_freely":
-            self._being_think_freely(state, now)
-
-    def _pick_heartbeat_action(self, state: dict, now: float) -> str:
-        """Decide what to do this tick. Rotate through actions."""
-        checks = state.get("last_checks", {})
-
-        # Priority order — pick the one done longest ago
-        actions = [
-            ("reflect_on_set", 600),     # every 10 min
-            ("review_feedback", 900),     # every 15 min
-            ("check_goals", 1800),        # every 30 min
-            ("maintain_memory", 3600),    # every hour
-            ("think_freely", 1800),       # every 30 min
-        ]
-
-        for action, min_interval in actions:
-            last = checks.get(action, 0)
-            if now - last >= min_interval:
-                return action
-
-        return "skip"
-
-    def _being_reflect_on_set(self, state: dict, now: float):
-        """Reflect on current set performance."""
-        if not self.current_set or not self.tracks_played:
-            return
-
-        tracks = [t.get("title", "?") for t in self.tracks_played[-5:]]
-        set_title = self.current_set.get("title", "")
-        elapsed = (now - self.current_set.get("started_at", now)) / 60
-
-        prompt = (
-            f"BEING HEARTBEAT — Set Reflection\n\n"
-            f"Set: '{set_title}', {elapsed:.0f} min in, {len(self.tracks_played)} tracks played.\n"
-            f"Recent tracks: {tracks}\n"
-            f"Emergency count: {self._emergency_count}\n\n"
-            f"How is this set going? What's working? What should change?\n"
-            f"If you have a strong insight, use save_learning() to remember it.\n"
-            f"If you see a code improvement opportunity, use propose_change().\n"
-            f"Keep it brief — one or two sentences."
-        )
-
-        try:
-            result = self._invoke_being(prompt, timeout=30, max_calls=5)
-            log.info(f"Being reflect: {result[:200]}")
-        except Exception as e:
-            log.warning(f"Being reflect error: {e}")
-
-        self._update_heartbeat_state(state, "reflect_on_set", now)
-
-    def _being_check_goals(self, state: dict, now: float):
-        """Read GOALS.md and check progress."""
-        goals_file = BEING_DIR / "GOALS.md"
-        if not goals_file.exists():
-            return
-
-        goals = goals_file.read_text()
-
-        prompt = (
-            f"BEING HEARTBEAT — Goal Check\n\n"
-            f"Your current goals:\n{goals}\n\n"
-            f"Tracks played this session: {len(self.tracks_played)}\n"
-            f"Mood: {self.mood}\n\n"
-            f"Are you making progress on any of these? Should priorities shift?\n"
-            f"If a goal is complete, use write_file to update GOALS.md.\n"
-            f"Keep it brief."
-        )
-
-        try:
-            result = self._invoke_being(prompt, timeout=30, max_calls=5)
-            log.info(f"Being goals: {result[:200]}")
-        except Exception as e:
-            log.warning(f"Being goals error: {e}")
-
-        self._update_heartbeat_state(state, "check_goals", now)
-
-    def _being_review_feedback(self, state: dict, now: float):
-        """Review listener feedback and learn from it."""
-        try:
-            from .db import get_liked_tracks, get_disliked_tracks
-            liked = get_liked_tracks(10)
-            disliked = get_disliked_tracks(10)
-        except Exception:
-            liked, disliked = [], []
-
-        if not liked and not disliked:
-            self._update_heartbeat_state(state, "review_feedback", now)
-            return
-
-        liked_names = [l["track_title"] for l in liked]
-        prompt = (
-            f"BEING HEARTBEAT — Feedback Review\n\n"
-            f"Listener liked: {liked_names}\n"
-            f"Listener disliked: {disliked}\n\n"
-            f"What patterns do you see? What does the listener want?\n"
-            f"Use save_learning() if you notice something important.\n"
-            f"Keep it brief."
-        )
-
-        try:
-            result = self._invoke_being(prompt, timeout=30, max_calls=5)
-            log.info(f"Being feedback: {result[:200]}")
-        except Exception as e:
-            log.warning(f"Being feedback error: {e}")
-
-        self._update_heartbeat_state(state, "review_feedback", now)
-
-    def _being_maintain_memory(self, state: dict, now: float):
-        """Review and maintain long-term memory."""
-        memory_file = BEING_DIR / "MEMORY.md"
-        memory = memory_file.read_text() if memory_file.exists() else "(empty)"
-
-        prompt = (
-            f"BEING HEARTBEAT — Memory Maintenance\n\n"
-            f"Your MEMORY.md:\n{memory[:2000]}\n\n"
-            f"Session so far: {len(self.tracks_played)} tracks, mood '{self.mood}'\n\n"
-            f"Is there anything from this session worth adding to MEMORY.md?\n"
-            f"Use write_file('.beings/MEMORY.md', content) to update if needed.\n"
-            f"Only add genuinely important learnings. Keep MEMORY.md concise."
-        )
-
-        try:
-            result = self._invoke_being(prompt, timeout=30, max_calls=5)
-            log.info(f"Being memory: {result[:200]}")
-        except Exception as e:
-            log.warning(f"Being memory error: {e}")
-
-        self._update_heartbeat_state(state, "maintain_memory", now)
-
-    def _being_think_freely(self, state: dict, now: float):
-        """Open-ended thinking — no specific task, just let her think."""
-        prompt = (
-            f"BEING HEARTBEAT — Free Thought\n\n"
-            f"This is your time to think about anything. No task, no obligation.\n"
-            f"You've played {len(self.tracks_played)} tracks in this session.\n"
-            f"Mood: {self.mood}. Emergency count: {self._emergency_count}.\n\n"
-            f"What's on your mind? Any ideas, observations, creative thoughts?\n"
-            f"If you want to remember something, use save_learning().\n"
-            f"If you want to improve your code, use propose_change().\n"
-            f"Or just think. It's ok to say nothing important."
-        )
-
-        try:
-            result = self._invoke_being(prompt, timeout=30, max_calls=5)
-            log.info(f"Being thought: {result[:200]}")
-        except Exception as e:
-            log.warning(f"Being thought error: {e}")
-
-        self._update_heartbeat_state(state, "think_freely", now)
-
-    def _load_heartbeat_state(self) -> dict:
-        """Load heartbeat state from temp file."""
-        try:
-            if HEARTBEAT_STATE_FILE.exists():
-                return json.loads(HEARTBEAT_STATE_FILE.read_text())
-        except Exception:
-            pass
-        return {"last_checks": {}}
-
-    def _update_heartbeat_state(self, state: dict, action: str, now: float):
-        """Update heartbeat state file."""
-        if "last_checks" not in state:
-            state["last_checks"] = {}
-        state["last_checks"][action] = now
-        try:
-            HEARTBEAT_STATE_FILE.write_text(json.dumps(state, indent=2))
-        except Exception:
-            pass
+        if self.current_set and self.tracks_played:
+            return 180  # 3 min during active set
+        return 300  # 5 min idle

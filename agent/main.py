@@ -334,8 +334,8 @@ class DJTretaBeing(
         # WebSocket server for MCP and other clients
         self._start_ws_server()
 
-        # Being heartbeat — consciousness loop (self-reflection, goals, memory)
-        threading.Thread(target=self._being_heartbeat_loop, daemon=True).start()
+        # Being heartbeat — consciousness LoopAgent (self-reflection, goals, memory)
+        self._start_being_heartbeat()
 
         # Start broadcast + recording + set
         self._start_broadcast()
