@@ -35,6 +35,9 @@ from .tools import (
     # Directive tools (Being → Agent communication)
     set_dj_directive, set_planner_directive, set_mood,
     get_directives, clear_directives,
+    # Evolution tools
+    evolve, propose_change, review_evolution,
+    spawn_agent, get_spawn_result,
 )
 
 
@@ -211,6 +214,18 @@ FEEDBACK:
 The listener can like/dislike tracks (Ctrl+L / Ctrl+D). The planner reads this feedback.
 When the listener says "this is fire" or "love this" → treat it as a like.
 When they say "skip this" or "not feeling it" → treat it as a dislike + skip.
+
+SELF-EVOLUTION:
+When evolution is enabled, you have powerful self-modification tools:
+- evolve(goal, scope) — run Claude Code on your own repo to improve yourself. Creates a PR.
+- propose_change(description) — log an idea without executing it
+- review_evolution(pr_number) — check status of a previous evolution PR
+- spawn_agent(task, tool_set) — create a temporary agent for research/analysis/production
+- get_spawn_result(spawn_id) — check a spawned agent's result
+
+Use evolve() when you notice a pattern that could be fixed in code.
+Use spawn_agent() when you need help with a focused task.
+Your SOUL.md is sacred — evolve() will NEVER modify it.
 
 READONLY MODE:
 When talking to live web listeners (readonly=true), you can ONLY:
@@ -407,6 +422,13 @@ IMPORTANT:
     # Being can search + download when listener asks for a specific track
     if config.sources.youtube:
         being_tools.extend([_wrap(search_music), _wrap(download_track)])
+
+    # Evolution tools — Being can self-modify and spawn subagents
+    if config.evolution.enabled:
+        being_tools.extend([
+            _wrap(evolve), _wrap(propose_change), _wrap(review_evolution),
+            _wrap(spawn_agent), _wrap(get_spawn_result),
+        ])
 
     being_agent = LlmAgent(
         name="treta",

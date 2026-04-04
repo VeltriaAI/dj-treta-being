@@ -96,6 +96,33 @@ def init_db():
         set_id TEXT,
         created_at REAL DEFAULT (strftime('%s','now'))
     );
+
+    CREATE TABLE IF NOT EXISTS evolution_log (
+        id INTEGER PRIMARY KEY,
+        goal TEXT NOT NULL,
+        scope TEXT,
+        status TEXT DEFAULT 'pending',
+        pr_url TEXT,
+        pr_number INTEGER,
+        branch_name TEXT,
+        cost_usd REAL,
+        error TEXT,
+        triggered_by TEXT,
+        created_at REAL DEFAULT (strftime('%s','now')),
+        completed_at REAL
+    );
+
+    CREATE TABLE IF NOT EXISTS evolution_patterns (
+        id INTEGER PRIMARY KEY,
+        pattern_type TEXT NOT NULL,
+        description TEXT,
+        confidence REAL,
+        occurrences INTEGER DEFAULT 1,
+        suggested_action TEXT,
+        resolved INTEGER DEFAULT 0,
+        first_seen REAL DEFAULT (strftime('%s','now')),
+        last_seen REAL DEFAULT (strftime('%s','now'))
+    );
     """)
     db.commit()
     db.close()

@@ -38,10 +38,15 @@ class PlannerMixin:
                     # Immediately load next track on idle deck
                     self._load_next_on_idle(status)
                     # Self-evolution check
-                    if (len(self.tracks_played) >= 5
-                            and len(self.tracks_played) - self._last_reflect_count >= 5):
+                    reflect_n = getattr(self.config, 'evolution', None)
+                    reflect_interval = reflect_n.reflect_every_n_tracks if reflect_n else 5
+                    if (len(self.tracks_played) >= reflect_interval
+                            and len(self.tracks_played) - self._last_reflect_count >= reflect_interval):
                         self._last_reflect_count = len(self.tracks_played)
-                        threading.Thread(target=self._agent_reflect, daemon=True).start()
+                        if hasattr(self, '_evolution_reflect') and getattr(self.config, 'evolution', None) and self.config.evolution.enabled:
+                            threading.Thread(target=self._evolution_reflect, daemon=True).start()
+                        else:
+                            threading.Thread(target=self._agent_reflect, daemon=True).start()
 
                 playlist = self._read_playlist()
                 needs_plan = (

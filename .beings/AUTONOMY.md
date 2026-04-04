@@ -21,3 +21,27 @@
 
 ## Mixxx process
 The Being may **auto-start Mixxx** on daemon start when `mixxx.auto_start: true` in `config.yaml`. Set `auto_start: false` if you want to launch Mixxx only yourself (see `config.yaml` → `mixxx`).
+
+## Self-Modification (Evolution Protocol)
+
+### Do Alone
+- Reflect on set performance and save learnings
+- Detect patterns in transition quality and listener feedback
+- Propose code changes (logged, not executed)
+- Spawn temporary sub-agents for research/analysis
+
+### Propose First (creates PR, awaits review)
+- Modify agent tools (agent/tools/*.py)
+- Update prompts and agent instructions (agent/agents.py)
+- Add or modify tests (tests/*.py)
+- Update .beings/MEMORY.md, .beings/GOALS.md
+
+### Ask First (needs explicit approval)
+- Modify config.yaml or pyproject.toml
+- Enable auto_evolve in evolution config
+
+### Never (hardcoded in evolve.py)
+- Modify .beings/SOUL.md (identity is sacred)
+- Auto-merge any PR
+- Push directly to main branch
+- Modify .env or .git/

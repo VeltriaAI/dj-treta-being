@@ -36,6 +36,7 @@ from .sets import SetsMixin
 from .commands import CommandsMixin
 from .adk_runner import ADKRunnerMixin
 from .session import SessionMixin
+from .evolution import EvolutionMixin
 
 logging.basicConfig(
     level=logging.INFO,
@@ -192,6 +193,7 @@ class DJTretaBeing(
     CommandsMixin,
     ADKRunnerMixin,
     SessionMixin,
+    EvolutionMixin,
 ):
 
     def __init__(self, config: Config):

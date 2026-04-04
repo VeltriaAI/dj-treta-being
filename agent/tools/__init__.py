@@ -99,6 +99,18 @@ from .directives import (
     clear_directives,
 )
 
+# Evolution tools (self-modification + subagent spawning)
+from .evolve import (
+    evolve,
+    propose_change,
+    review_evolution,
+)
+
+from .spawn import (
+    spawn_agent,
+    get_spawn_result,
+)
+
 __all__ = [
     # helpers
     "_SELF_DIR", "_music_dir", "_roots", "_is_under_allowed_roots",
@@ -126,4 +138,7 @@ __all__ = [
     # directives
     "set_dj_directive", "set_planner_directive", "set_mood",
     "get_directives", "clear_directives",
+    # evolution
+    "evolve", "propose_change", "review_evolution",
+    "spawn_agent", "get_spawn_result",
 ]

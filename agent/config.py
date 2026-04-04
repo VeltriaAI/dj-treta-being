@@ -108,6 +108,17 @@ class ProducerConfig:
 
 
 @dataclass
+class EvolutionConfig:
+    enabled: bool = False
+    reflect_every_n_tracks: int = 5
+    auto_evolve: bool = False
+    max_evolve_per_day: int = 2
+    max_budget_per_evolve_usd: float = 0.50
+    claude_binary: str = "~/.local/bin/claude"
+    require_tests: bool = True
+
+
+@dataclass
 class Config:
     mixxx: MixxxConfig = field(default_factory=MixxxConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
@@ -122,6 +133,7 @@ class Config:
     broadcast: BroadcastConfig = field(default_factory=BroadcastConfig)
     producer: ProducerConfig = field(default_factory=ProducerConfig)
     sources: SourcesConfig = field(default_factory=SourcesConfig)
+    evolution: EvolutionConfig = field(default_factory=EvolutionConfig)
 
 
 def _pick_fields(d: dict, cls: type) -> dict:
@@ -181,6 +193,8 @@ def load_config(path: str | Path | None = None) -> Config:
         cfg.producer = ProducerConfig(**_pick_fields(raw["producer"], ProducerConfig))
     if "sources" in raw:
         cfg.sources = SourcesConfig(**_pick_fields(raw["sources"], SourcesConfig))
+    if "evolution" in raw:
+        cfg.evolution = EvolutionConfig(**_pick_fields(raw["evolution"], EvolutionConfig))
 
     env_key = os.environ.get("DJTRETA_LLM_API_KEY") or os.environ.get("LLM_API_KEY")
     if env_key:

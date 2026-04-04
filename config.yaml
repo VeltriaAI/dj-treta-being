@@ -70,3 +70,11 @@ set:
   default_mood: "techno-deep"
   energy_max_jump: 2
   peak_max_consecutive: 3
+
+evolution:
+  enabled: false
+  reflect_every_n_tracks: 5
+  auto_evolve: false
+  max_evolve_per_day: 2
+  max_budget_per_evolve_usd: 0.50
+  require_tests: true
