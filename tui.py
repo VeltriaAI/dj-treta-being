@@ -1061,21 +1061,23 @@ class DJTretaApp(App):
         self.log_widget = self.query_one("#conversation", RichLog)
         self.debug_widget = self.query_one("#debug-log", RichLog)
         self.log_widget.write("[dim]DJ Treta Console. Type anything to talk, /help for commands.[/dim]\n")
-        self.set_interval(1.0, self.refresh_status)
-        self.refresh_status()
+        # Init WS state BEFORE any timers
+        self._ws_state = None
+        self._ws_connected = False
+        self._ws = None
         self._log_pos = 0
         self._log_mtime = 0.0
         self._debug_log_pos = 0
         self._thinking_pos = 0
         self._last_dj_decision = ""
         self._last_dj_decision_time = 0.0
-        # File-based polling as fallback (runs always, WS events supplement/override)
+        # Start WebSocket client for real-time updates
+        self._start_ws_client()
+        # File-based polling as fallback
+        self.set_interval(1.0, self.refresh_status)
         self.set_interval(3.0, self.poll_daemon_log)
         self.set_interval(1.0, self.poll_debug_log)
         self.set_interval(1.0, self.poll_thinking_log)
-        # Start WebSocket client for real-time updates
-        self._ws_state = None
-        self._start_ws_client()
 
     def action_toggle_debug(self) -> None:
         debug_log = self.query_one("#debug-log")
