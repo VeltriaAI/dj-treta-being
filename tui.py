@@ -1036,11 +1036,12 @@ class DJTretaApp(App):
             all_w.write(f"[dim]  ··· [/dim] {msg[:80]}")
 
     def _apply_ws_thinking(self, data: dict):
-        """Apply thinking event from WebSocket — updates agent activity + debug panel."""
+        """Apply thinking event — route to agent tab + activity panel."""
         agent = data.get("agent", "?")
         think_type = data.get("type", "")
         text = data.get("text", "")
         tool = data.get("tool", "")
+        args = data.get("args", "")
 
         # Update agent activity panel
         try:
@@ -1052,42 +1053,41 @@ class DJTretaApp(App):
         except Exception:
             pass
 
-        debug_visible = self.query_one("#debug-log").has_class("visible")
+        # Determine which tab this goes to
+        if "dj_treta" in agent or "mixer" in agent:
+            tab = self._log_dj
+            color = "bright_blue"
+        elif "planner" in agent or "library" in agent or "producer" in agent:
+            tab = self._log_planner
+            color = "magenta"
+        elif "consciousness" in agent or "treta" in agent:
+            tab = self._log_treta
+            color = "bright_cyan"
+        else:
+            tab = self._log_treta
+            color = "dim"
 
         if think_type == "think":
-            # Surface DJ decisions to BrainWidget
             if "dj_treta" in agent:
                 self._last_dj_decision = text[:300]
                 self._last_dj_decision_time = time.time()
-            # Route to agent-specific tab
-            if text and len(text) > 5:
+            if text and len(text.strip()) > 5:
                 display = text[:200]
-                if "dj_treta" in agent or "mixer" in agent:
-                    self._log_dj.write(f"[italic]{display}[/italic]")
-                elif "planner" in agent or "library" in agent:
-                    self._log_planner.write(f"[italic]{display}[/italic]")
-                elif "consciousness" in agent:
-                    self._log_treta.write(f"[bright_cyan]{display}[/bright_cyan]")
-                elif "treta" in agent:
-                    self._log_treta.write(f"[italic]{display}[/italic]")
-            if debug_visible and text:
-                display = text[:300] + "..." if len(text) > 300 else text
-                self.debug_widget.write(
-                    f"[bold bright_white]  {agent}:[/bold bright_white] [italic]{display}[/italic]"
-                )
+                tab.write(f"[{color}]  {agent}:[/{color}] [italic]{display}[/italic]")
 
         elif think_type == "call":
-            if debug_visible and text:
-                self.debug_widget.write(f"[cyan]  {agent} -> {text}[/cyan]")
+            tool_name = tool or text or "?"
+            args_short = args[:80] if args else ""
+            line = f"[bold {color}]  {agent}:[/bold {color}] [cyan]{tool_name}({args_short})[/cyan]"
+            tab.write(line)
 
-        elif think_type == "observation":
-            if debug_visible and text:
-                display = text[:150] + "..." if len(text) > 150 else text
-                self.debug_widget.write(f"[dim green]  {agent} <- {display}[/dim green]")
-
-        elif think_type == "tokens":
-            if debug_visible and text:
-                self.debug_widget.write(f"[dim yellow]  {text}[/dim yellow]")
+        # Debug panel gets everything raw
+        debug_visible = self.query_one("#debug-log").has_class("visible")
+        if debug_visible:
+            if think_type == "think" and text:
+                self.debug_widget.write(f"[bold bright_white]  {agent}:[/bold bright_white] [italic]{text[:300]}[/italic]")
+            elif think_type == "call":
+                self.debug_widget.write(f"[cyan]  {agent} -> {tool or text}({args[:100]})[/cyan]")
 
     # ── End WebSocket ────────────────────────────────────────────────
 
