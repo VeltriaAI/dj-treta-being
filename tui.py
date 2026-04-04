@@ -966,8 +966,9 @@ class DJTretaApp(App):
             if len(parts) >= 2:
                 msg = parts[1].strip()
         # Skip empty, noise, or too-short messages
-        if not msg or len(msg) < 5:
+        if not msg or not msg.strip() or len(msg.strip()) < 10:
             return
+        msg = msg.strip()
 
         # Classify by agent, write to All + agent-specific tab
         all_w = self.log_widget
