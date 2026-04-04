@@ -942,58 +942,56 @@ class DJTretaApp(App):
             pass
 
     def _apply_ws_log(self, text: str):
-        """Apply a log line from WebSocket event — same filtering as poll_daemon_log."""
-        skip = ["LiteLLM", "Wrapper:", "completion() model", "─", "│", "╭", "╰",
-                "Observations:", "Step ", "Calling tool", "TRACK:", "TECHNIQUE:", "ENERGY:",
-                "Talk result", "Talk done", "Talk ack", "processing...", "Result: processing",
-                "Unmapped finish_reason", "malformed_function_call", "TOKENS:", "TokenUsage",
-                "mixer ←", "dj_treta →", "dj_treta ←", "library ←", "library →", "mixer →",
-                "HTTP Request:"]
-        if any(s in text for s in skip):
+        """Apply a log line from WebSocket — agent-prefixed for clarity."""
+        # Extract message (strip timestamp + level)
+        msg = text.strip()
+        if "] " in msg:
+            parts = msg.split("] ", 1)
+            if len(parts) >= 2:
+                msg = parts[1].strip()
+        if not msg:
             return
-        # Must contain a log level
-        if not any(k in text for k in ["INFO", "WARNING", "ERROR"]):
-            return
-        # Extract message after "] "
-        parts = text.strip().split("] ", 1)
-        if len(parts) < 2 or not parts[1].strip():
-            return
-        msg = parts[1].strip()
 
-        # Color by content — same patterns as poll_daemon_log
-        if "ERROR" in text or "WARNING" in text:
-            self.log_widget.write(f"[red]  {msg}[/red]")
-        elif "DJ decision:" in msg:
-            self.log_widget.write(f"[bold bright_blue]  {msg}[/bold bright_blue]")
-        elif "Final answer:" in msg:
-            self.log_widget.write(f"[bold blue]  {msg}[/bold blue]")
-        elif "Playing:" in msg or "now playing" in msg.lower():
-            self.log_widget.write(f"[green]  {msg}[/green]")
-        elif "Next:" in msg:
-            self.log_widget.write(f"[cyan]  {msg}[/cyan]")
-        elif "Transition" in msg or "transition" in msg or "Bass-swap" in msg or "bass_swap" in msg:
-            self.log_widget.write(f"[blue]  {msg}[/blue]")
-        elif "Set started:" in msg or "Set ended:" in msg:
-            self.log_widget.write(f"[bold yellow]  {msg}[/bold yellow]")
-        elif "Emergency" in msg or "emergency" in msg:
-            self.log_widget.write(f"[bold red]  {msg}[/bold red]")
-        elif "Generated track:" in msg or "Lyria" in msg or "generate_track" in msg:
-            self.log_widget.write(f"[bold bright_magenta]  {msg}[/bold bright_magenta]")
-        elif "Planner done:" in msg:
-            self.log_widget.write(f"[bold yellow]  Planner done — new plan:[/bold yellow]")
+        # Classify by agent and add prefix
+        w = self.log_widget
+        if "DJ decision" in msg:
+            # Strip "DJ decision: " prefix, show clean
+            decision = msg.replace("DJ decision: ", "").strip()
+            if decision:
+                w.write(f"[bold bright_blue]  DJ  [/bold bright_blue] {decision}")
+            else:
+                w.write(f"[bold bright_blue]  DJ  [/bold bright_blue] [dim](tool call)[/dim]")
+        elif "Executing" in msg or "Transition result" in msg:
+            w.write(f"[bold cyan]  MIX [/bold cyan] {msg}")
+        elif "Transition scheduled" in msg or "schedule_transition" in msg:
+            w.write(f"[bold cyan]  MIX [/bold cyan] {msg}")
+        elif "Auto-transition" in msg:
+            w.write(f"[yellow]  AUTO[/yellow] {msg}")
+        elif "Loaded deck" in msg:
+            w.write(f"[green]  LOAD[/green] {msg.replace('Loaded deck ', 'D')}")
+        elif "Planner done" in msg:
+            w.write(f"[magenta]  PLAN[/magenta] done")
             self._show_planner_plan()
-        elif "Planner" in msg or "planner" in msg.lower():
-            self.log_widget.write(f"[yellow]  {msg}[/yellow]")
-        elif "preparing" in msg.lower() or "brain" in msg.lower():
-            self.log_widget.write(f"[yellow]  {msg}[/yellow]")
-        elif "sync" in msg.lower() or "Loaded" in msg:
-            self.log_widget.write(f"[magenta]  {msg}[/magenta]")
-        elif "schedule_transition" in msg.lower():
-            self.log_widget.write(f"[bold cyan]  {msg}[/bold cyan]")
-        elif "hear" in msg.lower() or "listen" in msg.lower():
-            self.log_widget.write(f"[bright_green]  {msg}[/bright_green]")
+        elif "Planner running" in msg:
+            w.write(f"[magenta]  PLAN[/magenta] {msg.replace('Planner running — ', '')}")
+        elif "Enriched:" in msg:
+            w.write(f"[dim]  SCAN[/dim] {msg.replace('Enriched: ', '')[:70]}")
+        elif "Evolution" in msg or "evolve" in msg.lower():
+            w.write(f"[bold yellow]  EVO [/bold yellow] {msg}")
+        elif "Emergency" in msg:
+            w.write(f"[bold red]  SOS [/bold red] {msg}")
+        elif "Backup" in msg:
+            w.write(f"[red]  BKUP[/red] {msg}")
+        elif "Set started" in msg or "Set ended" in msg:
+            w.write(f"[bold white]  SET [/bold white] {msg}")
+        elif "Being thought" in msg or "Being reflect" in msg:
+            w.write(f"[bright_cyan]  SELF[/bright_cyan] {msg.replace('Being thought: ', '').replace('Being reflect: ', '')[:70]}")
+        elif "ERROR" in text or "WARNING" in text:
+            w.write(f"[red]  ERR [/red] {msg}")
+        elif "Generated" in msg or "generate_track" in msg:
+            w.write(f"[bold bright_magenta]  PROD[/bold bright_magenta] {msg}")
         else:
-            self.log_widget.write(f"[dim]  {msg}[/dim]")
+            w.write(f"[dim]  ··· [/dim] {msg[:80]}")
 
     def _apply_ws_thinking(self, data: dict):
         """Apply thinking event from WebSocket — updates agent activity + debug panel."""
