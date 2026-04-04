@@ -870,12 +870,20 @@ class DJTretaApp(App):
 
     # ── WebSocket real-time connection ───────────────────────────────
 
+    _exit = False
+
     def _start_ws_client(self):
         """Connect to daemon WebSocket for real-time updates."""
         self._ws = None
         self._ws_connected = False
         self._ws_event_loop = None
         threading.Thread(target=self._ws_thread, daemon=True).start()
+
+    def action_quit(self) -> None:
+        """Clean shutdown — stop WS before exit."""
+        self._exit = True
+        self._ws_connected = False
+        super().action_quit()
 
     def _ws_thread(self):
         """WebSocket client thread — runs its own event loop."""
@@ -885,24 +893,29 @@ class DJTretaApp(App):
 
     async def _ws_loop(self):
         """Connect to daemon WS and receive events. Auto-reconnects."""
-        while True:
+        while not self._exit:
             try:
                 async with websockets.connect(WS_URL, ping_interval=20, ping_timeout=10) as ws:
                     self._ws = ws
                     self._ws_connected = True
-                    self.call_from_thread(self._on_ws_connected)
+                    try:
+                        self.call_from_thread(self._on_ws_connected)
+                    except Exception:
+                        pass
                     async for raw in ws:
+                        if self._exit:
+                            break
                         try:
                             msg = json.loads(raw)
                             self._handle_ws_message(msg)
-                        except json.JSONDecodeError:
+                        except (json.JSONDecodeError, Exception):
                             pass
             except Exception:
                 pass
-            # Disconnected — reset and retry
             self._ws_connected = False
             self._ws = None
-            self.call_from_thread(self._on_ws_disconnected)
+            if self._exit:
+                break
             await asyncio.sleep(3)
 
     def _on_ws_connected(self):
@@ -915,6 +928,8 @@ class DJTretaApp(App):
 
     def _handle_ws_message(self, msg: dict):
         """Route incoming WebSocket messages to handlers (called from WS thread)."""
+        if self._exit:
+            return
         msg_type = msg.get("type", "")
 
         if msg_type == "event":
@@ -968,6 +983,15 @@ class DJTretaApp(App):
         if not msg or not msg.strip() or len(msg.strip()) < 10:
             return
         msg = msg.strip()
+        # Skip ANSI escape, LiteLLM noise, bare timestamps
+        if msg.startswith("[") and "m" in msg[:10] and "[INFO]" not in msg:
+            return
+        if any(n in msg for n in ["utils.py:", "Wrapper:", "completion()", "server listening"]):
+            return
+        # Skip bare "HH:MM:SS [INFO]" with nothing after
+        import re
+        if re.match(r'^\d{2}:\d{2}:\d{2}\s*\[INFO\]\s*$', msg):
+            return
 
         # Classify by agent, write to All + agent-specific tab
         all_w = self.log_widget
@@ -1259,7 +1283,7 @@ class DJTretaApp(App):
         playlist_w.update_playlist(state)
 
     def poll_daemon_log(self) -> None:
-        """File-based log polling — reuses _apply_ws_log for consistent formatting + tab routing."""
+        """File-based log polling — only passes meaningful log lines to _apply_ws_log."""
         if not DAEMON_LOG.exists():
             if self._log_pos > 0:
                 self._log_pos = 0
@@ -1276,19 +1300,25 @@ class DJTretaApp(App):
             new_lines = lines[self._log_pos:]
             self._log_pos = len(lines)
 
-            skip = ["LiteLLM", "Wrapper:", "completion() model", "─", "│", "╭", "╰",
-                    "Observations:", "Step ", "Calling tool", "TRACK:", "TECHNIQUE:", "ENERGY:",
-                    "Talk result", "Talk done", "Talk ack", "processing...", "Result: processing",
-                    "Unmapped finish_reason", "malformed_function_call", "TOKENS:", "TokenUsage",
-                    "mixer ←", "dj_treta →", "dj_treta ←", "library ←", "library →", "mixer →",
-                    "HTTP Request:", "Retrying request"]
+            # Only pass lines that match meaningful daemon events
+            # Format: "HH:MM:SS [LEVEL] message"
+            import re
+            log_pattern = re.compile(r'^\d{2}:\d{2}:\d{2} \[(INFO|WARNING|ERROR)\] .+')
+
+            skip = {"LiteLLM", "Wrapper:", "completion()", "utils.py:", "HTTP Request:",
+                     "Retrying request", "server listening", "server clos",
+                     "Task was destroyed", "Unmapped finish_reason", "malformed_function_call"}
 
             for line in new_lines:
-                if not line.strip():
+                line = line.strip()
+                if not line:
                     continue
+                # Must match timestamp [LEVEL] format
+                if not log_pattern.match(line):
+                    continue
+                # Skip noise
                 if any(s in line for s in skip):
                     continue
-                # Route through the same formatter that WS uses
                 self._apply_ws_log(line)
         except Exception:
             pass
