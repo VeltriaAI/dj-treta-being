@@ -1323,8 +1323,18 @@ class DJTretaApp(App):
         except Exception:
             pass
 
+    def _route_to_agent_tab(self, agent: str):
+        """Get the right tab log for an agent name."""
+        if "dj_treta" in agent or "mixer" in agent:
+            return self._log_dj, "bright_blue"
+        elif "planner" in agent or "library" in agent or "producer" in agent:
+            return self._log_planner, "magenta"
+        elif "consciousness" in agent or "treta" in agent:
+            return self._log_treta, "bright_cyan"
+        return self._log_treta, "dim"
+
     def poll_thinking_log(self) -> None:
-        """Agent internal thinking — DJ decisions go to BrainWidget, details to debug panel."""
+        """Agent thinking → agent tabs + BrainWidget + debug panel."""
         debug_visible = self.query_one("#debug-log").has_class("visible")
 
         if not THINKING_LOG.exists():
@@ -1342,32 +1352,40 @@ class DJTretaApp(App):
                 if line.startswith("[THINK:"):
                     agent = line.split("]")[0].split(":")[1]
                     thought = line.split("] ", 1)[1] if "] " in line else line
-                    # Surface DJ decisions to BrainWidget
+                    if not thought.strip() or len(thought.strip()) < 5:
+                        continue
+
+                    # BrainWidget DJ decisions
                     if "dj_treta" in agent:
                         self._last_dj_decision = thought[:300]
                         self._last_dj_decision_time = time.time()
+
+                    # Route to agent tab
+                    tab, color = self._route_to_agent_tab(agent)
+                    display = thought[:200]
+                    tab.write(f"[{color}]  {agent}:[/{color}] [italic]{display}[/italic]")
+
+                    # Debug panel
                     if debug_visible:
-                        if len(thought) > 300:
-                            thought = thought[:300] + "..."
-                        self.debug_widget.write(f"[bold bright_white]  {agent}:[/bold bright_white] [italic]{thought}[/italic]")
+                        self.debug_widget.write(f"[bold bright_white]  {agent}:[/bold bright_white] [italic]{thought[:300]}[/italic]")
 
                 elif line.startswith("[CALL:"):
+                    agent = line.split("]")[0].split(":")[1]
+                    call = line.split("] ", 1)[1] if "] " in line else line
+
+                    # Route to agent tab
+                    tab, color = self._route_to_agent_tab(agent)
+                    tab.write(f"[bold {color}]  {agent}:[/bold {color}] [cyan]{call[:100]}[/cyan]")
+
+                    # Debug panel
                     if debug_visible:
-                        agent = line.split("]")[0].split(":")[1]
-                        call = line.split("] ", 1)[1] if "] " in line else line
                         self.debug_widget.write(f"[cyan]  {agent} -> {call}[/cyan]")
 
                 elif line.startswith("[OBS:"):
                     if debug_visible:
                         agent = line.split("]")[0].split(":")[1]
                         obs = line.split("] ", 1)[1] if "] " in line else line
-                        if len(obs) > 150:
-                            obs = obs[:150] + "..."
-                        self.debug_widget.write(f"[dim green]  {agent} <- {obs}[/dim green]")
-
-                elif line.startswith("[TOKENS:"):
-                    if debug_visible:
-                        self.debug_widget.write(f"[dim yellow]  {line}[/dim yellow]")
+                        self.debug_widget.write(f"[dim green]  {agent} <- {obs[:150]}[/dim green]")
         except Exception:
             pass
 
