@@ -861,6 +861,7 @@ class DJTretaApp(App):
         Binding("f7", "tab_treta", "Treta"),
         Binding("f8", "tab_dj", "DJ"),
         Binding("f9", "tab_planner", "Plan"),
+        Binding("f11", "fullscreen", "Full"),
         Binding("f2", "toggle_debug", "Debug"),
         Binding("f4", "show_tracks", "Tracks"),
         Binding("f5", "show_set", "Set"),
@@ -1173,6 +1174,27 @@ class DJTretaApp(App):
     def action_tab_treta(self): self._switch_tab("tab-treta")
     def action_tab_dj(self): self._switch_tab("tab-dj")
     def action_tab_planner(self): self._switch_tab("tab-planner")
+
+    def action_fullscreen(self):
+        """Toggle fullscreen tabs — hide decks/mixer/brain for focused view."""
+        decks = self.query_one("#decks")
+        mixer = self.query_one("#mixer")
+        brain = self.query_one("#brain")
+        right = self.query_one("#right-panel")
+
+        if decks.display:
+            # Enter fullscreen
+            decks.display = False
+            mixer.display = False
+            brain.display = False
+            right.display = False
+            self.log_widget.write("[yellow]  Fullscreen mode — F11 to exit[/yellow]")
+        else:
+            # Exit fullscreen
+            decks.display = True
+            mixer.display = True
+            brain.display = True
+            right.display = True
 
     def action_toggle_debug(self) -> None:
         debug_log = self.query_one("#debug-log")
