@@ -176,6 +176,8 @@ class PlannerMixin:
             f"Already played (DO NOT repeat): {played_list}\n\n"
             f"Tracks already in library:\n{candidate_text or '  (none)'}\n\n"
             f"Current mood/genre: {self.mood or 'melodic-techno'}.\n"
+            f"IMPORTANT: The mood '{self.mood}' is the listener's EXPLICIT instruction. "
+            f"This OVERRIDES any learned preferences. Search for and select tracks matching THIS mood.\n"
             + directive_line
             + intent_line
             + feedback_line
