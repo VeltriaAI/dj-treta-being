@@ -482,7 +482,7 @@ class AgentActivityWidget(Static):
     """Real-time agent activity dashboard — who's doing what."""
 
     def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+        super().__init__("[dim]AGENT ACTIVITY[/dim]", **kwargs)
         self._agents = {
             "treta": {"status": "idle", "last": "", "time": 0},
             "dj_treta": {"status": "idle", "last": "", "time": 0},
@@ -508,15 +508,15 @@ class AgentActivityWidget(Static):
         elif status:
             entry["status"] = status
 
-        self._render()
+        self._refresh_display()
 
     def set_idle(self, agent: str):
         """Mark an agent as idle (no activity for a while)."""
         if agent in self._agents:
             self._agents[agent]["status"] = "idle"
-            self._render()
+            self._refresh_display()
 
-    def _render(self):
+    def _refresh_display(self):
         """Render the activity panel."""
         icons = {
             "treta": "🧠",
