@@ -38,6 +38,7 @@ from .adk_runner import ADKRunnerMixin
 from .session import SessionMixin
 from .evolution import EvolutionMixin
 from .ws_server import WSServerMixin
+from .being_heartbeat import BeingHeartbeatMixin
 
 logging.basicConfig(
     level=logging.INFO,
@@ -196,6 +197,7 @@ class DJTretaBeing(
     SessionMixin,
     EvolutionMixin,
     WSServerMixin,
+    BeingHeartbeatMixin,
 ):
 
     def __init__(self, config: Config):
@@ -331,6 +333,9 @@ class DJTretaBeing(
 
         # WebSocket server for MCP and other clients
         self._start_ws_server()
+
+        # Being heartbeat — consciousness loop (self-reflection, goals, memory)
+        threading.Thread(target=self._being_heartbeat_loop, daemon=True).start()
 
         # Start broadcast + recording + set
         self._start_broadcast()
