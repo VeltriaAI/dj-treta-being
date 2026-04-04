@@ -965,7 +965,8 @@ class DJTretaApp(App):
             parts = msg.split("] ", 1)
             if len(parts) >= 2:
                 msg = parts[1].strip()
-        if not msg:
+        # Skip empty, noise, or too-short messages
+        if not msg or len(msg) < 5:
             return
 
         # Classify by agent, write to All + agent-specific tab
