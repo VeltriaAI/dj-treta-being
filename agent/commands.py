@@ -219,6 +219,11 @@ class CommandsMixin:
             self._last_result = result
             self._write_state()
             log.info(f"Being talk {'(readonly)' if readonly else ''}: {result[:500]}")
+            if hasattr(self, '_ws_broadcast'):
+                self._ws_broadcast("talk_response", {
+                    "id": cmd_id,
+                    "result": result,
+                })
         except Exception as e:
             self._last_command_id = cmd_id
             self._last_result = f"Error: {e}"

@@ -122,6 +122,25 @@ class SessionMixin:
                 },
                 "producing": self._generation_status,
             }, indent=2))
+
+            # Broadcast state via WebSocket
+            if hasattr(self, '_ws_broadcast'):
+                self._ws_broadcast("state", {
+                    "phase": phase,
+                    "mood": self.mood,
+                    "tracks_played": len(self.tracks_played),
+                    "current_track": current,
+                    "next_track": next_track,
+                    "set": set_data,
+                    "agent_busy": self._agent_busy,
+                    "planner_status": "busy" if self._planner_busy else "idle",
+                    "emergency_count": self._emergency_count,
+                    "billing": billing_str,
+                    "sources": {
+                        "youtube": self.config.sources.youtube,
+                        "treta_originals": self.config.sources.treta_originals,
+                    },
+                })
         except Exception:
             pass
 
