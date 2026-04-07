@@ -67,6 +67,10 @@ def do_transition(to_deck: int, duration: int = 60) -> str:
     _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5})
     _mixxx_post("/api/filter", {"deck": to_deck, "value": 0.5})
 
+    # Reset rate on active deck — prevent BPM drift from sync
+    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "rate", "value": 0.0})
+    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "sync_enabled", "value": 0})
+
     # Eject outgoing deck -- prevents "loaded but finished" state
     _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
 
@@ -144,6 +148,10 @@ def do_bass_swap(to_deck: int, duration: int = 60) -> str:
         _mixxx_post("/api/eq", {"deck": out_deck, band: 1.0})
         _mixxx_post("/api/eq", {"deck": to_deck, band: 1.0})
 
+    # Reset rate on active deck — prevent BPM drift
+    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "rate", "value": 0.0})
+    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "sync_enabled", "value": 0})
+
     # Eject outgoing deck
     _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
 
@@ -206,6 +214,8 @@ def do_filter_sweep(to_deck: int, duration: int = 45) -> str:
     _mixxx_post("/api/pause", {"deck": out_deck})
     _mixxx_post("/api/filter", {"deck": to_deck, "value": 0.5})
     _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5})
+    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "rate", "value": 0.0})
+    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "sync_enabled", "value": 0})
     _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
 
     return f"Filter-swept to Deck {to_deck} over {duration}s. Deck {out_deck} ejected."
@@ -231,6 +241,8 @@ def do_hard_cut(to_deck: int) -> str:
     xf = 0.0 if to_deck == 1 else 1.0
     _mixxx_post("/api/crossfade", {"position": xf})
     _mixxx_post("/api/pause", {"deck": out_deck})
+    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "rate", "value": 0.0})
+    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "sync_enabled", "value": 0})
     _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
 
     return f"Hard-cut to Deck {to_deck}. Deck {out_deck} ejected."
@@ -297,6 +309,8 @@ def do_echo_out(to_deck: int, duration: int = 30) -> str:
     # Reset
     _mixxx_post("/api/volume", {"deck": out_deck, "volume": 1.0})
     _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5})
+    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "rate", "value": 0.0})
+    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "sync_enabled", "value": 0})
     _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
 
     return f"Echo-out to Deck {to_deck} over {duration}s. Deck {out_deck} ejected."
