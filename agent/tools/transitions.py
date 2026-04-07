@@ -6,6 +6,43 @@ from pathlib import Path
 from .helpers import _mixxx_failed, _mixxx_get, _mixxx_post
 
 
+def _gentle_rate_reset(deck: int, steps: int = 10, duration_s: float = 5.0):
+    """Gradually reset rate to 0.0 (native BPM) over duration_s seconds.
+    Prevents the jarring BPM snap after sync-adjusted transitions."""
+    import time as _time
+
+    # Read current rate
+    status = _mixxx_get("/api/status")
+    if not status:
+        return
+    d = status.get(f"deck{deck}", {})
+    current_bpm = float(d.get("bpm", 0) or 0)
+    file_bpm = float(d.get("file_bpm", 0) or 0)
+
+    if not file_bpm or not current_bpm or abs(current_bpm - file_bpm) < 0.5:
+        # Already close enough — just disable sync
+        _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "sync_enabled", "value": 0})
+        return
+
+    # Glide rate to 0.0 over steps
+    # rate=0.0 means native BPM. Current rate = (current_bpm/file_bpm - 1) * something
+    # Simplest: read current rate control value, glide to 0
+    sleep_per = duration_s / steps
+    for i in range(1, steps + 1):
+        t = i / steps
+        # Rate glides from current to 0
+        rate = (1 - t)  # fractional — we set rate relative to current offset
+        # Actually just set BPM directly via rate_ratio if available
+        target_bpm = current_bpm + (file_bpm - current_bpm) * t
+        ratio = target_bpm / file_bpm if file_bpm else 1.0
+        _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "rate_ratio", "value": ratio})
+        _time.sleep(sleep_per)
+
+    # Final: snap to exact native and disable sync
+    _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "rate_ratio", "value": 1.0})
+    _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "sync_enabled", "value": 0})
+
+
 def do_transition(to_deck: int, duration: int = 60) -> str:
     """Execute a smooth crossfade transition to a deck.
     Uses Mixxx's C++ engine (20fps S-curve). After transition completes,
@@ -67,9 +104,8 @@ def do_transition(to_deck: int, duration: int = 60) -> str:
     _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5})
     _mixxx_post("/api/filter", {"deck": to_deck, "value": 0.5})
 
-    # Reset rate on active deck — prevent BPM drift from sync
-    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "rate", "value": 0.0})
-    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "sync_enabled", "value": 0})
+    # Gradually reset rate to native BPM — prevents jarring BPM snap
+    _gentle_rate_reset(to_deck)
 
     # Eject outgoing deck -- prevents "loaded but finished" state
     _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
