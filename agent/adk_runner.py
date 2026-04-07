@@ -97,8 +97,13 @@ class ADKRunnerMixin:
         return self._run_async(self._invoke_being_async(instruction, max_calls), timeout=timeout)
 
     async def _invoke_planner_async(self, instruction: str) -> str:
-        """Invoke planner agent via ADK runner. Processes events for billing + thinking log."""
+        """Invoke planner agent via ADK runner. Fresh session each time to avoid stale tool_call_ids."""
         from google.genai import types
+
+        # Fresh session per invocation — prevents "Missing tool results" from compaction
+        self._planner_session = await self._session_service.create_session(
+            app_name="dj_treta_planner", user_id="planner"
+        )
 
         message = types.Content(role="user", parts=[types.Part(text=instruction)])
         result = ""
