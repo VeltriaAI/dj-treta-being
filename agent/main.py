@@ -25,7 +25,7 @@ import httpx
 
 from .config import load_config, Config
 from .agents import create_agents
-from google.adk.apps.app import App, EventsCompactionConfig
+from google.adk.apps.app import App
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 
@@ -291,6 +291,19 @@ class DJTretaBeing(
 
         _ensure_litellm(self.config)
         _ensure_mixxx(self.config)
+
+        # Reset rate on both decks — clears any leftover offsets from previous session
+        try:
+            url = self.config.mixxx.url
+            for deck in [1, 2]:
+                httpx.post(f"{url}/api/control",
+                           json={"group": f"[Channel{deck}]", "key": "rate_ratio", "value": 1.0}, timeout=2)
+                httpx.post(f"{url}/api/control",
+                           json={"group": f"[Channel{deck}]", "key": "sync_enabled", "value": 0}, timeout=2)
+            log.info("Reset rate on both decks (startup)")
+        except Exception as e:
+            log.warning(f"Startup rate reset failed: {e}")
+
         self._restore_session()
 
         log.info("Creating ADK agents (v6.0)...")
@@ -299,14 +312,11 @@ class DJTretaBeing(
         self.agent = dj_agent
         self.planner_agent = planner_agent
 
-        # Context compaction — summarize older messages periodically
-        compaction = EventsCompactionConfig(
-            compaction_interval=10,  # compact every 10 invocations (~5 min)
-            overlap_size=2,          # keep last 2 exchanges verbatim
-        )
-        being_app = App(name="treta_being", root_agent=being_agent, events_compaction_config=compaction)
-        dj_app = App(name="dj_treta", root_agent=dj_agent, events_compaction_config=compaction)
-        planner_app = App(name="dj_treta_planner", root_agent=planner_agent, events_compaction_config=compaction)
+        # No events_compaction: ADK compaction can drop tool results while assistant
+        # messages still reference tool_call_ids → "Missing tool results" API errors.
+        being_app = App(name="treta_being", root_agent=being_agent)
+        dj_app = App(name="dj_treta", root_agent=dj_agent)
+        planner_app = App(name="dj_treta_planner", root_agent=planner_agent)
 
         self._being_runner = Runner(app=being_app, session_service=self._session_service)
         self._dj_runner = Runner(app=dj_app, session_service=self._session_service)
