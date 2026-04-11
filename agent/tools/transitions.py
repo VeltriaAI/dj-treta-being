@@ -1,17 +1,22 @@
 """Transition techniques -- all 5 styles + scheduler."""
 
 import json
+import logging
 from pathlib import Path
 
 from .helpers import _mixxx_failed, _mixxx_get, _mixxx_post
 
+log = logging.getLogger("dj-treta")
 
-def _gentle_rate_reset(deck: int, steps: int = 10, duration_s: float = 5.0):
-    """Gradually reset rate to 0.0 (native BPM) over duration_s seconds.
-    Prevents the jarring BPM snap after sync-adjusted transitions."""
+
+def _glide_bpm(deck: int, target_bpm: float = None, duration_s: float = 10.0):
+    """Glide BPM to a target over duration_s seconds, then disable sync.
+
+    target_bpm=None  → glide to native file BPM (same as old _gentle_rate_reset)
+    target_bpm=128.0 → glide to 128 BPM
+    """
     import time as _time
 
-    # Read current rate
     status = _mixxx_get("/api/status")
     if not status:
         return
@@ -19,40 +24,65 @@ def _gentle_rate_reset(deck: int, steps: int = 10, duration_s: float = 5.0):
     current_bpm = float(d.get("bpm", 0) or 0)
     file_bpm = float(d.get("file_bpm", 0) or 0)
 
-    if not file_bpm or not current_bpm or abs(current_bpm - file_bpm) < 0.5:
-        # Already close enough — just disable sync
+    if not file_bpm or not current_bpm:
         _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "sync_enabled", "value": 0})
         return
 
-    # Glide rate to 0.0 over steps
-    # rate=0.0 means native BPM. Current rate = (current_bpm/file_bpm - 1) * something
-    # Simplest: read current rate control value, glide to 0
+    goal_bpm = target_bpm if target_bpm is not None else file_bpm
+
+    if abs(current_bpm - goal_bpm) < 0.5:
+        _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "sync_enabled", "value": 0})
+        return
+
+    steps = max(5, int(duration_s * 2))
     sleep_per = duration_s / steps
     for i in range(1, steps + 1):
         t = i / steps
-        # Rate glides from current to 0
-        rate = (1 - t)  # fractional — we set rate relative to current offset
-        # Actually just set BPM directly via rate_ratio if available
-        target_bpm = current_bpm + (file_bpm - current_bpm) * t
-        ratio = target_bpm / file_bpm if file_bpm else 1.0
+        bpm_now = current_bpm + (goal_bpm - current_bpm) * t
+        ratio = bpm_now / file_bpm if file_bpm else 1.0
         _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "rate_ratio", "value": ratio})
         _time.sleep(sleep_per)
 
-    # Final: snap to exact native and disable sync
-    _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "rate_ratio", "value": 1.0})
+    final_ratio = goal_bpm / file_bpm if file_bpm else 1.0
+    _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "rate_ratio", "value": final_ratio})
     _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "sync_enabled", "value": 0})
 
 
-def do_transition(to_deck: int, duration: int = 60) -> str:
+def _apply_bpm_after(deck: int, bpm_after: str = "reset", glide_duration: int = 10):
+    """Post-transition BPM handling based on agent's decision.
+
+    bpm_after="keep"   → just disable sync, leave rate untouched
+    bpm_after="reset"  → glide back to native file BPM
+    bpm_after="126.5"  → glide to a specific BPM (parsed as float)
+    """
+    log.info(
+        "BPM after transition: deck=%s policy=%s glide_duration=%ss",
+        deck, bpm_after, glide_duration,
+    )
+    _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "sync_enabled", "value": 0})
+
+    if bpm_after == "keep":
+        return
+    elif bpm_after == "reset":
+        _glide_bpm(deck, target_bpm=None, duration_s=max(5, min(60, glide_duration)))
+    else:
+        try:
+            target = float(bpm_after)
+            _glide_bpm(deck, target_bpm=target, duration_s=max(5, min(60, glide_duration)))
+        except (ValueError, TypeError):
+            log.warning("BPM after transition: ignored invalid target %r", bpm_after)
+
+
+def do_transition(to_deck: int, duration: int = 60, bpm_after: str = "reset", glide_duration: int = 10) -> str:
     """Execute a smooth crossfade transition to a deck.
     Uses Mixxx's C++ engine (20fps S-curve). After transition completes,
     the outgoing deck is paused and EQ/volume reset.
 
-    The brain picks compatible tracks. This tool just executes the transition.
-
     Args:
         to_deck: Deck to transition TO (1 or 2).
         duration: Transition duration in seconds (10-120).
+        bpm_after: "keep", "reset", or a target BPM string.
+        glide_duration: Seconds for BPM glide (used when bpm_after != "keep").
     """
     import time as _time
 
@@ -104,22 +134,22 @@ def do_transition(to_deck: int, duration: int = 60) -> str:
     _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5})
     _mixxx_post("/api/filter", {"deck": to_deck, "value": 0.5})
 
-    # Gradually reset rate to native BPM — prevents jarring BPM snap
-    _gentle_rate_reset(to_deck)
+    _apply_bpm_after(to_deck, bpm_after, glide_duration)
 
-    # Eject outgoing deck -- prevents "loaded but finished" state
     _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
 
-    return f"Transitioned to Deck {to_deck} over {duration}s. Deck {out_deck} ejected."
+    return f"Transitioned to Deck {to_deck} over {duration}s (bpm_after={bpm_after}). Deck {out_deck} ejected."
 
 
-def do_bass_swap(to_deck: int, duration: int = 60) -> str:
+def do_bass_swap(to_deck: int, duration: int = 60, bpm_after: str = "reset", glide_duration: int = 10) -> str:
     """Execute a bass-swap transition (techno style).
     Phase 1: Bring incoming with bass cut. Phase 2: Swap bass. Phase 3: Fade out old.
 
     Args:
         to_deck: Deck to transition TO (1 or 2).
         duration: Total transition duration in seconds (20-120).
+        bpm_after: "keep", "reset", or a target BPM string.
+        glide_duration: Seconds for BPM glide (used when bpm_after != "keep").
     """
     import time as _time
 
@@ -184,26 +214,22 @@ def do_bass_swap(to_deck: int, duration: int = 60) -> str:
         _mixxx_post("/api/eq", {"deck": out_deck, band: 1.0})
         _mixxx_post("/api/eq", {"deck": to_deck, band: 1.0})
 
-    # Reset rate on active deck — prevent BPM drift
-    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "rate", "value": 0.0})
-    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "sync_enabled", "value": 0})
+    _apply_bpm_after(to_deck, bpm_after, glide_duration)
 
-    # Eject outgoing deck
     _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
 
-    return f"Bass-swapped to Deck {to_deck} over {duration}s. Deck {out_deck} ejected."
+    return f"Bass-swapped to Deck {to_deck} over {duration}s (bpm_after={bpm_after}). Deck {out_deck} ejected."
 
 
-def do_filter_sweep(to_deck: int, duration: int = 45) -> str:
+def do_filter_sweep(to_deck: int, duration: int = 45, bpm_after: str = "reset", glide_duration: int = 10) -> str:
     """Filter sweep transition -- gradually reveal incoming track through a low-pass filter.
     Best for: progressive, melodic, atmospheric tracks.
-
-    The incoming track starts muffled (low-pass filtered), then the filter opens
-    while the outgoing track fades. Creates a smooth, evolving reveal.
 
     Args:
         to_deck: Deck to transition TO (1 or 2).
         duration: Transition duration in seconds (20-90).
+        bpm_after: "keep", "reset", or a target BPM string.
+        glide_duration: Seconds for BPM glide (used when bpm_after != "keep").
     """
     import time as _time
 
@@ -250,19 +276,20 @@ def do_filter_sweep(to_deck: int, duration: int = 45) -> str:
     _mixxx_post("/api/pause", {"deck": out_deck})
     _mixxx_post("/api/filter", {"deck": to_deck, "value": 0.5})
     _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5})
-    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "rate", "value": 0.0})
-    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "sync_enabled", "value": 0})
+    _apply_bpm_after(to_deck, bpm_after, glide_duration)
     _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
 
-    return f"Filter-swept to Deck {to_deck} over {duration}s. Deck {out_deck} ejected."
+    return f"Filter-swept to Deck {to_deck} over {duration}s (bpm_after={bpm_after}). Deck {out_deck} ejected."
 
 
-def do_hard_cut(to_deck: int) -> str:
+def do_hard_cut(to_deck: int, bpm_after: str = "reset", glide_duration: int = 10) -> str:
     """Hard cut -- instant switch to the other deck. No blend, no crossfade.
     Best for: genre changes, drop moments, high energy transitions.
 
     Args:
         to_deck: Deck to switch TO (1 or 2).
+        bpm_after: "keep", "reset", or a target BPM string.
+        glide_duration: Seconds for BPM glide (used when bpm_after != "keep").
     """
     out_deck = 1 if to_deck == 2 else 2
 
@@ -272,28 +299,25 @@ def do_hard_cut(to_deck: int) -> str:
         if not deck_state.get("track_loaded", False):
             return f"ABORTED: Deck {to_deck} has no track loaded!"
 
-    # Instant switch
     _mixxx_post("/api/play", {"deck": to_deck})
     xf = 0.0 if to_deck == 1 else 1.0
     _mixxx_post("/api/crossfade", {"position": xf})
     _mixxx_post("/api/pause", {"deck": out_deck})
-    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "rate", "value": 0.0})
-    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "sync_enabled", "value": 0})
+    _apply_bpm_after(to_deck, bpm_after, glide_duration)
     _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
 
-    return f"Hard-cut to Deck {to_deck}. Deck {out_deck} ejected."
+    return f"Hard-cut to Deck {to_deck} (bpm_after={bpm_after}). Deck {out_deck} ejected."
 
 
-def do_echo_out(to_deck: int, duration: int = 30) -> str:
+def do_echo_out(to_deck: int, duration: int = 30, bpm_after: str = "reset", glide_duration: int = 10) -> str:
     """Echo out -- fade outgoing track with delay/echo tail, then drop incoming.
     Best for: energy shifts, mood changes, dramatic moments.
-
-    The outgoing track fades with its echo reverberating, creating space,
-    then the incoming track drops in clean.
 
     Args:
         to_deck: Deck to transition TO (1 or 2).
         duration: How long the echo fade takes in seconds (10-45).
+        bpm_after: "keep", "reset", or a target BPM string.
+        glide_duration: Seconds for BPM glide (used when bpm_after != "keep").
     """
     import time as _time
 
@@ -342,17 +366,15 @@ def do_echo_out(to_deck: int, duration: int = 30) -> str:
         _mixxx_post("/api/crossfade", {"position": round(xf, 2)})
         _time.sleep(0.1)
 
-    # Reset
     _mixxx_post("/api/volume", {"deck": out_deck, "volume": 1.0})
     _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5})
-    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "rate", "value": 0.0})
-    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "sync_enabled", "value": 0})
+    _apply_bpm_after(to_deck, bpm_after, glide_duration)
     _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
 
-    return f"Echo-out to Deck {to_deck} over {duration}s. Deck {out_deck} ejected."
+    return f"Echo-out to Deck {to_deck} over {duration}s (bpm_after={bpm_after}). Deck {out_deck} ejected."
 
 
-def schedule_transition(to_deck: int, at_position: int, technique: str = "crossfade", duration: int = 45) -> str:
+def schedule_transition(to_deck: int, at_position: int, technique: str = "crossfade", duration: int = 45, bpm_after: str = "reset", glide_duration: int = 10) -> str:
     """Schedule a transition at a specific track position. Returns immediately --
     Python executes the transition in the background when the track reaches at_position.
 
@@ -364,6 +386,8 @@ def schedule_transition(to_deck: int, at_position: int, technique: str = "crossf
         at_position: Track position in seconds to START the transition.
         technique: "crossfade" (smooth blend), "bass_swap" (EQ swap, techno), "filter_sweep" (progressive reveal), "echo_out" (fade with echo, mood shift), "hard_cut" (instant switch, genre change).
         duration: Transition duration in seconds (10-90). Ignored for hard_cut.
+        bpm_after: What to do with BPM after the transition completes. "keep" = leave synced BPM (default, best when ±5 BPM), "reset" = glide back to native file BPM, or a number like "126.0" = glide to that specific BPM.
+        glide_duration: Seconds for the BPM change when bpm_after is "reset" or a target BPM (5-60, default 10). Ignored when bpm_after="keep".
     """
     duration = max(10, min(120, duration))
 
@@ -415,6 +439,8 @@ def schedule_transition(to_deck: int, at_position: int, technique: str = "crossf
         "activeDeck": active_deck,
         "scheduledAt": current_pos,
         "executesIn": round(delay),
+        "bpmAfter": str(bpm_after),
+        "glideDuration": max(5, min(60, glide_duration)),
     }
     Path("/tmp/dj-treta-scheduled-transition.json").write_text(
         json.dumps(scheduled, indent=2)
