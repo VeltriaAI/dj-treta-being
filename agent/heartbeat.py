@@ -133,7 +133,9 @@ class HeartbeatMixin:
             active_timeline = self._format_timeline(active_meta)
             idle_timeline = self._format_timeline(idle_meta)
             active_bpm = d_active.get("bpm", 0)
+            active_file_bpm = d_active.get("file_bpm", 0) or active_bpm
             idle_bpm = d_idle.get("bpm", 0)
+            idle_file_bpm = d_idle.get("file_bpm", 0) or idle_bpm
             active_key = active_meta.get("key_musical", "?") if active_meta else "?"
             idle_key = idle_meta.get("key_musical", "?") if idle_meta else "?"
 
@@ -150,11 +152,11 @@ class HeartbeatMixin:
             instruction = (
                 f"{directive_info}"
                 f"ACTIVE: '{active_track[:40]}' at {position:.0f}s/{duration:.0f}s "
-                f"({remaining:.0f}s left, BPM:{active_bpm:.0f}, Key:{active_key})\n"
+                f"({remaining:.0f}s left, BPM:{active_bpm:.0f} file:{active_file_bpm:.0f}, Key:{active_key})\n"
                 f"  NOW IN: {active_section}\n"
                 f"  TIMELINE: {active_timeline}\n\n"
                 f"NEXT: '{idle_track[:40]}' on deck {idle_deck} "
-                f"(BPM:{idle_bpm:.0f}, Key:{idle_key})\n"
+                f"(BPM:{idle_bpm:.0f} file:{idle_file_bpm:.0f}, Key:{idle_key})\n"
                 f"  TIMELINE: {idle_timeline}\n"
                 f"{pending_info}\n"
                 f"ACTION REQUIRED: Look at the timelines and do ONE of these:\n"
@@ -270,10 +272,15 @@ class HeartbeatMixin:
                     log.warning(f"Emergency load attempt {attempt+1} — not loaded yet")
                     time.sleep(3)
 
+                # Reset rate to native — emergency tracks should play at file BPM
+                httpx.post(f"{url}/api/control",
+                           json={"group": "[Channel1]", "key": "rate_ratio", "value": 1.0}, timeout=3)
+                httpx.post(f"{url}/api/control",
+                           json={"group": "[Channel1]", "key": "sync_enabled", "value": 0}, timeout=3)
                 httpx.post(f"{url}/api/play", json={"deck": 1}, timeout=3)
                 httpx.post(f"{url}/api/crossfade", json={"position": 0.0}, timeout=3)
                 time.sleep(2)
-                log.info(f"Emergency play: {Path(track).stem[:50]}")
+                log.info(f"Emergency play: {Path(track).stem[:50]} (rate reset)")
                 self._record_playing_tracks()
                 return
 
