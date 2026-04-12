@@ -853,8 +853,8 @@ class DJTretaApp(App):
     CSS = CSS
 
     BINDINGS = [
-        Binding("ctrl+q", "quit", "Quit"),
-        Binding("ctrl+s", "skip", "Skip"),
+        Binding("ctrl+q", "quit", "Quit", priority=True),
+        Binding("ctrl+s", "skip", "Skip", priority=True),
         Binding("ctrl+l", "like", "👍"),
         Binding("ctrl+d", "dislike", "👎"),
         Binding("f6", "tab_all", "All"),
@@ -871,7 +871,7 @@ class DJTretaApp(App):
 
     # ── WebSocket real-time connection ───────────────────────────────
 
-    _exit = False
+    _ws_shutdown = False
 
     def _start_ws_client(self):
         """Connect to daemon WebSocket for real-time updates."""
@@ -880,11 +880,19 @@ class DJTretaApp(App):
         self._ws_event_loop = None
         threading.Thread(target=self._ws_thread, daemon=True).start()
 
-    def action_quit(self) -> None:
-        """Clean shutdown — stop WS before exit."""
-        self._exit = True
+    async def action_quit(self) -> None:
+        """Clean shutdown — stop WS before exit. Must be async for Textual."""
+        self._ws_shutdown = True
         self._ws_connected = False
-        super().action_quit()
+        # Close WS socket so async loop unblocks
+        ws = getattr(self, "_ws", None)
+        el = getattr(self, "_ws_event_loop", None)
+        if ws is not None and el is not None and el.is_running():
+            try:
+                asyncio.run_coroutine_threadsafe(ws.close(), el).result(timeout=2.0)
+            except Exception:
+                pass
+        await super().action_quit()
 
     def _ws_thread(self):
         """WebSocket client thread — runs its own event loop."""
@@ -894,7 +902,7 @@ class DJTretaApp(App):
 
     async def _ws_loop(self):
         """Connect to daemon WS and receive events. Auto-reconnects."""
-        while not self._exit:
+        while not self._ws_shutdown:
             try:
                 async with websockets.connect(WS_URL, ping_interval=20, ping_timeout=10) as ws:
                     self._ws = ws
@@ -904,7 +912,7 @@ class DJTretaApp(App):
                     except Exception:
                         pass
                     async for raw in ws:
-                        if self._exit:
+                        if self._ws_shutdown:
                             break
                         try:
                             msg = json.loads(raw)
@@ -915,7 +923,7 @@ class DJTretaApp(App):
                 pass
             self._ws_connected = False
             self._ws = None
-            if self._exit:
+            if self._ws_shutdown:
                 break
             await asyncio.sleep(3)
 
@@ -929,7 +937,7 @@ class DJTretaApp(App):
 
     def _handle_ws_message(self, msg: dict):
         """Route incoming WebSocket messages to handlers (called from WS thread)."""
-        if self._exit:
+        if self._ws_shutdown:
             return
         msg_type = msg.get("type", "")
 
