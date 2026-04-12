@@ -139,7 +139,7 @@ class TestScheduleTransition:
         assert data["toDeck"] == 2
         assert data["technique"] == "bass_swap"
         assert data["duration"] == 45
-        assert data.get("bpmAfter") == "reset"
+        assert data.get("bpmAfter") == "keep"
         assert data.get("glideDuration") == 60
         assert "Scheduled" in result
 
