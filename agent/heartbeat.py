@@ -139,30 +139,26 @@ class HeartbeatMixin:
             active_key = active_meta.get("key_musical", "?") if active_meta else "?"
             idle_key = idle_meta.get("key_musical", "?") if idle_meta else "?"
 
-            # Tell agent if transition is already pending
-            pending_info = ""
-            if self._transition_pending:
-                pending_info = "\nTRANSITION ALREADY PENDING — do NOT schedule another. Just say 'transition pending'.\n"
+            from .prompts import build_dj_user_message
 
-            # v6.0: Being's directive to DJ agent
-            directive_info = ""
-            if self.dj_directive:
-                directive_info = f"\nDIRECTIVE FROM TRETA: {self.dj_directive}\nFollow this directive when making your decision.\n"
-
-            instruction = (
-                f"{directive_info}"
-                f"ACTIVE: '{active_track[:40]}' at {position:.0f}s/{duration:.0f}s "
-                f"({remaining:.0f}s left, BPM:{active_bpm:.0f} file:{active_file_bpm:.0f}, Key:{active_key})\n"
-                f"  NOW IN: {active_section}\n"
-                f"  TIMELINE: {active_timeline}\n\n"
-                f"NEXT: '{idle_track[:40]}' on deck {idle_deck} "
-                f"(BPM:{idle_bpm:.0f} file:{idle_file_bpm:.0f}, Key:{idle_key})\n"
-                f"  TIMELINE: {idle_timeline}\n"
-                f"{pending_info}\n"
-                f"ACTION REQUIRED: Look at the timelines and do ONE of these:\n"
-                f"1. CALL schedule_transition(to_deck={idle_deck}, at_position=<seconds>, technique='crossfade', duration=45) — if you see a breakdown or outro coming up\n"
-                f"2. Say 'waiting' in ONE sentence — if the track is in a drop or buildup\n\n"
-                f"Do NOT describe what you would do. CALL the tool or say waiting. Nothing else."
+            instruction = build_dj_user_message(
+                active_track=active_track,
+                position=position,
+                duration=duration,
+                remaining=remaining,
+                active_bpm=active_bpm,
+                active_file_bpm=active_file_bpm,
+                active_key=active_key,
+                active_section=active_section,
+                active_timeline=active_timeline,
+                idle_track=idle_track,
+                idle_deck=idle_deck,
+                idle_bpm=idle_bpm,
+                idle_file_bpm=idle_file_bpm,
+                idle_key=idle_key,
+                idle_timeline=idle_timeline,
+                transition_pending=self._transition_pending,
+                dj_directive=self.dj_directive,
             )
 
             self._agent_busy = True
