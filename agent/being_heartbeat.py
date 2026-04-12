@@ -154,9 +154,10 @@ class BeingHeartbeatMixin:
             while self._running:
                 try:
                     tick_count += 1
+                    from .adk_runner import _corruption_detector
+                    _corruption_detector.reset()
 
                     # Rotate session every 10 ticks — prevents context degeneration
-                    # (Gemini Flash starts producing gibberish after ~30 ticks in same session)
                     if tick_count % 10 == 0:
                         session = await session_service.create_session(
                             app_name="treta_consciousness", user_id="self"
@@ -181,12 +182,20 @@ class BeingHeartbeatMixin:
                                 if part.text:
                                     result += part.text
 
+                    # Detect corruption — "Missing tool results" means orphaned tool_call_ids
+                    if _corruption_detector.corrupted:
+                        log.warning("Consciousness session corrupted (orphaned tool calls) — rotating immediately")
+                        session = await session_service.create_session(
+                            app_name="treta_consciousness", user_id="self"
+                        )
+                        continue
+
                     # Detect gibberish — if result has too many repeated words, skip
                     if result and len(result) > 50:
                         words = result.lower().split()
                         unique_ratio = len(set(words)) / max(len(words), 1)
                         if unique_ratio < 0.3:
-                            log.warning(f"Consciousness gibberish detected (unique ratio {unique_ratio:.2f}) — rotating session")
+                            log.warning(f"Consciousness gibberish detected — rotating session")
                             session = await session_service.create_session(
                                 app_name="treta_consciousness", user_id="self"
                             )
@@ -197,6 +206,13 @@ class BeingHeartbeatMixin:
 
                 except Exception as e:
                     log.warning(f"Being heartbeat error: {e}")
+                    # On any error, rotate session to recover
+                    try:
+                        session = await session_service.create_session(
+                            app_name="treta_consciousness", user_id="self"
+                        )
+                    except Exception:
+                        pass
 
                 # Dynamic sleep — shorter during active sets, longer at night
                 interval = self._get_heartbeat_interval()
