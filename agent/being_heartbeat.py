@@ -164,12 +164,18 @@ class BeingHeartbeatMixin:
                         )
                         log.info(f"Consciousness session rotated (tick {tick_count})")
 
-                    context = self._build_heartbeat_context()
+                    from .prompts import build_heartbeat_context, build_consciousness_user_message
+                    context = build_heartbeat_context(
+                        current_set=self.current_set,
+                        tracks_played=self.tracks_played,
+                        mood=self.mood,
+                        emergency_count=self._emergency_count,
+                    )
 
                     from google.genai import types
                     message = types.Content(
                         role="user",
-                        parts=[types.Part(text=f"HEARTBEAT TICK — {context}\n\nWhat matters most right now? Think briefly, act if needed, or say HEARTBEAT_OK.")]
+                        parts=[types.Part(text=build_consciousness_user_message(context))]
                     )
 
                     result = ""

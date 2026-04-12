@@ -104,29 +104,8 @@ class PlannerMixin:
             )
 
         # Build compact candidate list for planner
-        candidate_text = ""
-        if candidates:
-            for c in candidates:
-                # Compact timeline summary
-                timeline_summary = ""
-                tl = c.get("timeline", "")
-                if tl:
-                    try:
-                        import json as _json
-                        sections = _json.loads(tl) if isinstance(tl, str) else tl
-                        parts = [f"{s['section']}({s['energy']})" for s in sections]
-                        timeline_summary = f" | Structure: {' → '.join(parts)}"
-                    except Exception:
-                        pass
-
-                candidate_text += (
-                    f"  - {c['title']} | path: {c['path']} | "
-                    f"BPM:{c.get('bpm',0):.0f} Key:{c.get('key_musical','?')} "
-                    f"Energy:{c.get('energy_peak','?')} "
-                    f"Mix-in:{c.get('mix_in_seconds',0) or 0:.0f}s "
-                    f"Mix-out:{c.get('mix_out_seconds',0) or 0:.0f}s"
-                    f"{timeline_summary}\n"
-                )
+        from .prompts import format_candidate_text
+        candidate_text = format_candidate_text(candidates) if candidates else ""
 
         # Current track info
         current_info = "NOTHING — silence!"
@@ -170,22 +149,20 @@ class PlannerMixin:
         except Exception:
             pass
 
+        from .prompts import build_planner_user_message
+
         log.info(f"Planner running — current: {current_track or 'nothing'}, {len(candidates)} candidates in DB")
-        result = self._invoke_planner(
-            f"Currently playing: {current_info}\n"
-            f"Already played (DO NOT repeat): {played_list}\n\n"
-            f"Tracks already in library:\n{candidate_text or '  (none)'}\n\n"
-            f"Current mood/genre: {self.mood or 'melodic-techno'}.\n"
-            f"IMPORTANT: The mood '{self.mood}' is the listener's EXPLICIT instruction. "
-            f"This OVERRIDES any learned preferences. Search for and select tracks matching THIS mood.\n"
-            + directive_line
-            + intent_line
-            + feedback_line
-            + self._build_source_instructions() +
-            f"After creating/finding new tracks, analyze each one.\n"
-            f"Then pick the best next 3 tracks from what's available.\n"
-            f"For each: title, full path, BPM, key, energy, why it fits."
+        planner_msg = build_planner_user_message(
+            current_info=current_info,
+            played_list=played_list,
+            candidate_text=candidate_text,
+            mood=self.mood or "melodic-techno",
+            planner_directive=self.planner_directive if self.planner_directive else "",
+            user_intent=self.user_intent if self.user_intent else "",
+            feedback_line=feedback_line,
+            source_instructions=self._build_source_instructions(),
         )
+        result = self._invoke_planner(planner_msg)
         log.info(f"Planner done: {str(result)[:500]}")
         if hasattr(self, '_ws_broadcast'):
             self._ws_broadcast("log", {"text": f"Planner done: {str(result)[:200]}"})

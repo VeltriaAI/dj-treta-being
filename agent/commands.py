@@ -189,24 +189,21 @@ class CommandsMixin:
         from .main import _get_status
 
         try:
+            from .prompts import build_being_user_message
+
             context = self._build_context(_get_status(self.config.mixxx.url))
             history = self._format_history()
 
-            readonly_tag = ""
-            if readonly:
-                readonly_tag = (
-                    "\n\nMODE: READONLY — this is a live web listener. "
-                    "You can ONLY respond conversationally. Do NOT call set_dj_directive, "
-                    "set_planner_directive, set_mood, or any control tools. "
-                    "Just chat, share your thoughts on the music, describe the vibe.\n"
-                )
+            being_msg = build_being_user_message(
+                context=context,
+                history=history,
+                message=message,
+                readonly=readonly,
+            )
 
             with self._talk_lock:
                 result = self._invoke_being(
-                    f"{context}\n\n{history}\n{readonly_tag}\n"
-                    f'The listener says: "{message}"\n\n'
-                    f"Respond naturally. Set directives only if they asked you to DO something "
-                    f"(change mood, play something specific, etc).",
+                    being_msg,
                     timeout=120, max_calls=20 if not readonly else 5,
                 )
 
