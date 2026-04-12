@@ -194,9 +194,24 @@ def propose_change(description: str, files: str = "") -> str:
     Use when you have an idea but want to think more or get approval first.
 
     Args:
-        description: What you want to change and why.
+        description: What you want to change and why. Must be specific and coherent.
         files: Comma-separated list of files that would be affected.
     """
+    # Guard against gibberish proposals (LLM degeneration)
+    if not description or len(description.strip()) < 20:
+        return "ERROR: Proposal too short. Be specific about what to change and why."
+    words = description.lower().split()
+    if len(words) > 5:
+        unique_ratio = len(set(words)) / len(words)
+        if unique_ratio < 0.4:
+            return "ERROR: Proposal appears to be repetitive/incoherent. Think clearly, then try again."
+    # Must reference actual code concepts
+    code_words = {"agent", "tool", "function", "class", "file", "bug", "fix", "add", "remove",
+                  "improve", "transition", "track", "planner", "heartbeat", "bpm", "energy",
+                  "mixxx", "deck", "sync", "rate", "filter", "eq", "crossfade"}
+    if not any(w in description.lower() for w in code_words):
+        return "ERROR: Proposal must reference actual code or DJ functionality. Not abstract ideas."
+
     try:
         from ..db import get_db
         db = get_db()

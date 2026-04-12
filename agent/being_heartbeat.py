@@ -149,10 +149,20 @@ class BeingHeartbeatMixin:
             session = await session_service.create_session(
                 app_name="treta_consciousness", user_id="self"
             )
+            tick_count = 0
 
             while self._running:
                 try:
-                    # Build context for this tick
+                    tick_count += 1
+
+                    # Rotate session every 10 ticks — prevents context degeneration
+                    # (Gemini Flash starts producing gibberish after ~30 ticks in same session)
+                    if tick_count % 10 == 0:
+                        session = await session_service.create_session(
+                            app_name="treta_consciousness", user_id="self"
+                        )
+                        log.info(f"Consciousness session rotated (tick {tick_count})")
+
                     context = self._build_heartbeat_context()
 
                     from google.genai import types
@@ -165,12 +175,22 @@ class BeingHeartbeatMixin:
                     async for event in runner.run_async(
                         session_id=session.id, user_id="self", new_message=message
                     ):
-                        # Process billing/thinking
                         self._process_event(event)
                         if event.content and event.content.parts:
                             for part in event.content.parts:
                                 if part.text:
                                     result += part.text
+
+                    # Detect gibberish — if result has too many repeated words, skip
+                    if result and len(result) > 50:
+                        words = result.lower().split()
+                        unique_ratio = len(set(words)) / max(len(words), 1)
+                        if unique_ratio < 0.3:
+                            log.warning(f"Consciousness gibberish detected (unique ratio {unique_ratio:.2f}) — rotating session")
+                            session = await session_service.create_session(
+                                app_name="treta_consciousness", user_id="self"
+                            )
+                            continue
 
                     if result and "HEARTBEAT_OK" not in result:
                         log.info(f"Being thought: {result[:200]}")

@@ -25,16 +25,31 @@ def read_file(file_path: str) -> str:
 
 
 def write_file(file_path: str, content: str) -> str:
-    """Write a file under the DJ Treta repo or configured music library only.
+    """Write a file — restricted to .beings/ directory and agent/ code files.
+
+    You can update your identity files (.beings/SOUL.md, MEMORY.md, GOALS.md, etc.)
+    and agent code (agent/*.py). Writing to repo root or random paths is blocked.
 
     Args:
-        file_path: Path relative to the repo or absolute under allowed roots.
+        file_path: Path relative to the repo (e.g. '.beings/MEMORY.md', 'agent/heartbeat.py').
         content: The full content to write.
     """
     cfg = load_config()
     path = _resolve_tool_path(cfg, file_path)
     if path is None:
         return "ERROR: Path not allowed (must be under the DJ Treta repo or library.music_dir)."
+
+    # Sandbox: only allow .beings/, agent/, tests/, docs/ — not repo root
+    repo_root = Path(__file__).parent.parent.parent
+    try:
+        rel = path.relative_to(repo_root)
+        rel_str = str(rel)
+        allowed_prefixes = (".beings/", "agent/", "tests/", "docs/", "templates/")
+        if not any(rel_str.startswith(p) for p in allowed_prefixes):
+            return f"ERROR: Cannot write to '{rel_str}'. Only allowed under: {', '.join(allowed_prefixes)}"
+    except ValueError:
+        pass  # path not under repo_root — let _resolve_tool_path handle it
+
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
     return f"Written {len(content)} chars to {path}"
