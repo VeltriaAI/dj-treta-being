@@ -1,31 +1,26 @@
 """Directive tools — Being sets directives for DJ and Planner agents.
 
 The Being is the brain. These tools let her direct her autonomous agents
-without micromanaging them. Each agent reads its directive on its next cycle.
+without micromanaging them. Each agent reads its directive from Session
+on its next cycle.
+
+Under v8, directives live in Session (single source of truth), not in
+/tmp/dj-treta-directives.json. The old file-based IPC is gone.
 """
 
-import json
 import logging
-import time
-from pathlib import Path
 
 log = logging.getLogger("dj-treta")
 
-# Shared state file — Being writes, agents read
-_DIRECTIVE_FILE = Path("/tmp/dj-treta-directives.json")
 
+def _session():
+    """Import-time-safe accessor for the Session singleton.
 
-def _read_directives() -> dict:
-    try:
-        if _DIRECTIVE_FILE.exists():
-            return json.loads(_DIRECTIVE_FILE.read_text())
-    except Exception:
-        pass
-    return {}
-
-
-def _write_directives(data: dict):
-    _DIRECTIVE_FILE.write_text(json.dumps(data, indent=2))
+    Imported inside functions so this tool module doesn't crash at import
+    time if session_state hasn't yet registered (e.g. during tests).
+    """
+    from ..session_state import get_session
+    return get_session()
 
 
 def set_dj_directive(instruction: str) -> str:
@@ -39,9 +34,10 @@ def set_dj_directive(instruction: str) -> str:
     Args:
         instruction: What the DJ agent should do on its next cycle(s).
     """
-    data = _read_directives()
-    data["dj"] = {"instruction": instruction, "set_at": time.time()}
-    _write_directives(data)
+    sess = _session()
+    if sess is None:
+        return "Session not available — directive not set"
+    sess.dj_directive = instruction
     log.info(f"DJ directive set: {instruction[:100]}")
     return f"DJ directive set: {instruction}"
 
@@ -57,9 +53,10 @@ def set_planner_directive(instruction: str) -> str:
     Args:
         instruction: What the Planner should prioritize on its next cycle.
     """
-    data = _read_directives()
-    data["planner"] = {"instruction": instruction, "set_at": time.time()}
-    _write_directives(data)
+    sess = _session()
+    if sess is None:
+        return "Session not available — directive not set"
+    sess.planner_directive = instruction
     log.info(f"Planner directive set: {instruction[:100]}")
     return f"Planner directive set: {instruction}"
 
@@ -67,30 +64,39 @@ def set_planner_directive(instruction: str) -> str:
 def set_mood(mood: str) -> str:
     """Change the current mood/genre for the entire set.
 
-    This updates the Being's mood, the current set's mood/genre,
-    and triggers a planner replan on the next cycle.
+    Updates the Being's mood on Session. Session fires the mood-change
+    callback (registered in main.py at startup) which kicks off the LLM
+    mood resolver and triggers a planner replan.
 
     Args:
         mood: The new mood/genre (e.g. "bhojpuri", "dark-techno", "ambient", "psytrance")
     """
-    # Write mood to a temp file — Being's main loop picks it up
-    Path("/tmp/dj-treta-mood-change.json").write_text(json.dumps({
-        "mood": mood, "set_at": time.time()
-    }))
-    log.info(f"Mood change requested: {mood}")
+    sess = _session()
+    if sess is None:
+        return "Session not available — mood not set"
+    sess.mood = mood
+    log.info(f"Mood changed to: {mood}")
     return f"Mood changed to: {mood}"
 
 
 def get_directives() -> str:
-    """Read current directives (for debugging/status).
-
-    Returns the current DJ and Planner directives as JSON.
-    """
-    data = _read_directives()
-    return json.dumps(data, indent=2) if data else "No active directives"
+    """Read current directives (for debugging/status)."""
+    sess = _session()
+    if sess is None:
+        return "Session not available"
+    parts = []
+    if sess.dj_directive:
+        parts.append(f"DJ: {sess.dj_directive}")
+    if sess.planner_directive:
+        parts.append(f"Planner: {sess.planner_directive}")
+    return "\n".join(parts) if parts else "No active directives"
 
 
 def clear_directives() -> str:
     """Clear all directives after they've been consumed."""
-    _DIRECTIVE_FILE.unlink(missing_ok=True)
+    sess = _session()
+    if sess is None:
+        return "Session not available"
+    sess.dj_directive = ""
+    sess.planner_directive = ""
     return "Directives cleared"

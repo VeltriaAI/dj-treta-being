@@ -1,130 +1,118 @@
-"""Tests for v6.0 directive system — Being → Agent communication."""
+"""Tests for v8 directive system — Being → Agent communication via Session.
 
-import json
-import time
+In v6/v7, directives were written to /tmp/dj-treta-directives.json and
+polled by CommandsMixin._pick_up_directives. In v8, directives live in
+Session (single source of truth), written directly by the tool functions.
+"""
+
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import pytest
 
+from agent.session_state import Session, register_session
 
-DIRECTIVE_FILE = Path("/tmp/dj-treta-directives.json")
-MOOD_CHANGE_FILE = Path("/tmp/dj-treta-mood-change.json")
+
+@pytest.fixture
+def registered_session(tmp_path):
+    """Fresh Session registered as the module-level singleton."""
+    path = tmp_path / "session.json"
+    session = Session(path)
+    register_session(session)
+    yield session
+    session.close()
+    # Clean up singleton
+    import agent.session_state as ss
+    ss._session_instance = None
 
 
 class TestDirectiveTools:
+    """Tools write to Session, not to /tmp files."""
 
-    def setup_method(self):
-        DIRECTIVE_FILE.unlink(missing_ok=True)
-        MOOD_CHANGE_FILE.unlink(missing_ok=True)
-
-    def teardown_method(self):
-        DIRECTIVE_FILE.unlink(missing_ok=True)
-        MOOD_CHANGE_FILE.unlink(missing_ok=True)
-
-    def test_set_dj_directive_writes_file(self):
+    def test_set_dj_directive_writes_to_session(self, registered_session):
         from agent.tools.directives import set_dj_directive
 
         result = set_dj_directive("hard_cut when bhojpuri loads")
         assert "hard_cut" in result
-        assert DIRECTIVE_FILE.exists()
-        data = json.loads(DIRECTIVE_FILE.read_text())
-        assert data["dj"]["instruction"] == "hard_cut when bhojpuri loads"
-        assert "set_at" in data["dj"]
+        assert registered_session.dj_directive == "hard_cut when bhojpuri loads"
 
-    def test_set_planner_directive_writes_file(self):
+    def test_set_planner_directive_writes_to_session(self, registered_session):
         from agent.tools.directives import set_planner_directive
 
         result = set_planner_directive("Download 3 bhojpuri tracks")
         assert "bhojpuri" in result
-        data = json.loads(DIRECTIVE_FILE.read_text())
-        assert data["planner"]["instruction"] == "Download 3 bhojpuri tracks"
+        assert registered_session.planner_directive == "Download 3 bhojpuri tracks"
 
-    def test_set_mood_writes_temp_file(self):
+    def test_set_mood_writes_to_session(self, registered_session):
         from agent.tools.directives import set_mood
 
         result = set_mood("bhojpuri")
         assert "bhojpuri" in result
-        assert MOOD_CHANGE_FILE.exists()
-        data = json.loads(MOOD_CHANGE_FILE.read_text())
-        assert data["mood"] == "bhojpuri"
+        assert registered_session.mood == "bhojpuri"
 
-    def test_directives_accumulate(self):
-        """Setting DJ then planner should keep both."""
+    def test_directives_coexist(self, registered_session):
+        """Setting DJ then planner should leave both set."""
         from agent.tools.directives import set_dj_directive, set_planner_directive
 
         set_dj_directive("use bass_swap")
         set_planner_directive("find dark tracks")
 
-        data = json.loads(DIRECTIVE_FILE.read_text())
-        assert data["dj"]["instruction"] == "use bass_swap"
-        assert data["planner"]["instruction"] == "find dark tracks"
+        assert registered_session.dj_directive == "use bass_swap"
+        assert registered_session.planner_directive == "find dark tracks"
 
-    def test_clear_directives(self):
+    def test_clear_directives(self, registered_session):
         from agent.tools.directives import set_dj_directive, clear_directives
 
         set_dj_directive("something")
-        assert DIRECTIVE_FILE.exists()
+        assert registered_session.dj_directive == "something"
 
         clear_directives()
-        assert not DIRECTIVE_FILE.exists()
+        assert registered_session.dj_directive == ""
+        assert registered_session.planner_directive == ""
 
-    def test_get_directives_empty(self):
+    def test_get_directives_empty(self, registered_session):
         from agent.tools.directives import get_directives
 
         result = get_directives()
         assert "No active" in result
 
+    def test_get_directives_populated(self, registered_session):
+        from agent.tools.directives import set_dj_directive, get_directives
 
-class TestDirectivePickup:
-    """Test that Being picks up directives from temp files."""
+        set_dj_directive("smooth transitions only")
+        result = get_directives()
+        assert "smooth" in result
 
-    def setup_method(self):
-        DIRECTIVE_FILE.unlink(missing_ok=True)
-        MOOD_CHANGE_FILE.unlink(missing_ok=True)
+    def test_tools_without_registered_session(self):
+        """Tools should degrade gracefully when session not registered."""
+        import agent.session_state as ss
+        ss._session_instance = None
 
-    def teardown_method(self):
-        DIRECTIVE_FILE.unlink(missing_ok=True)
-        MOOD_CHANGE_FILE.unlink(missing_ok=True)
+        from agent.tools.directives import set_dj_directive, set_mood
+        assert "not available" in set_dj_directive("x").lower()
+        assert "not available" in set_mood("x").lower()
 
-    def test_pickup_mood_change(self, being):
-        """Being should pick up mood change from set_mood tool."""
-        MOOD_CHANGE_FILE.write_text(json.dumps({"mood": "bhojpuri", "set_at": time.time()}))
 
-        being._pick_up_directives()
+class TestMoodCallback:
+    """Session's mood-change callback is how 'pickup directive' behavior
+    now works — registered in main.py at startup. Tests the callback path."""
 
-        assert being.mood == "bhojpuri"
-        assert being.current_set["mood"] == "bhojpuri"
-        assert not MOOD_CHANGE_FILE.exists()  # consumed
+    def test_callback_fires_on_mood_change(self, registered_session):
+        """Registering a callback on `mood` fires when set_mood is called."""
+        from agent.tools.directives import set_mood
 
-    def test_pickup_dj_directive(self, being):
-        """Being should pick up DJ directive from file."""
-        DIRECTIVE_FILE.write_text(json.dumps({
-            "dj": {"instruction": "use hard_cut", "set_at": time.time()}
-        }))
+        events = []
+        registered_session.register_callback(
+            "mood", lambda name, old, new: events.append((old, new))
+        )
 
-        being._pick_up_directives()
+        set_mood("psytrance")
+        set_mood("psytrance")  # no-op — same value
+        set_mood("deep-house")
 
-        assert being.dj_directive == "use hard_cut"
-
-    def test_pickup_planner_directive(self, being):
-        """Being should pick up planner directive from file."""
-        DIRECTIVE_FILE.write_text(json.dumps({
-            "planner": {"instruction": "find ambient tracks", "set_at": time.time()}
-        }))
-
-        being._pick_up_directives()
-
-        assert being.planner_directive == "find ambient tracks"
-
-    def test_mood_triggers_replan(self, being):
-        """Mood change should force planner replan."""
-        being._tracks_since_plan = 0
-        MOOD_CHANGE_FILE.write_text(json.dumps({"mood": "psytrance", "set_at": time.time()}))
-
-        being._pick_up_directives()
-
-        assert being._tracks_since_plan == being.config.planner.replan_every_n_tracks
+        assert len(events) == 2
+        assert events[0] == ("", "psytrance")
+        assert events[1] == ("psytrance", "deep-house")
 
 
 class TestReadonlyTalk:
@@ -152,10 +140,10 @@ class TestReadonlyTalk:
 
 
 class TestBeingAgentCreation:
-    """Test that create_agents returns 3 agents."""
+    """Test that create_agents returns 3 agents (pre-Phase 5 — Library still
+    a sub-agent of DJ)."""
 
     def test_create_agents_returns_three(self):
-        """create_agents should return (being_agent, dj_agent, planner_agent)."""
         from agent.config import Config, MixxxConfig, LLMConfig, LibraryConfig
         from unittest.mock import patch
         import tempfile

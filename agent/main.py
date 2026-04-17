@@ -36,6 +36,7 @@ from .sets import SetsMixin
 from .commands import CommandsMixin
 from .adk_runner import ADKRunnerMixin
 from .session import SessionMixin
+from .session_state import Session, register_session
 from .evolution import EvolutionMixin
 from .ws_server import WSServerMixin
 from .being_heartbeat import BeingHeartbeatMixin
@@ -209,28 +210,23 @@ class DJTretaBeing(
         self._planner_busy = False
         self._talk_lock = threading.Lock()
 
-        # State (shared with TUI via state file)
-        self.mood = ""
-        self.tracks_played: list[dict] = []
+        # ── Single source of truth: Session class ────────────────────
+        # All live state the user/TUI/agents care about lives in Session.
+        # Auto-persisted to .beings/session.json. See agent/session_state.py.
+        session_path = Path(__file__).parent.parent / ".beings" / "session.json"
+        self.session = Session.load(session_path)
+        register_session(self.session)
+
+        # Command bookkeeping — internal, not user-facing
         self._last_command = ""
         self._last_command_id = ""
         self._last_result = ""
-
-        # Conversation memory
-        self._chat_history: list[tuple[str, str]] = []
-
-        # Self-evolution tracking
-        self._last_reflect_count = 0
-
-        # Current set
-        self.current_set = None
 
         # Track when each deck's current track started (for minimum play time)
         self._deck_start_time = {1: 0.0, 2: 0.0}  # wall clock when track started on deck
         self._deck_track = {1: "", 2: ""}  # track path on each deck
 
-        # State tracking for TUI
-        self._emergency_count = 0
+        # Subsystem state — internal Python machinery, not user state
         self._recording_active = False
         self._broadcast_active = False
 
@@ -240,15 +236,8 @@ class DJTretaBeing(
         # Serialize all DJ agent invocations (talk, heartbeat, skip, reflect)
         self._agent_lock = threading.Lock()
 
-        # DJ → Planner communication: user intent from conversation
-        self.user_intent = ""  # e.g. "play some bhojpuri mix"
-
         # Generation status for TUI
         self._generation_status = {}
-
-        # v6.0 Directive system — Being sets, agents read
-        self.dj_directive = ""
-        self.planner_directive = ""
 
         # ADK v5.0 — single persistent event loop (avoids LiteLLM Queue binding errors)
         self._loop = asyncio.new_event_loop()
@@ -261,6 +250,89 @@ class DJTretaBeing(
         self._being_session = None
         self._dj_session = None
         self._planner_session = None
+
+    # ── Session property delegates ───────────────────────────────────
+    # These let every existing mixin keep reading/writing self.mood,
+    # self.tracks_played, etc. unchanged — but state actually lives in
+    # self.session and is auto-persisted. Critical fields (mood,
+    # tracks_played, current_set, directives) sync-write to disk on each
+    # mutation; transients debounce 500ms.
+
+    @property
+    def mood(self) -> str:
+        return self.session.mood
+
+    @mood.setter
+    def mood(self, value: str):
+        self.session.mood = value or ""
+
+    @property
+    def tracks_played(self) -> list:
+        return self.session.tracks_played
+
+    @tracks_played.setter
+    def tracks_played(self, value: list):
+        self.session.tracks_played = list(value or [])
+
+    @property
+    def current_set(self):
+        return self.session.current_set
+
+    @current_set.setter
+    def current_set(self, value):
+        self.session.current_set = value
+
+    @property
+    def user_intent(self) -> str:
+        return self.session.user_intent
+
+    @user_intent.setter
+    def user_intent(self, value: str):
+        self.session.user_intent = value or ""
+
+    @property
+    def dj_directive(self) -> str:
+        return self.session.dj_directive
+
+    @dj_directive.setter
+    def dj_directive(self, value: str):
+        self.session.dj_directive = value or ""
+
+    @property
+    def planner_directive(self) -> str:
+        return self.session.planner_directive
+
+    @planner_directive.setter
+    def planner_directive(self, value: str):
+        self.session.planner_directive = value or ""
+
+    @property
+    def _emergency_count(self) -> int:
+        return self.session.emergency_count
+
+    @_emergency_count.setter
+    def _emergency_count(self, value: int):
+        self.session.emergency_count = int(value or 0)
+
+    @property
+    def _last_reflect_count(self) -> int:
+        return self.session.last_reflect_count
+
+    @_last_reflect_count.setter
+    def _last_reflect_count(self, value: int):
+        self.session.last_reflect_count = int(value or 0)
+
+    @property
+    def _chat_history(self):
+        # Returns the ObservedList so callers' `.append((user, resp))` triggers
+        # Session dirty flag + flush. Tuples are JSON-serialized as 2-item
+        # lists; consumers iterate with `for u, r in self._chat_history:`
+        # which handles both shapes.
+        return self.session.chat_history
+
+    @_chat_history.setter
+    def _chat_history(self, value):
+        self.session.chat_history = list(value or [])
 
     def start(self):
         _check_single_instance()
@@ -334,6 +406,24 @@ class DJTretaBeing(
         # Planner loop — background track planning
         threading.Thread(target=self._planner_loop, daemon=True).start()
 
+        # Session callback: when mood changes, force planner replan + update
+        # current set's mood. Replaces the old file-IPC polling in
+        # CommandsMixin._pick_up_directives.
+        def _on_mood_change(name, old, new):
+            if not new or new == old:
+                return
+            if self.current_set:
+                # Mutating the dict in place would bypass Session dirty
+                # detection; reassign to trigger flush.
+                cs = dict(self.current_set)
+                cs["mood"] = new
+                cs["genre"] = new
+                self.current_set = cs
+            if hasattr(self.config, "planner"):
+                self._tracks_since_plan = self.config.planner.replan_every_n_tracks
+            log.info(f"Mood changed via Session callback: {new}")
+        self.session.register_callback("mood", _on_mood_change)
+
         # Read startup mood if provided via CLI
         mood_file = Path("/tmp/dj-treta-mood.txt")
         if mood_file.exists():
@@ -377,14 +467,19 @@ class DJTretaBeing(
         # End set + recording + broadcast gracefully
         if self.current_set:
             from .db import update_set
-            self.current_set["status"] = "finished"
-            self.current_set["ended_at"] = time.time()
-            self.current_set["track_count"] = len(self.tracks_played)
+            # Reassign dict to trigger Session flush on critical current_set field
+            cs = dict(self.current_set)
+            cs["status"] = "finished"
+            cs["ended_at"] = time.time()
+            cs["track_count"] = len(self.tracks_played)
+            self.current_set = cs
             self._stop_recording()
-            update_set(self.current_set)
-            log.info(f"Set ended on shutdown: {self.current_set['id']}")
+            update_set(cs)
+            log.info(f"Set ended on shutdown: {cs['id']}")
         self._stop_broadcast()
-        self._save_session()
+        # Final Session flush before exit. Session's atexit handler will also
+        # fire but this makes shutdown ordering explicit.
+        self.session.flush()
         self._running = False
         PID_FILE.unlink(missing_ok=True)
 
