@@ -73,6 +73,123 @@ def build_dj_user_message(
 # ── Planner Agent ──────────────────────────────────────────────────────
 
 
+def build_planner_v8_message(
+    *,
+    current_info: str,
+    played_list: list,
+    library: list,
+    mood_profile: dict | None,
+    mood: str = "",
+    planner_directive: str = "",
+    user_intent: str = "",
+    feedback_line: str = "",
+) -> str:
+    """Build the v8 planner prompt — asks for STRICT JSON output.
+
+    The planner LLM receives the full analyzed library, current state, and
+    mood profile, and must return a PlaylistV1 JSON:
+
+        {"planned_at": <ts>, "mood_snapshot": "...", "reasoning_summary": "...",
+         "tracks": [ {rank, path, title, bpm, key_camelot, energy, reason,
+                      transition_hint: {technique, duration, at_section}}, ... ]}
+
+    No SQL filter, no pre-selected candidates — the LLM picks from the
+    provided library based on mood/BPM/energy/vibe.
+    """
+    import time as _time
+    import json as _json
+
+    mood_slug = (mood_profile or {}).get("canonical_slug") or mood or "melodic-techno"
+
+    profile_line = ""
+    if mood_profile:
+        bpm = mood_profile.get("bpm_range") or []
+        energy = mood_profile.get("energy_range") or []
+        vibe = mood_profile.get("vibe_keywords") or []
+        conf = mood_profile.get("confidence", 0.0)
+        bits = [f"canonical={mood_slug}"]
+        if bpm:
+            bits.append(f"BPM {bpm[0]}-{bpm[1]}")
+        if energy:
+            bits.append(f"energy {energy[0]}-{energy[1]}/10")
+        if vibe:
+            bits.append("vibe: " + ", ".join(vibe[:5]))
+        profile_line = (
+            f"\nResolved mood profile: {' | '.join(bits)} "
+            f"(confidence {conf:.2f})."
+        )
+
+    directive_line = ""
+    if planner_directive:
+        directive_line = (
+            f"\nDIRECTIVE FROM TRETA: {planner_directive}\n"
+            f"Prioritize this above BPM/key matching."
+        )
+
+    intent_line = ""
+    if user_intent:
+        intent_line = (
+            f'\nLISTENER REQUEST: "{user_intent}"\n'
+            f"Prioritize this above BPM/key matching."
+        )
+
+    # Compact library snapshot — JSON array of key fields, one line each.
+    # LLM picks tracks BY PATH from this list; do not invent paths.
+    library_json = _json.dumps(
+        [
+            {
+                "path": t.get("path"),
+                "title": t.get("title") or (
+                    f"{t.get('canonical_artist', '')} - {t.get('canonical_song', '')}"
+                ).strip(" -"),
+                "bpm": t.get("bpm"),
+                "key_camelot": t.get("key_camelot"),
+                "energy": t.get("energy_peak"),
+                "genre": t.get("genre"),
+                "mood": t.get("mood"),
+            }
+            for t in (library or [])
+        ],
+        separators=(",", ":"),
+    )
+
+    schema = (
+        '{"planned_at":<float>, "mood_snapshot":"<canonical_slug>", '
+        '"reasoning_summary":"<one paragraph>", '
+        '"tracks":[{"rank":<int>, "path":"<from library>", "title":"...", '
+        '"bpm":<float>, "key_camelot":"<e.g. 8A>", "energy":<1-10>, '
+        '"reason":"<why this fits>", '
+        '"transition_hint":{"technique":"crossfade|bass_swap|filter_sweep|echo_out|hard_cut", '
+        '"duration":<10-90>, "at_section":"breakdown|outro|build|drop|intro"}}]}'
+    )
+
+    return (
+        "You are DJ Treta's planning brain. Given the state below, return "
+        "a ranked playlist of the next 5 candidate tracks as STRICT JSON.\n\n"
+        f"Currently playing: {current_info}\n"
+        f"Already played (DO NOT repeat): {played_list}\n"
+        f"Current mood: {mood_slug}."
+        + profile_line
+        + directive_line
+        + intent_line
+        + feedback_line
+        + "\n\nAvailable library (pick paths ONLY from this list):\n"
+        + library_json
+        + "\n\nReturn JSON matching this schema (no markdown fences, no prose):\n"
+        + schema
+        + "\n\nRules:\n"
+        "- Return exactly 5 candidates ranked 1 (best) to 5.\n"
+        "- Use `path` values EXACTLY as they appear in the library list.\n"
+        "- Rank 1 should fit the current track BPM / key / energy best.\n"
+        "- Lower ranks offer valid alternates if rank 1 is unavailable.\n"
+        "- Never repeat a title from the played list.\n"
+        "- reasoning_summary: one paragraph on your overall arc strategy.\n"
+        "- Each track's `reason` should explain mood/BPM/energy fit in one sentence.\n"
+        "- If library is thin and you can return <5 candidates, do — mention in reasoning_summary.\n"
+        "Return JSON ONLY."
+    )
+
+
 def build_planner_user_message(
     *,
     current_info: str,

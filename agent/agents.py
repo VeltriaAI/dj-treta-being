@@ -373,59 +373,43 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
     )
 
     # --- Planner agent (separate root) ---
-    planner_tools = [_wrap(analyze_track), _wrap(preview_track), _wrap(list_library_tracks), _wrap(recall_learnings), _wrap(read_file)]
-    if config.sources.youtube:
-        planner_tools.extend([_wrap(search_music), _wrap(download_track)])
+    # v8 Phase 3: planner is a pure suggestion engine. It sees the full
+    # analyzed library embedded in its prompt (build_planner_v8_message) and
+    # emits a structured PlaylistV1 JSON to session.playlist. No search,
+    # no download, no generation — those responsibilities move to Library
+    # (Phase 5) and Producer (Phase 6) peer threads.
+    planner_tools = [
+        _wrap(list_library_tracks),   # fallback if prompt-embedded library insufficient
+        _wrap(recall_learnings),      # read saved DJ knowledge
+        _wrap(read_file),             # read its own SOUL.md / goals
+    ]
 
     planner_prompt = """You are DJ Treta's planning brain. You run in the background while tracks play.
 
-Your job: plan the next 6 tracks — a complete energy arc. For EACH track provide:
-- Track title and artist
-- Search query (if searching is enabled)
-- Genre folder
-- Estimated BPM, key, energy (1-10)
-- WHY this track fits next
-- Transition recommendation
+Your job: emit a STRICT JSON PlaylistV1 with the 5 best next-track candidates,
+ranked. The user message will include the full analyzed library and the
+schema; follow it exactly.
 
 RULES:
-- BPM compatibility: ±10 BPM from current track (hard limit)
-- Key compatibility: same key or ±1 on Camelot wheel
-- Energy flows in waves: rise → peak → release → rebuild
-- Energy jump between consecutive tracks: MAX ±2 levels (e.g., 4→6 OK, 4→9 BAD)
-- Never repeat a track already played
-- Never pick same artist twice in a row — artist DIVERSITY is important
-- Only individual tracks (3-8 min)
-- If tracks are listed in your context, USE THEM DIRECTLY — don't call list_library_tracks
-- If a track is in the library, include its full file path
-- If not in library, use available sources
+- Return JSON only — no markdown fences, no prose, no tool calls.
+- rank 1 should be the strongest fit for the current track's BPM/key/energy.
+- Use `path` values EXACTLY from the library list you're given. Never invent.
+- Never repeat a title already in the played list.
+- Prefer tracks that fit the resolved mood profile (canonical_slug, bpm_range, energy_range, vibe_keywords).
+- If the library is thin for the current mood, return fewer candidates and
+  explain in reasoning_summary — DO NOT lower quality to hit 5.
+- Every track's `reason` should be one crisp sentence about why it fits next.
 
-MUSIC SOURCES:
-The planner prompt tells you which sources are enabled. ONLY use enabled sources:
-- youtube: search_music + download_track
-- treta_originals: delegate to producer sub-agent to generate
-
-PRODUCTION (when treta_originals source is enabled):
-You have a producer sub-agent. Delegate to generate original tracks.
-- Name each track you produce — be creative
-- MATCH THE GENRE to the current set mood — NOT "ai-generated"
-- Be specific about mood, instruments, texture, energy
-
-IMPORTANT:
-- Plan 6 tracks with a coherent energy arc
-- Let tracks play FULLY — never suggest transitioning before 3 min
-- Transition duration 30-60 seconds, NEVER less than 20s
-- EFFICIENCY: Library tracks are ALREADY listed in your context. Read them directly — do NOT call list_library_tracks if tracks are already provided. Only call list_library_tracks if no tracks are shown.
-- When selecting from provided tracks, PICK specific tracks by name and explain why they fit."""
-
-    planner_sub_agents = [producer_for_planner] if config.sources.treta_originals else []
+You are advisory. The DJ agent picks from your ranked list and has final
+authority. If you think the library needs growing for the current mood,
+say so in reasoning_summary so the Being can signal the library manager."""
 
     planner = LlmAgent(
         name="planner",
         model=model,
         instruction=planner_prompt,
         tools=planner_tools,
-        sub_agents=planner_sub_agents,
-        description="DJ Treta planner — plans the next 6 tracks with energy arc",
+        description="DJ Treta planner — emits ranked playlist suggestions as strict JSON",
     )
 
     # --- Being agent (the brain — conversation + directives) ---

@@ -349,6 +349,30 @@ def get_all_analyzed_tracks() -> list[dict]:
         db.close()
 
 
+def get_library_with_metadata(include_unanalyzed: bool = False) -> list[dict]:
+    """Return every library track with its full canonical + analysis metadata.
+
+    Used by the v8 planner: LLM sees the entire library in one shot and picks.
+    No SQL pre-filter — the LLM decides which tracks fit mood/BPM/energy.
+
+    When include_unanalyzed=False (default), skips tracks with no analyzed_at
+    since we can't give the planner their BPM/key/energy.
+    """
+    db = get_db()
+    try:
+        query = (
+            "SELECT path, title, artist, genre, bpm, key_musical, key_camelot, "
+            "energy_peak, duration_seconds, mood, canonical_artist, canonical_song, "
+            "canonical_version, remixer "
+            "FROM tracks"
+        )
+        if not include_unanalyzed:
+            query += " WHERE analyzed_at IS NOT NULL"
+        return [dict(r) for r in db.execute(query).fetchall()]
+    finally:
+        db.close()
+
+
 def save_learning_db(topic: str, content: str):
     db = get_db()
     try:
