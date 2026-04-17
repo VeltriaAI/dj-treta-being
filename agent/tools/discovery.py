@@ -193,19 +193,33 @@ def _enrich_track(filepath: Path, genre: str, yt_meta: dict = None):
 
 def download_track(url: str, genre: str = "deep") -> str:
     """Download a track from YouTube into the music library.
-    Auto-analyzes with librosa (BPM, key, energy, sections) and writes ID3 tags.
+
+    Three-layer dedup to avoid duplicates:
+      1. URL match against tracks.source_url / track_aliases (free, instant)
+      2. LLM canonical-identity match against library (one cheap LLM call)
+      3. Download with canonical filename + store canonical fields in DB
+
+    Auto-analyzes in background (BPM, key, energy, sections, ID3 tags).
 
     Args:
         url: YouTube URL to download.
-        genre: Genre folder to save into (e.g., dark-techno, melodic-techno, deep, minimal, progressive, vocal, psychill).
+        genre: Genre folder (dark-techno, melodic-techno, bollyafro, etc.).
+               Normalized to lowercase to prevent case-drift duplicates.
     """
-    genre_dir = _music_dir() / genre
-    genre_dir.mkdir(parents=True, exist_ok=True)
+    from ..db import (
+        upsert_track, find_track_by_source_url,
+        find_track_by_canonical, add_track_alias,
+    )
+    from ..canonicalize import llm_canonicalize, canonical_filename
 
-    # Track files before download to find what was added
-    before = set(genre_dir.glob("*.mp3"))
+    # Layer 1: URL already in library?
+    existing = find_track_by_source_url(url)
+    if existing:
+        return (f"ALREADY EXISTS (URL match): "
+                f"{existing.get('title') or existing.get('path')}. "
+                f"Search for a DIFFERENT track.")
 
-    # Get metadata from YouTube BEFORE downloading
+    # Fetch YouTube metadata WITHOUT downloading
     yt_meta = {}
     try:
         meta_result = subprocess.run(
@@ -214,35 +228,76 @@ def download_track(url: str, genre: str = "deep") -> str:
         )
         if meta_result.returncode == 0 and meta_result.stdout.strip():
             yt_meta = json.loads(meta_result.stdout.strip())
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning(f"yt-dlp metadata fetch failed: {e}")
+
+    yt_title = yt_meta.get("title", "")
+    yt_uploader = yt_meta.get("uploader") or yt_meta.get("channel", "")
+    yt_duration = yt_meta.get("duration", 0) or 0
+
+    # Layer 2: canonical-identity check via LLM
+    canon = llm_canonicalize(yt_title, yt_uploader, yt_duration)
+
+    existing = find_track_by_canonical(
+        canon["canonical_artist"], canon["canonical_song"],
+        canon["canonical_version"], canon["remixer"],
+    )
+    if existing:
+        add_track_alias(
+            track_id=existing["id"], source_url=url,
+            original_title=yt_title, original_uploader=yt_uploader,
+        )
+        return (f"ALREADY EXISTS (canonical match): "
+                f"{canon['canonical_artist']} - {canon['canonical_song']} "
+                f"({canon.get('canonical_version') or 'Original'}). "
+                f"URL recorded as alias. Search for a DIFFERENT track.")
+
+    # Layer 3: download with canonical filename
+    genre_norm = (genre or "").strip().lower() or "unsorted"
+    genre_dir = _music_dir() / genre_norm
+    genre_dir.mkdir(parents=True, exist_ok=True)
+
+    fname_stem = canonical_filename(canon, fallback=yt_title or "track")
+    before = set(genre_dir.glob("*.mp3"))
 
     result = subprocess.run(
         ["yt-dlp", "-x", "--audio-format", "mp3", "--audio-quality", "320",
-         "-o", str(genre_dir / "%(uploader)s - %(title)s.%(ext)s"),
+         "-o", str(genre_dir / f"{fname_stem}.%(ext)s"),
          "--no-playlist", "--no-overwrites", url],
         capture_output=True, text=True, timeout=120,
     )
     if result.returncode != 0:
         return f"Download failed: {result.stderr[:200]}"
 
-    # Find the actual downloaded file (yt-dlp may change chars in filename)
+    # Find the actual file — yt-dlp may sanitize chars in filename
     after = set(genre_dir.glob("*.mp3"))
     new_files = after - before
-    if new_files:
-        actual_path = next(iter(new_files))
+    if not new_files:
+        if "has already been downloaded" in result.stdout:
+            return ("File with this name already on disk but not in DB — "
+                    "run rescan_library or manual cleanup.")
+        return f"Downloaded to {genre_norm}/ folder (couldn't identify new file)"
 
-        # Insert into DB immediately (basic info)
-        from ..db import upsert_track
-        upsert_track(path=str(actual_path), title=actual_path.stem, genre=genre)
+    actual_path = next(iter(new_files))
 
-        # Background: full analysis + ID3 tags + DB update (pass YouTube metadata)
-        threading.Thread(target=_enrich_track, args=(actual_path, genre, yt_meta), daemon=True).start()
+    # Insert with full canonical identity
+    upsert_track(
+        path=str(actual_path),
+        title=actual_path.stem,
+        genre=genre_norm,
+        source_url=url,
+        original_title=yt_title,
+        canonical_artist=canon["canonical_artist"],
+        canonical_song=canon["canonical_song"],
+        canonical_version=canon["canonical_version"],
+        remixer=canon["remixer"],
+        canonical_confidence=canon["canonical_confidence"],
+    )
 
-        return f"Downloaded: {actual_path}"
+    # Background: audio analysis (BPM/key/energy) + mood/similar/ID3 tags
+    threading.Thread(
+        target=_enrich_track, args=(actual_path, genre_norm, yt_meta), daemon=True
+    ).start()
 
-    # No new file -- yt-dlp skipped (already exists)
-    if "--no-overwrites" in result.stdout or "has already been downloaded" in result.stdout:
-        return "ALREADY EXISTS: This track was already downloaded. Search for a DIFFERENT track."
-
-    return f"Downloaded to {genre}/ folder"
+    return (f"Downloaded: {canon['canonical_artist']} - {canon['canonical_song']}"
+            f" [{genre_norm}] (confidence {canon['canonical_confidence']:.2f})")

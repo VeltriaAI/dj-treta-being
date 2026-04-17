@@ -123,9 +123,44 @@ def init_db():
         first_seen REAL DEFAULT (strftime('%s','now')),
         last_seen REAL DEFAULT (strftime('%s','now'))
     );
+
+    CREATE TABLE IF NOT EXISTS track_aliases (
+        id INTEGER PRIMARY KEY,
+        track_id INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
+        source_url TEXT UNIQUE,
+        original_title TEXT,
+        original_uploader TEXT,
+        added_at REAL DEFAULT (strftime('%s','now'))
+    );
     """)
+    _migrate_tracks_canonical(db)
     db.commit()
     db.close()
+
+
+def _migrate_tracks_canonical(db):
+    """Add canonical identity columns to tracks table (idempotent)."""
+    cols = {row["name"] for row in db.execute("PRAGMA table_info(tracks)").fetchall()}
+    additions = [
+        ("source_url", "TEXT"),
+        ("original_title", "TEXT"),
+        ("canonical_artist", "TEXT"),
+        ("canonical_song", "TEXT"),
+        ("canonical_version", "TEXT"),
+        ("remixer", "TEXT"),
+        ("canonical_confidence", "REAL"),
+    ]
+    for name, sqltype in additions:
+        if name not in cols:
+            db.execute(f"ALTER TABLE tracks ADD COLUMN {name} {sqltype}")
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_tracks_source_url "
+        "ON tracks(source_url) WHERE source_url IS NOT NULL"
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tracks_canonical "
+        "ON tracks(canonical_artist, canonical_song, canonical_version, remixer)"
+    )
 
 
 def upsert_track(path: str, title: str = None, artist: str = None,
@@ -153,6 +188,70 @@ def upsert_track(path: str, title: str = None, artist: str = None,
             vals = [v for v in all_cols.values() if v is not None]
             placeholders = ",".join("?" * len(cols))
             db.execute(f"INSERT INTO tracks ({','.join(cols)}) VALUES ({placeholders})", vals)
+        db.commit()
+    finally:
+        db.close()
+
+
+def find_track_by_source_url(url: str) -> dict | None:
+    """Return track dict if URL already in tracks.source_url or track_aliases. None otherwise."""
+    if not url:
+        return None
+    db = get_db()
+    try:
+        row = db.execute(
+            "SELECT * FROM tracks WHERE source_url = ?", (url,)
+        ).fetchone()
+        if row:
+            return dict(row)
+        row = db.execute(
+            "SELECT t.* FROM tracks t "
+            "JOIN track_aliases a ON a.track_id = t.id "
+            "WHERE a.source_url = ?",
+            (url,),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        db.close()
+
+
+def find_track_by_canonical(artist: str, song: str, version: str | None,
+                            remixer: str | None) -> dict | None:
+    """Return track dict matching the canonical 4-tuple. None otherwise.
+
+    Matches NULLs correctly — "Morgen (no version)" != "Morgen (Original Mix)".
+    """
+    if not artist or not song:
+        return None
+    db = get_db()
+    try:
+        query = (
+            "SELECT * FROM tracks "
+            "WHERE LOWER(canonical_artist) = LOWER(?) "
+            "  AND LOWER(canonical_song) = LOWER(?) "
+            "  AND (canonical_version IS ? OR LOWER(canonical_version) = LOWER(?)) "
+            "  AND (remixer IS ? OR LOWER(remixer) = LOWER(?)) "
+            "LIMIT 1"
+        )
+        row = db.execute(query, (artist, song, version, version, remixer, remixer)).fetchone()
+        return dict(row) if row else None
+    finally:
+        db.close()
+
+
+def add_track_alias(track_id: int, source_url: str, original_title: str = "",
+                    original_uploader: str = ""):
+    """Record that source_url points to an existing track. Idempotent on URL."""
+    if not source_url or not track_id:
+        return
+    db = get_db()
+    try:
+        db.execute(
+            "INSERT OR IGNORE INTO track_aliases "
+            "(track_id, source_url, original_title, original_uploader) "
+            "VALUES (?, ?, ?, ?)",
+            (track_id, source_url, original_title, original_uploader),
+        )
         db.commit()
     finally:
         db.close()
