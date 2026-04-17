@@ -67,8 +67,8 @@ def validate_playlist(data: Any) -> dict:
     tracks = data.get("tracks")
     if not isinstance(tracks, list):
         raise PlaylistValidationError("tracks must be a list")
-    if not tracks:
-        raise PlaylistValidationError("tracks list is empty")
+    # Empty tracks list is ALLOWED — planner uses it to signal "library is
+    # thin, need to download more". reasoning_summary should explain.
 
     clean_tracks = []
     seen_ranks = set()

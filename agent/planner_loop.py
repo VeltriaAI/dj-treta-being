@@ -180,6 +180,20 @@ class PlannerMixin:
                 self._ws_broadcast("log", {
                     "text": f"Planner: {len(validated['tracks'])} candidates planned"
                 })
+            # v8 bridge: empty tracks + non-empty library means planner
+            # rejected everything (e.g. all played). Empty tracks + empty
+            # library means download signal. Forward to library peer.
+            if not validated["tracks"] and not library:
+                mood_slug = validated.get("mood_snapshot") or (
+                    getattr(self.session, "mood_profile", {}) or {}
+                ).get("canonical_slug") or self.mood or "melodic-techno"
+                if not getattr(self.session, "library_need", None):
+                    self.session.library_need = {
+                        "mood": mood_slug,
+                        "count": 5,
+                        "reason": validated.get("reasoning_summary", "library empty"),
+                    }
+                    log.info(f"Planner emitted library_need signal for {mood_slug}")
         except (ValueError, PlaylistValidationError) as exc:
             msg = f"{type(exc).__name__}: {exc}"
             log.warning(f"Planner output invalid — keeping last good playlist. {msg}")

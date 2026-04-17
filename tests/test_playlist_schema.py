@@ -62,9 +62,16 @@ class TestValidateRejects:
         with pytest.raises(PlaylistValidationError, match="planned_at"):
             validate_playlist({"mood_snapshot": "x", "tracks": [{"rank": 1, "path": "/a"}]})
 
-    def test_empty_tracks_list(self):
-        with pytest.raises(PlaylistValidationError, match="empty"):
-            validate_playlist({"planned_at": 1.0, "mood_snapshot": "x", "tracks": []})
+    def test_empty_tracks_list_allowed(self):
+        """Empty tracks list is now valid — planner uses it to signal
+        'library thin, need download'. reasoning_summary carries the why."""
+        out = validate_playlist({
+            "planned_at": 1.0, "mood_snapshot": "x",
+            "reasoning_summary": "library empty — download needed",
+            "tracks": [],
+        })
+        assert out["tracks"] == []
+        assert "library empty" in out["reasoning_summary"]
 
     def test_missing_tracks_key(self):
         with pytest.raises(PlaylistValidationError, match="tracks"):
