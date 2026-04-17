@@ -236,6 +236,21 @@ class ADKRunnerMixin:
                 out = um.candidates_token_count or 0
                 if inp > 0 or out > 0:
                     self._update_billing(agent_name, inp, out)
+                    # v8 Phase 8: record structured llm_calls row
+                    try:
+                        from .observability import record_llm_call
+                        tool_calls = []
+                        fcs = event.get_function_calls() if hasattr(event, "get_function_calls") else None
+                        if fcs:
+                            tool_calls = [{"name": fc.name, "args": str(fc.args)[:100]} for fc in fcs]
+                        record_llm_call(
+                            agent=agent_name,
+                            input_tokens=inp,
+                            output_tokens=out,
+                            tool_calls=tool_calls,
+                        )
+                    except Exception:
+                        pass
         except Exception:
             pass
 

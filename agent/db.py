@@ -140,6 +140,37 @@ def init_db():
         resolver_version TEXT NOT NULL,
         PRIMARY KEY (raw_mood_lower, resolver_version)
     );
+
+    CREATE TABLE IF NOT EXISTS llm_calls (
+        id INTEGER PRIMARY KEY,
+        ts REAL,
+        agent TEXT,
+        instruction_preview TEXT,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        cost_usd REAL,
+        latency_ms INTEGER,
+        tool_calls_json TEXT,
+        error TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS decisions (
+        id INTEGER PRIMARY KEY,
+        ts REAL,
+        agent TEXT,
+        decision_type TEXT,
+        picked_rank INTEGER,
+        reason TEXT,
+        context_preview TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_health (
+        agent TEXT PRIMARY KEY,
+        last_tick REAL,
+        last_error TEXT,
+        consecutive_errors INTEGER DEFAULT 0,
+        thread_alive INTEGER DEFAULT 1
+    );
     """)
     _migrate_tracks_canonical(db)
     db.commit()
