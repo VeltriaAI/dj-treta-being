@@ -100,10 +100,16 @@ class HeartbeatMixin:
                     sched_file.unlink(missing_ok=True)
 
         # === PRIORITY 4: Agent decides transition (Software 3.0) ===
-        # Only ask after 50% played (saves tokens) and when idle deck ready
-        # Don't ask if transition is already pending
+        # Only ask after 50% played (saves tokens) and when idle deck ready.
+        # Don't ask if transition is already pending OR already scheduled —
+        # v8 Phase 4 adds the sched_file check to kill wasteful repeat
+        # invocations (old P4 fired every 15s even when a transition was
+        # already locked, producing 4x log amplification with no actual
+        # second tool call).
+        sched_file_exists = Path("/tmp/dj-treta-scheduled-transition.json").exists()
         if (idle_ready and duration > 0 and position > (duration * 0.5)
-                and not self._agent_busy and not self._transition_pending):
+                and not self._agent_busy and not self._transition_pending
+                and not sched_file_exists):
             from .db import get_track_by_path
 
             # Get metadata for both tracks
@@ -159,6 +165,8 @@ class HeartbeatMixin:
                 idle_timeline=idle_timeline,
                 transition_pending=self._transition_pending,
                 dj_directive=self.dj_directive,
+                playlist=getattr(self.session, "playlist", None),
+                mood_profile=getattr(self.session, "mood_profile", None),
             )
 
             self._agent_busy = True

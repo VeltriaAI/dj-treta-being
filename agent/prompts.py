@@ -33,10 +33,16 @@ def build_dj_user_message(
     idle_timeline: str,
     transition_pending: bool = False,
     dj_directive: str = "",
+    playlist: dict | None = None,
+    mood_profile: dict | None = None,
 ) -> str:
     """Build the user message for DJ agent heartbeat decisions.
 
-    This is the exact message the DJ agent sees at Priority 4 of the heartbeat.
+    v8 Phase 4: DJ receives the planner's ranked playlist as advisory input
+    and a resolved mood profile. DJ has final authority — may load any of
+    the ranked candidates on the idle deck (if it's empty / almost done)
+    or override with a fresh pick, then schedule a transition at the right
+    musical moment.
     """
     directive_info = ""
     if dj_directive:
@@ -52,21 +58,49 @@ def build_dj_user_message(
             "Just say 'transition pending'.\n"
         )
 
+    profile_line = ""
+    if mood_profile:
+        slug = mood_profile.get("canonical_slug") or ""
+        vibe = ", ".join(mood_profile.get("vibe_keywords", [])[:4])
+        profile_line = f"Mood profile: {slug} | vibe: {vibe}\n"
+
+    # Compact playlist render — top 5 ranks, one-liner each.
+    playlist_block = ""
+    if playlist and playlist.get("tracks"):
+        lines = ["Planner's ranked suggestions (advisory; you have final say):"]
+        for t in sorted(playlist["tracks"], key=lambda x: x.get("rank", 999))[:5]:
+            rank = t.get("rank")
+            title = (t.get("title") or "")[:50]
+            bpm = t.get("bpm") or ""
+            key = t.get("key_camelot") or ""
+            energy = t.get("energy") or ""
+            reason = (t.get("reason") or "")[:80]
+            lines.append(
+                f"  #{rank}: {title} | BPM {bpm} {key} e{energy} — {reason}"
+            )
+        playlist_block = "\n".join(lines) + "\n\n"
+
     return (
         f"{directive_info}"
+        f"{profile_line}"
         f"ACTIVE: '{active_track[:40]}' at {position:.0f}s/{duration:.0f}s "
         f"({remaining:.0f}s left, BPM:{active_bpm:.0f} file:{active_file_bpm:.0f}, Key:{active_key})\n"
         f"  NOW IN: {active_section}\n"
         f"  TIMELINE: {active_timeline}\n\n"
         f"NEXT: '{idle_track[:40]}' on deck {idle_deck} "
         f"(BPM:{idle_bpm:.0f} file:{idle_file_bpm:.0f}, Key:{idle_key})\n"
-        f"  TIMELINE: {idle_timeline}\n"
+        f"  TIMELINE: {idle_timeline}\n\n"
+        f"{playlist_block}"
         f"{pending_info}\n"
         f"ACTION REQUIRED: Look at the timelines and do ONE of these:\n"
         f"1. CALL schedule_transition(to_deck={idle_deck}, at_position=<seconds>, "
-        f"technique='crossfade', duration=45) — if you see a breakdown or outro coming up\n"
-        f"2. Say 'waiting' in ONE sentence — if the track is in a drop or buildup\n\n"
-        f"Do NOT describe what you would do. CALL the tool or say waiting. Nothing else."
+        f"technique='crossfade', duration=45) — if you see a breakdown or outro coming up.\n"
+        f"   Pick the technique that fits: crossfade | bass_swap | filter_sweep | echo_out | hard_cut.\n"
+        f"2. If the idle deck is empty or the loaded track is wrong for the current vibe, "
+        f"CALL load_track(deck={idle_deck}, track_path=<path from planner's playlist>). "
+        f"Prefer rank 1 unless you see a clear reason to override.\n"
+        f"3. Say 'waiting' in ONE sentence — if the track is in a drop or buildup.\n\n"
+        f"Do NOT describe what you would do. CALL a tool or say waiting. Nothing else."
     )
 
 
