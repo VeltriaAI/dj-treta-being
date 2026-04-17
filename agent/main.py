@@ -406,9 +406,12 @@ class DJTretaBeing(
         # Planner loop — background track planning
         threading.Thread(target=self._planner_loop, daemon=True).start()
 
-        # Session callback: when mood changes, force planner replan + update
-        # current set's mood. Replaces the old file-IPC polling in
-        # CommandsMixin._pick_up_directives.
+        # Session callback: when mood changes, do three things.
+        # 1. Update the current set's mood/genre fields (for DB + relay).
+        # 2. Force planner replan on next tick.
+        # 3. Kick off async LLM mood resolution → write session.mood_profile.
+        #
+        # Replaces the old file-IPC polling in CommandsMixin._pick_up_directives.
         def _on_mood_change(name, old, new):
             if not new or new == old:
                 return
@@ -422,6 +425,22 @@ class DJTretaBeing(
             if hasattr(self.config, "planner"):
                 self._tracks_since_plan = self.config.planner.replan_every_n_tracks
             log.info(f"Mood changed via Session callback: {new}")
+
+            # Async LLM mood resolver — runs in a thread so the callback
+            # returns immediately and the LLM call doesn't block the writer.
+            def _resolve():
+                try:
+                    from .mood_resolver import resolve_mood
+                    profile = resolve_mood(new)
+                    self.session.mood_profile = profile.to_dict()
+                    log.info(
+                        f"Mood profile resolved: {profile.canonical_slug} "
+                        f"(BPM {profile.bpm_range}, conf {profile.confidence:.2f})"
+                    )
+                except Exception as exc:
+                    log.warning(f"Mood resolver thread error: {exc}")
+            threading.Thread(target=_resolve, daemon=True).start()
+
         self.session.register_callback("mood", _on_mood_change)
 
         # Read startup mood if provided via CLI

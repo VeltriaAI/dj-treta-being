@@ -84,6 +84,7 @@ def build_planner_user_message(
     feedback_line: str = "",
     source_instructions: str = "",
     knowledge_context: str = "",
+    mood_profile: dict = None,
 ) -> str:
     """Build the user message for planner agent track selection.
 
@@ -105,12 +106,35 @@ def build_planner_user_message(
             f"Prioritize this above BPM/key matching.\n\n"
         )
 
+    # Effective mood slug: if resolver produced a profile, prefer its
+    # canonical_slug; else fall back to the raw mood (or default).
+    mood_slug = (mood_profile or {}).get("canonical_slug") or mood or "melodic-techno"
+
+    profile_line = ""
+    if mood_profile:
+        bpm = mood_profile.get("bpm_range") or []
+        energy = mood_profile.get("energy_range") or []
+        vibe = mood_profile.get("vibe_keywords") or []
+        conf = mood_profile.get("confidence", 0.0)
+        bits = [f"canonical={mood_slug}"]
+        if bpm:
+            bits.append(f"BPM {bpm[0]}-{bpm[1]}")
+        if energy:
+            bits.append(f"energy {energy[0]}-{energy[1]}/10")
+        if vibe:
+            bits.append("vibe: " + ", ".join(vibe[:5]))
+        profile_line = (
+            f"Resolved mood profile: {' | '.join(bits)} "
+            f"(confidence {conf:.2f}).\n"
+        )
+
     return (
         f"Currently playing: {current_info}\n"
         f"Already played (DO NOT repeat): {played_list}\n\n"
         f"Tracks already in library:\n{candidate_text or '  (none)'}\n\n"
-        f"Current mood/genre: {mood or 'melodic-techno'}.\n"
-        f"IMPORTANT: The mood '{mood}' is the listener's EXPLICIT instruction. "
+        f"Current mood/genre: {mood_slug}.\n"
+        + profile_line
+        + f"IMPORTANT: The mood '{mood_slug}' is the listener's EXPLICIT instruction. "
         f"This OVERRIDES any learned preferences. "
         f"Search for and select tracks matching THIS mood.\n"
         + directive_line

@@ -176,6 +176,7 @@ class PlannerMixin:
             played_list=played_list,
             candidate_text=candidate_text,
             mood=self.mood or "melodic-techno",
+            mood_profile=getattr(self.session, "mood_profile", None),
             planner_directive=self.planner_directive if self.planner_directive else "",
             user_intent=self.user_intent if self.user_intent else "",
             feedback_line=feedback_line,

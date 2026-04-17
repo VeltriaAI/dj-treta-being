@@ -132,6 +132,14 @@ def init_db():
         original_uploader TEXT,
         added_at REAL DEFAULT (strftime('%s','now'))
     );
+
+    CREATE TABLE IF NOT EXISTS mood_profile_cache (
+        raw_mood_lower TEXT NOT NULL,
+        profile_json TEXT NOT NULL,
+        resolved_at REAL NOT NULL,
+        resolver_version TEXT NOT NULL,
+        PRIMARY KEY (raw_mood_lower, resolver_version)
+    );
     """)
     _migrate_tracks_canonical(db)
     db.commit()
