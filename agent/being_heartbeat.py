@@ -82,6 +82,9 @@ class BeingHeartbeatMixin:
 
     def _start_being_heartbeat(self):
         """Start the Being's consciousness loop using ADK LoopAgent."""
+        if not getattr(self.config.evolution, "enabled", False):
+            log.info("Consciousness heartbeat disabled (evolution.enabled=false)")
+            return
         threading.Thread(target=self._being_heartbeat_thread, daemon=True).start()
 
     def _being_heartbeat_thread(self):
