@@ -404,8 +404,14 @@ class DJTretaBeing(
 def run():
     parser = argparse.ArgumentParser(description="DJ Treta Being")
     parser.add_argument("--config", default=None)
+    parser.add_argument("--mood", default=None, help="Set mood/genre (e.g. BollyAfro, melodic-techno)")
+    parser.add_argument("--duration", type=int, default=None, help="Set duration in minutes")
     args = parser.parse_args()
 
     config = load_config(args.config)
     being = DJTretaBeing(config)
+    if args.mood:
+        being.mood = args.mood
+    if args.duration:
+        being.config.sets.default_duration_minutes = args.duration
     being.start()

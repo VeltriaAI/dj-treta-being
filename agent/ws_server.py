@@ -27,15 +27,29 @@ class WSServerMixin:
     """WebSocket server for real-time client communication."""
 
     def _start_ws_server(self):
-        """Start WebSocket server on the Being's event loop."""
+        """Start WebSocket server in its own thread with its own event loop."""
         self._ws_clients: set = set()
-        asyncio.run_coroutine_threadsafe(self._ws_serve(), self._loop)
+        self._ws_thread = threading.Thread(target=self._ws_run_thread, daemon=True)
+        self._ws_thread.start()
         log.info(f"WebSocket server starting on ws://localhost:{WS_PORT}")
 
-    async def _ws_serve(self):
+    def _ws_run_thread(self):
+        """Run WS server in a dedicated thread + event loop."""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(self._ws_serve(loop))
+        except Exception as e:
+            log.error(f"WS server died: {e}")
+
+    async def _ws_serve(self, loop=None):
         """Run the WebSocket server."""
-        async with serve(self._ws_handler, "localhost", WS_PORT):
-            await asyncio.Future()  # run forever
+        try:
+            async with serve(self._ws_handler, "localhost", WS_PORT):
+                log.info(f"WebSocket server listening on ws://localhost:{WS_PORT}")
+                await asyncio.Future()  # run forever
+        except OSError as e:
+            log.warning(f"WS bind failed (port {WS_PORT} in use?): {e}")
 
     async def _ws_handler(self, websocket):
         """Handle a single WebSocket connection."""

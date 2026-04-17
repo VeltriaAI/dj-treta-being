@@ -83,6 +83,7 @@ def build_planner_user_message(
     user_intent: str = "",
     feedback_line: str = "",
     source_instructions: str = "",
+    knowledge_context: str = "",
 ) -> str:
     """Build the user message for planner agent track selection.
 
@@ -116,6 +117,7 @@ def build_planner_user_message(
         + intent_line
         + feedback_line
         + source_instructions
+        + knowledge_context
         + "After creating/finding new tracks, analyze each one.\n"
         "Then pick the best next 3 tracks from what's available.\n"
         "For each: title, full path, BPM, key, energy, why it fits."
