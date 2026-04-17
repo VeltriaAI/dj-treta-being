@@ -1,6 +1,11 @@
-"""Planner loop mixin — background track planning and idle deck loading."""
+"""Planner loop mixin — background track planning and idle deck loading.
 
-import json
+v8: planner's output is a structured PlaylistV1 JSON written to
+session.playlist (not a markdown blob written to /tmp). Track loading
+reads that playlist instead of running SQL filters. See REFACTOR_PLAN.md
+§6 Phase 3.
+"""
+
 import logging
 import threading
 import time
@@ -9,8 +14,6 @@ from pathlib import Path
 import httpx
 
 log = logging.getLogger("dj-treta")
-
-PLAYLIST_FILE = Path("/tmp/dj-treta-playlist.json")
 
 
 class PlannerMixin:
@@ -48,12 +51,19 @@ class PlannerMixin:
                         else:
                             threading.Thread(target=self._agent_reflect, daemon=True).start()
 
-                playlist = self._read_playlist()
+                # v8: playlist lives on session.playlist (structured JSON).
+                # Replan when no playlist yet OR enough tracks have elapsed
+                # since the last plan OR mood changed (replan_requested
+                # signal — populated by Session callback in Phase 4+).
+                playlist = getattr(self.session, "playlist", None)
                 needs_plan = (
                     not playlist
-                    or not playlist.get("planner_output")
+                    or not playlist.get("tracks")
                     or self._tracks_since_plan >= self.config.planner.replan_every_n_tracks
+                    or getattr(self.session, "replan_requested", False)
                 )
+                if needs_plan and getattr(self.session, "replan_requested", False):
+                    self.session.replan_requested = False
 
                 if needs_plan and not self._planner_busy:
                     self._planner_busy = True
@@ -74,12 +84,22 @@ class PlannerMixin:
             time.sleep(15)  # 15s — fast enough for short generated tracks (~150s)
 
     def _run_planner(self, status, current_track):
-        """Run planner agent with DB-powered track selection."""
-        from .db import get_track_by_path, find_compatible_tracks, get_all_analyzed_tracks
+        """Invoke the planner agent; write its structured JSON playlist to Session.
+
+        v8: planner LLM sees the full analyzed library + state + feedback and
+        emits a PlaylistV1 JSON with ranked candidates. No SQL pre-filter — the
+        LLM owns selection. On parse/validation failure, session.last_planner_error
+        is set and the previous valid playlist remains authoritative (DJ keeps
+        mixing with the last good list).
+        """
+        import json as _json
+        from .db import get_track_by_path, get_library_with_metadata
+        from .playlist_schema import validate_playlist, PlaylistValidationError
+        from .prompts import build_planner_v8_message
 
         played_list = [t.get("title", "?") for t in self.tracks_played]
 
-        # Get current track's REAL metadata from DB
+        # Current track metadata (for prompt context only — no filtering).
         current_meta = None
         for dk in [1, 2]:
             if status.get(f"deck{dk}", {}).get("playing"):
@@ -93,21 +113,9 @@ class PlannerMixin:
                 except Exception:
                     pass
 
-        # SQL query for compatible tracks
-        candidates = []
-        if current_meta and current_meta.get("bpm"):
-            candidates = find_compatible_tracks(
-                bpm=current_meta.get("bpm", 125),
-                key_camelot=current_meta.get("key_camelot", ""),
-                energy=current_meta.get("energy_peak", 5),
-                played_titles=played_list,
-            )
+        # LLM sees the whole analyzed library — no SQL pre-filter.
+        library = get_library_with_metadata(include_unanalyzed=False)
 
-        # Build compact candidate list for planner
-        from .prompts import format_candidate_text
-        candidate_text = format_candidate_text(candidates) if candidates else ""
-
-        # Current track info
         current_info = "NOTHING — silence!"
         if current_meta:
             bpm = current_meta.get('bpm') or 0
@@ -115,243 +123,139 @@ class PlannerMixin:
             energy = current_meta.get('energy_peak') or '?'
             current_info = f"{current_track} | BPM:{bpm:.0f} Key:{key} Energy:{energy}"
 
-        # v6.0: Being's directive to Planner agent (replaces user_intent band-aid)
-        directive_line = ""
-        if self.planner_directive:
-            directive_line = f"\nDIRECTIVE FROM TRETA: {self.planner_directive}\nThis is a direct instruction from the Being. Prioritize this above BPM/key matching.\n\n"
-            log.info(f"Planner directive consumed: {self.planner_directive[:80]}")
+        # Consume transient directive / intent fields (they'll be re-set by Being
+        # on next user/agent interaction).
+        directive = self.planner_directive or ""
+        if directive:
+            log.info(f"Planner directive consumed: {directive[:80]}")
             self.planner_directive = ""
-
-        # Legacy: user_intent still supported (from talk command mood extraction)
-        intent_line = ""
-        if self.user_intent:
-            intent_line = f"\nLISTENER REQUEST: \"{self.user_intent}\"\nThis is what the listener wants RIGHT NOW. Prioritize this above BPM/key matching.\n\n"
+        intent = self.user_intent or ""
+        if intent:
             self.user_intent = ""
 
-        # Listener feedback — what they like/dislike shapes selection
         feedback_line = ""
         try:
             from .db import get_liked_tracks, get_disliked_tracks
             liked = get_liked_tracks(10)
             disliked = get_disliked_tracks(10)
             if liked:
-                genres = set(l.get("genre", "") for l in liked if l.get("genre"))
-                bpms = [l.get("bpm", 0) for l in liked if l.get("bpm")]
-                liked_names = [l["track_title"] for l in liked]
-                feedback_line += f"\nLISTENER LIKES: {', '.join(liked_names[:5])}"
-                if genres:
-                    feedback_line += f"\n  Preferred genres: {', '.join(genres)}"
-                if bpms:
-                    feedback_line += f"\n  Preferred BPM range: {min(bpms):.0f}-{max(bpms):.0f}"
-                feedback_line += "\n  Prioritize tracks SIMILAR to what the listener liked.\n"
+                names = [l["track_title"] for l in liked]
+                feedback_line += f"\nLISTENER LIKES: {', '.join(names[:5])}"
             if disliked:
-                feedback_line += f"\nLISTENER DISLIKES (AVOID similar tracks): {', '.join(disliked[:5])}\n"
+                feedback_line += f"\nLISTENER DISLIKES (AVOID similar): {', '.join(disliked[:5])}"
         except Exception:
             pass
 
-        from .prompts import build_planner_user_message
-
-        # Knowledge base context — real track recommendations from 18M dataset
-        knowledge_context = ""
-        knowledge_cfg = getattr(self.config, 'knowledge', None)
-        if knowledge_cfg and getattr(knowledge_cfg, 'enabled', False):
-            try:
-                from .knowledge import get_knowledge_context
-                knowledge_context = get_knowledge_context(
-                    current_track=current_track or "",
-                    current_genre=current_meta.get("genre", "") if current_meta else "",
-                    mood=self.mood or "melodic-techno",
-                    played_tracks=played_list,
-                    data_dir=getattr(knowledge_cfg, 'data_dir', None),
-                    limit=20,
-                )
-                if knowledge_context:
-                    log.info(f"Knowledge context injected: {len(knowledge_context)} chars")
-            except Exception as e:
-                log.warning(f"Knowledge context skipped: {e}")
-
-        log.info(f"Planner running — current: {current_track or 'nothing'}, {len(candidates)} candidates in DB")
-        planner_msg = build_planner_user_message(
+        log.info(
+            f"Planner running — current: {current_track or 'nothing'}, "
+            f"{len(library)} analyzed library tracks"
+        )
+        planner_msg = build_planner_v8_message(
             current_info=current_info,
             played_list=played_list,
-            candidate_text=candidate_text,
-            mood=self.mood or "melodic-techno",
+            library=library,
             mood_profile=getattr(self.session, "mood_profile", None),
-            planner_directive=self.planner_directive if self.planner_directive else "",
-            user_intent=self.user_intent if self.user_intent else "",
+            mood=self.mood or "",
+            planner_directive=directive,
+            user_intent=intent,
             feedback_line=feedback_line,
-            source_instructions=self._build_source_instructions(),
-            knowledge_context=knowledge_context,
         )
         result = self._invoke_planner(planner_msg)
-        log.info(f"Planner done: {str(result)[:500]}")
-        if hasattr(self, '_ws_broadcast'):
-            self._ws_broadcast("log", {"text": f"Planner done: {str(result)[:200]}"})
 
-        self._write_playlist(result, current_track)
-
-    def _build_source_instructions(self) -> str:
-        """Build planner instructions based on enabled music sources."""
-        mood = self.mood or 'melodic-techno'
-        parts = []
-        if self.config.sources.youtube:
-            parts.append(
-                f"Search YouTube and download {self.config.planner.download_new_tracks} NEW "
-                f"'{mood}' tracks. Search for different artists each time. "
-                f"Don't download what's already in library.\n"
+        # Parse + validate LLM output. On any failure, keep the previous
+        # playlist as authoritative and stash the error for TUI/debugging.
+        try:
+            raw = (result or "").strip()
+            if "```" in raw:
+                raw = raw.split("```", 2)[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+                raw = raw.split("```")[0].strip()
+            data = _json.loads(raw)
+            validated = validate_playlist(data)
+            self.session.playlist = validated
+            self.session.playlist_updated_at = validated["planned_at"]
+            self.session.last_planner_error = ""
+            log.info(
+                f"Planner wrote playlist: {len(validated['tracks'])} candidates, "
+                f"mood_snapshot={validated.get('mood_snapshot', '')}"
             )
-        else:
-            parts.append("YouTube is DISABLED. Do NOT search YouTube, do NOT download. You cannot.\n")
-        if self.config.sources.treta_originals:
-            gen_count = self.config.planner.generate_new_tracks
-            if not self.config.sources.youtube:
-                # Originals only — generate more to compensate
-                gen_count = self.config.planner.download_new_tracks + self.config.planner.generate_new_tracks
-            parts.append(
-                f"Delegate to your 'producer' sub-agent to generate {gen_count} "
-                f"original track(s). Tell the producer the BPM, key, genre='{mood}', and describe the mood/instruments.\n"
-                f"Example: producer(\"Generate a {mood} track, 125 BPM, A minor, with warm pads and driving bass, genre {mood}\")\n"
-                f"This is YOUR music — be creative with the description. Each track should sound DIFFERENT.\n"
-            )
-        if not self.config.sources.youtube and not self.config.sources.treta_originals:
-            parts.append("Only use tracks already in the library.\n")
-        return "".join(parts)
+            if hasattr(self, '_ws_broadcast'):
+                self._ws_broadcast("log", {
+                    "text": f"Planner: {len(validated['tracks'])} candidates planned"
+                })
+        except (ValueError, PlaylistValidationError) as exc:
+            msg = f"{type(exc).__name__}: {exc}"
+            log.warning(f"Planner output invalid — keeping last good playlist. {msg}")
+            self.session.last_planner_error = msg
 
     def _load_next_on_idle(self, status):
-        """Load next compatible track on idle deck — direct Mixxx API, no agent."""
+        """Apply the planner's playlist to the idle deck.
+
+        v8: pure executor. Planner's LLM decides which track plays next
+        (session.playlist[0]); this function just loads it on the idle deck.
+        All SQL filtering / mood soft-matching / genre override / randomness
+        that used to live here is deleted — the LLM sees the full analyzed
+        library and picks.
+
+        Falls back to ANY library track (random) only as a last-resort safety
+        net when the planner hasn't produced a playlist yet (e.g. during the
+        first 15 seconds of daemon startup before the planner ticks).
+        """
         from .main import _active_idle_decks
-        from .db import find_compatible_tracks, get_track_by_path
+        from .playback_applier import load_on_deck, get_deck_paths, refresh_duration
+        from .playlist_schema import pick_next_candidate
 
         active_deck, idle_deck = _active_idle_decks(status)
         d_idle = status.get(f"deck{idle_deck}", {})
 
-        # Skip if idle already has a fresh track
+        # Skip if idle already has a fresh track (>60s remaining).
         if d_idle.get("track_loaded") and float(d_idle.get("remaining_seconds", 0) or 0) > 60:
             return
 
-        # Get BOTH deck file paths — never load what's on either deck
-        exclude_paths = set()
-        for dk in [1, 2]:
-            try:
-                tinfo = httpx.get(
-                    f"{self.config.mixxx.url}/api/deck/{dk}/track_info", timeout=2
-                ).json()
-                p = tinfo.get("file_path", "")
-                if p:
-                    exclude_paths.add(p)
-            except Exception:
-                pass
-
-        active_path = ""
-        try:
-            tinfo = httpx.get(
-                f"{self.config.mixxx.url}/api/deck/{active_deck}/track_info", timeout=2
-            ).json()
-            active_path = tinfo.get("file_path", "")
-        except Exception:
-            pass
-
-        # Find compatible tracks from DB
+        deck_paths = get_deck_paths(self.config.mixxx.url)
+        exclude_paths = {p for p in deck_paths.values() if p}
         played_titles = [t.get("title", "") for t in self.tracks_played]
-        current_meta = get_track_by_path(active_path) if active_path else None
 
-        candidates = []
-        if current_meta and current_meta.get("bpm"):
-            candidates = find_compatible_tracks(
-                bpm=current_meta["bpm"],
-                key_camelot=current_meta.get("key_camelot", ""),
-                energy=current_meta.get("energy_peak", 5),
-                played_titles=played_titles,
-            )
-        # Filter out tracks on EITHER deck
-        candidates = [c for c in candidates if c.get("path") not in exclude_paths]
+        # Primary path: trust the planner's session.playlist.
+        playlist = getattr(self.session, "playlist", None)
+        pick = pick_next_candidate(playlist, exclude_paths, played_titles)
 
-        # Prefer tracks matching current mood/genre
-        if self.mood and candidates:
-            mood_match = [c for c in candidates
-                          if self.mood.lower() in (c.get("genre", "") or "").lower()
-                          or self.mood.lower() in (c.get("mood", "") or "").lower()
-                          or self.mood.lower() in (c.get("path", "") or "").lower()]
-            if mood_match:
-                candidates = mood_match
-
-        # Genre override: if mood is set but NO compatible tracks match the genre,
-        # search DB by genre directly (ignore BPM matching for genre switches)
-        if self.mood and not candidates:
+        if pick is None:
+            # Last-resort safety net. No SQL filter, no mood match, no
+            # originals preference — just keep music alive until the planner
+            # ticks. Planner owns selection; this only fires during startup.
             from .db import get_db
             db = get_db()
             try:
-                genre_tracks = [dict(r) for r in db.execute(
-                    "SELECT * FROM tracks WHERE (genre LIKE ? OR path LIKE ?) AND analyzed_at IS NOT NULL ORDER BY RANDOM() LIMIT 10",
-                    (f"%{self.mood}%", f"%{self.mood}%")
-                ).fetchall()]
-                candidates = [t for t in genre_tracks
-                              if t.get("path") not in exclude_paths
-                              and t.get("title") not in played_titles]
-                if candidates:
-                    log.info(f"Genre override: found {len(candidates)} {self.mood} tracks (bypassed BPM filter)")
-            finally:
-                db.close()
-
-        # When youtube source is off, prefer Treta originals
-        if not self.config.sources.youtube and self.config.sources.treta_originals:
-            originals = [c for c in candidates
-                         if c.get("artist") == "DJ Treta" or "DJ Treta" in c.get("title", "") or c.get("title", "").startswith("DJ Treta")]
-            if originals:
-                candidates = originals
-
-        if not candidates:
-            # Fallback: get ANY track from DB (analyzed or not) — Mixxx can play anything
-            from .db import get_db as _get_db
-            db = _get_db()
-            try:
-                all_tracks = [dict(r) for r in db.execute(
+                rows = [dict(r) for r in db.execute(
                     "SELECT path, title FROM tracks ORDER BY RANDOM() LIMIT 20"
                 ).fetchall()]
-                candidates = [t for t in all_tracks
-                              if t.get("path") not in exclude_paths
-                              and t.get("title") not in played_titles]
             finally:
                 db.close()
+            available = [r for r in rows
+                         if r.get("path") not in exclude_paths
+                         and r.get("title") not in played_titles]
+            if not available:
+                log.warning("No tracks available to load on idle deck")
+                return
+            pick = available[0]
+            log.info(f"Idle load: using fallback (no playlist yet)")
 
-        if not candidates:
-            log.warning("No tracks available to load on idle deck")
+        track_path = pick.get("path")
+        if not track_path:
+            log.warning("Playlist pick had no path")
             return
 
-        next_track = candidates[0]
-        track_path = next_track["path"]
-
-        # Load via Mixxx API
-        try:
-            result = httpx.post(
-                f"{self.config.mixxx.url}/api/load",
-                json={"deck": idle_deck, "track": track_path},
-                timeout=5,
-            ).json()
-
-            if result.get("ok"):
-                log.info(f"Loaded deck {idle_deck}: {next_track.get('title', '?')[:50]}")
-                if hasattr(self, '_ws_broadcast'):
-                    self._ws_broadcast("log", {"text": f"Loaded deck {idle_deck}: {next_track.get('title', '?')[:50]}"})
-
-                # Save duration from Mixxx (Gemini analysis often misses it)
-                try:
-                    url = self.config.mixxx.url
-                    time.sleep(1)
-                    from .main import _get_status
-                    st = _get_status(url)
-                    if st:
-                        dur = float(st.get(f"deck{idle_deck}", {}).get("duration", 0) or 0)
-                        if dur > 0:
-                            from .db import upsert_track
-                            upsert_track(path=track_path, duration_seconds=dur)
-                except Exception:
-                    pass
-
-            else:
-                log.warning(f"Load failed: {result}")
-        except Exception as e:
-            log.warning(f"Load error: {e}")
+        ok = load_on_deck(self.config.mixxx.url, idle_deck, track_path)
+        if not ok:
+            return
+        title_display = pick.get("title") or Path(track_path).stem
+        if hasattr(self, '_ws_broadcast'):
+            self._ws_broadcast(
+                "log", {"text": f"Loaded deck {idle_deck}: {title_display[:50]}"}
+            )
+        refresh_duration(self.config.mixxx.url, idle_deck, track_path)
 
     def _auto_load_track(self, filepath):
         """Load a freshly generated track on the idle deck."""
@@ -384,20 +288,3 @@ class PlannerMixin:
                     pass
         return ""
 
-    def _write_playlist(self, planner_output, current_track):
-        """Write planner output to playlist file."""
-        playlist = {
-            "current": {"title": current_track or ""},
-            "planner_output": planner_output[:2000],
-            "played": [t.get("title", "?") for t in self.tracks_played],
-            "updated_at": time.time(),
-        }
-        PLAYLIST_FILE.write_text(json.dumps(playlist, indent=2))
-
-    def _read_playlist(self) -> dict | None:
-        try:
-            if PLAYLIST_FILE.exists():
-                return json.loads(PLAYLIST_FILE.read_text())
-        except Exception:
-            pass
-        return None
