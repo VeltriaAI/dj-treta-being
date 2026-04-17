@@ -33,6 +33,7 @@ from .heartbeat import HeartbeatMixin
 from .transitions import TransitionMixin
 from .planner_loop import PlannerMixin
 from .library_loop import LibraryMixin
+from .producer_loop import ProducerMixin
 from .sets import SetsMixin
 from .commands import CommandsMixin
 from .adk_runner import ADKRunnerMixin
@@ -194,6 +195,7 @@ class DJTretaBeing(
     TransitionMixin,
     PlannerMixin,
     LibraryMixin,
+    ProducerMixin,
     SetsMixin,
     CommandsMixin,
     ADKRunnerMixin,
@@ -250,10 +252,12 @@ class DJTretaBeing(
         self._dj_runner = None
         self._planner_runner = None
         self._library_runner = None           # v8 Phase 5
+        self._producer_runner = None          # v8 Phase 6
         self._being_session = None
         self._dj_session = None
         self._planner_session = None
         self._library_session = None          # v8 Phase 5
+        self._producer_session = None         # v8 Phase 6
 
     # ── Session property delegates ───────────────────────────────────
     # These let every existing mixin keep reading/writing self.mood,
@@ -383,11 +387,12 @@ class DJTretaBeing(
         self._restore_session()
 
         log.info("Creating ADK agents (v8)...")
-        being_agent, dj_agent, planner_agent, library_agent = create_agents(self.config)
+        being_agent, dj_agent, planner_agent, library_agent, producer_agent = create_agents(self.config)
         self.being_agent = being_agent
         self.agent = dj_agent
         self.planner_agent = planner_agent
         self.library_agent = library_agent
+        self.producer_agent = producer_agent
 
         # No events_compaction: ADK compaction can drop tool results while assistant
         # messages still reference tool_call_ids → "Missing tool results" API errors.
@@ -395,17 +400,20 @@ class DJTretaBeing(
         dj_app = App(name="dj_treta", root_agent=dj_agent)
         planner_app = App(name="dj_treta_planner", root_agent=planner_agent)
         library_app = App(name="dj_treta_library", root_agent=library_agent)
+        producer_app = App(name="dj_treta_producer", root_agent=producer_agent)
 
         self._being_runner = Runner(app=being_app, session_service=self._session_service)
         self._dj_runner = Runner(app=dj_app, session_service=self._session_service)
         self._planner_runner = Runner(app=planner_app, session_service=self._session_service)
         self._library_runner = Runner(app=library_app, session_service=self._session_service)
+        self._producer_runner = Runner(app=producer_app, session_service=self._session_service)
 
         async def _init_sessions():
             self._being_session = await self._session_service.create_session(app_name="treta_being", user_id="listener")
             self._dj_session = await self._session_service.create_session(app_name="dj_treta", user_id="dj")
             self._planner_session = await self._session_service.create_session(app_name="dj_treta_planner", user_id="planner")
             self._library_session = await self._session_service.create_session(app_name="dj_treta_library", user_id="library")
+            self._producer_session = await self._session_service.create_session(app_name="dj_treta_producer", user_id="producer")
         self._run_async(_init_sessions())
 
         # State writer for TUI (infrastructure)
@@ -416,6 +424,9 @@ class DJTretaBeing(
 
         # Library loop — fills library on session.library_need signals (v8 Phase 5)
         threading.Thread(target=self._library_loop, daemon=True).start()
+
+        # Producer loop — generates originals on session.producer_need (v8 Phase 6)
+        threading.Thread(target=self._producer_loop, daemon=True).start()
 
         # Session callback: when mood changes, do three things.
         # 1. Update the current set's mood/genre fields (for DB + relay).

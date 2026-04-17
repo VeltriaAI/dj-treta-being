@@ -140,10 +140,10 @@ class TestReadonlyTalk:
 
 
 class TestBeingAgentCreation:
-    """Test that create_agents returns 4 agents (v8 Phase 5 — Library is a
-    root peer, not a DJ sub-agent)."""
+    """Test that create_agents returns 5 agents (v8 Phase 6 — Producer is a
+    root peer too)."""
 
-    def test_create_agents_returns_four(self):
+    def test_create_agents_returns_five(self):
         from agent.config import Config, MixxxConfig, LLMConfig, LibraryConfig
         from unittest.mock import patch
         import tempfile
@@ -158,11 +158,12 @@ class TestBeingAgentCreation:
             )
 
             with patch("agent.agents.LlmAgent") as mock_agent, \
-                 patch("agent.agents.LiteLlm"):
+                 patch("agent.agents.LiteLlm"), \
+                 patch("agent.agents.LongRunningFunctionTool"):
                 mock_agent.return_value = MagicMock()
                 from agent.agents import create_agents
                 result = create_agents(config)
 
-                assert len(result) == 4
-                # being_agent, dj_agent, planner_agent, library_agent
-                being, dj, planner, library = result
+                assert len(result) == 5
+                # being_agent, dj_agent, planner_agent, library_agent, producer_agent
+                being, dj, planner, library, producer = result

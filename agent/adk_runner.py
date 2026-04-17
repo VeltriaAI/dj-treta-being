@@ -169,6 +169,29 @@ class ADKRunnerMixin:
         """Invoke library agent. Sync wrapper — download can take a while."""
         return self._run_async(self._invoke_library_async(instruction), timeout=600)
 
+    async def _invoke_producer_async(self, instruction: str) -> str:
+        """Invoke producer agent (v8 Phase 6 peer). Fresh session per call."""
+        from google.genai import types
+
+        self._producer_session = await self._session_service.create_session(
+            app_name="dj_treta_producer", user_id="producer"
+        )
+        message = types.Content(role="user", parts=[types.Part(text=instruction)])
+        result = ""
+        async for event in self._producer_runner.run_async(
+            session_id=self._producer_session.id, user_id="producer", new_message=message
+        ):
+            self._process_event(event)
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    if part.text:
+                        result += part.text
+        return result
+
+    def _invoke_producer(self, instruction: str) -> str:
+        """Invoke producer agent. Sync wrapper — Lyria 3 generation is slow."""
+        return self._run_async(self._invoke_producer_async(instruction), timeout=900)
+
     def _process_event(self, event):
         """Extract billing + thinking from ADK events → files for TUI."""
         try:

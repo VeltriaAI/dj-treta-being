@@ -317,29 +317,11 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
         description=library_desc,
     )
 
-    # --- Producer agent (for DJ tree) ---
-    producer = LlmAgent(
-        name="producer",
-        model=model,
-        instruction=(
-            "You are an AI music producer. Generate original tracks using generate_track. "
-            "Specify mood, BPM, key, genre. If a name is provided, use it."
-        ),
-        tools=[
-            LongRunningFunctionTool(func=generate_track),
-            _wrap(list_library_tracks),
-            _wrap(analyze_track),
-        ],
-        description=(
-            "AI music producer — generates original tracks with Lyria 3. "
-            "Specify mood, BPM, key, genre. Name your tracks creatively."
-        ),
-    )
-
     # --- DJ agent (root) ---
     # v8 Phase 4: DJ gains direct load_track so it can execute the
     # planner's advisory playlist without delegating to the mixer sub-agent.
     # v8 Phase 5: library is NOT a DJ sub-agent anymore — it's a root peer.
+    # v8 Phase 6: producer is NOT a DJ sub-agent either — it's a root peer.
     dj_agent = LlmAgent(
         name="dj_treta",
         model=model,
@@ -352,18 +334,31 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
             _wrap(save_learning), _wrap(recall_learnings),
             _wrap(read_file), _wrap(write_file),
         ],
-        sub_agents=[mixer] + ([producer] if config.sources.treta_originals else []),
+        sub_agents=[mixer],
         description="DJ Treta — autonomous AI DJ",
     )
 
-    # --- Producer agent (for Planner tree — separate instance) ---
-    producer_for_planner = LlmAgent(
-        name="producer_planner",
+    # --- Producer agent (root peer — v8 Phase 6) ---
+    # Previously duplicated as DJ sub-agent AND planner sub-agent (two
+    # separate LlmAgent instances because ADK can't share). Now a single
+    # canonical root peer. Reacts to session.producer_need; may also run
+    # proactive cycles sensing library gaps.
+    producer_peer = LlmAgent(
+        name="producer",
         model=model,
         instruction=(
-            "You are an AI music producer working for the planner. "
-            "Generate original tracks using generate_track. "
-            "Specify mood, BPM, key, genre. If a name is provided, use it."
+            "You are DJ Treta's AI music producer. You run as a peer thread "
+            "and watch for session.producer_need signals (or direct requests "
+            "from the Being). When asked, generate an original track via "
+            "generate_track(prompt, bpm, key, genre, duration, name).\n\n"
+            "Rules:\n"
+            "- Tag tracks with the CURRENT mood's canonical_slug (e.g. "
+            "  'bollyafro', 'melodic-techno') — NOT 'ai-generated'.\n"
+            "- Name each track creatively. No 'Track 1' garbage.\n"
+            "- Match BPM + key to the current set (planner provides the range "
+            "  via session.mood_profile).\n"
+            "- Be specific about texture, mood, instrumentation.\n"
+            "- Each generation should sound DIFFERENT — variety matters."
         ),
         tools=[
             LongRunningFunctionTool(func=generate_track),
@@ -371,8 +366,8 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
             _wrap(analyze_track),
         ],
         description=(
-            "AI music producer — generates original tracks with Lyria 3. "
-            "Specify mood, BPM, key, genre. Name your tracks creatively."
+            "AI music producer — generates original Treta tracks via Lyria 3, "
+            "mood- and library-gap-aware."
         ),
     )
 
@@ -487,4 +482,4 @@ the planner + DJ's job."""
         description="Library manager — owns search/download/canonicalize/enrich",
     )
 
-    return being_agent, dj_agent, planner, library_peer
+    return being_agent, dj_agent, planner, library_peer, producer_peer
