@@ -154,35 +154,17 @@ class SessionMixin:
             time.sleep(2)
 
     def _save_session(self):
-        try:
-            PERSIST_FILE.parent.mkdir(parents=True, exist_ok=True)
-            PERSIST_FILE.write_text(json.dumps({
-                "mood": self.mood,
-                "tracks_played": self.tracks_played,
-                "chat_history": [
-                    {"user": u, "response": r} for u, r in self._chat_history
-                ],
-                "saved_at": time.time(),
-            }, indent=2))
-        except Exception:
-            pass
+        """Force a Session flush. Session auto-persists on every mutation;
+        this is a belt-and-suspenders checkpoint called every ~10s from
+        _state_loop."""
+        if hasattr(self, "session"):
+            self.session.flush()
 
     def _restore_session(self):
-        try:
-            if not PERSIST_FILE.exists():
-                return
-            data = json.loads(PERSIST_FILE.read_text())
-            if time.time() - data.get("saved_at", 0) > 3600:
-                return
-            self.mood = data.get("mood", "")
-            self.tracks_played = data.get("tracks_played", [])
-            # Restore conversation memory
-            for entry in data.get("chat_history", []):
-                if isinstance(entry, dict):
-                    self._chat_history.append((entry.get("user", ""), entry.get("response", "")))
-            log.info(f"Restored: mood={self.mood}, tracks={len(self.tracks_played)}, chat={len(self._chat_history)}")
-        except Exception:
-            pass
+        """No-op: Session.load() in DJTretaBeing.__init__ already restored
+        state from .beings/session.json. Kept for backward compat with
+        any external caller."""
+        return
 
     def _build_context(self, status):
         from .main import _count_tracks

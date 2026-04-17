@@ -17,45 +17,20 @@ log = logging.getLogger("dj-treta")
 COMMAND_FILE = Path("/tmp/dj-treta-command.json")
 
 
-MOOD_CHANGE_FILE = Path("/tmp/dj-treta-mood-change.json")
-DIRECTIVE_FILE = Path("/tmp/dj-treta-directives.json")
-
-
 class CommandsMixin:
 
     def _pick_up_directives(self):
-        """Pick up directive changes from Being agent tools (file-based IPC)."""
-        # Mood change (from set_mood tool)
-        if MOOD_CHANGE_FILE.exists():
-            try:
-                data = json.loads(MOOD_CHANGE_FILE.read_text())
-                MOOD_CHANGE_FILE.unlink()
-                new_mood = data.get("mood", "")
-                if new_mood and new_mood != self.mood:
-                    self.mood = new_mood
-                    if self.current_set:
-                        self.current_set["mood"] = new_mood
-                        self.current_set["genre"] = new_mood
-                    # Force planner replan
-                    self._tracks_since_plan = getattr(self, '_tracks_since_plan', 0)
-                    if hasattr(self.config, 'planner'):
-                        self._tracks_since_plan = self.config.planner.replan_every_n_tracks
-                    log.info(f"Mood updated via directive: {new_mood}")
-            except Exception:
-                MOOD_CHANGE_FILE.unlink(missing_ok=True)
+        """v8: directives live in Session, written directly by set_mood /
+        set_dj_directive / set_planner_directive tools. No file-based IPC.
 
-        # DJ + Planner directives (from set_dj_directive / set_planner_directive tools)
-        if DIRECTIVE_FILE.exists():
-            try:
-                data = json.loads(DIRECTIVE_FILE.read_text())
-                dj_d = data.get("dj", {})
-                if dj_d.get("instruction"):
-                    self.dj_directive = dj_d["instruction"]
-                planner_d = data.get("planner", {})
-                if planner_d.get("instruction"):
-                    self.planner_directive = planner_d["instruction"]
-            except Exception:
-                pass
+        This method is retained as a no-op for backward compat with the main
+        loop (agent/main.py:start() calls it each tick). It used to poll
+        /tmp/dj-treta-mood-change.json and /tmp/dj-treta-directives.json.
+
+        Side-effects that used to happen here (force replan on mood change)
+        are now handled by Session callbacks registered in main.py:start().
+        """
+        return
 
     def _check_commands(self):
         if not COMMAND_FILE.exists():
