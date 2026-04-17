@@ -108,6 +108,12 @@ class ProducerConfig:
 
 
 @dataclass
+class KnowledgeConfig:
+    enabled: bool = False
+    data_dir: str = "~/workspace/music-intelligence/data/unified"
+
+
+@dataclass
 class EvolutionConfig:
     enabled: bool = False
     reflect_every_n_tracks: int = 5
@@ -133,6 +139,7 @@ class Config:
     broadcast: BroadcastConfig = field(default_factory=BroadcastConfig)
     producer: ProducerConfig = field(default_factory=ProducerConfig)
     sources: SourcesConfig = field(default_factory=SourcesConfig)
+    knowledge: KnowledgeConfig = field(default_factory=KnowledgeConfig)
     evolution: EvolutionConfig = field(default_factory=EvolutionConfig)
 
 
@@ -193,6 +200,8 @@ def load_config(path: str | Path | None = None) -> Config:
         cfg.producer = ProducerConfig(**_pick_fields(raw["producer"], ProducerConfig))
     if "sources" in raw:
         cfg.sources = SourcesConfig(**_pick_fields(raw["sources"], SourcesConfig))
+    if "knowledge" in raw:
+        cfg.knowledge = KnowledgeConfig(**_pick_fields(raw["knowledge"], KnowledgeConfig))
     if "evolution" in raw:
         cfg.evolution = EvolutionConfig(**_pick_fields(raw["evolution"], EvolutionConfig))
 

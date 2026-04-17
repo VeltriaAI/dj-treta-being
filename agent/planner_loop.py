@@ -151,6 +151,25 @@ class PlannerMixin:
 
         from .prompts import build_planner_user_message
 
+        # Knowledge base context — real track recommendations from 18M dataset
+        knowledge_context = ""
+        knowledge_cfg = getattr(self.config, 'knowledge', None)
+        if knowledge_cfg and getattr(knowledge_cfg, 'enabled', False):
+            try:
+                from .knowledge import get_knowledge_context
+                knowledge_context = get_knowledge_context(
+                    current_track=current_track or "",
+                    current_genre=current_meta.get("genre", "") if current_meta else "",
+                    mood=self.mood or "melodic-techno",
+                    played_tracks=played_list,
+                    data_dir=getattr(knowledge_cfg, 'data_dir', None),
+                    limit=20,
+                )
+                if knowledge_context:
+                    log.info(f"Knowledge context injected: {len(knowledge_context)} chars")
+            except Exception as e:
+                log.warning(f"Knowledge context skipped: {e}")
+
         log.info(f"Planner running — current: {current_track or 'nothing'}, {len(candidates)} candidates in DB")
         planner_msg = build_planner_user_message(
             current_info=current_info,
@@ -161,6 +180,7 @@ class PlannerMixin:
             user_intent=self.user_intent if self.user_intent else "",
             feedback_line=feedback_line,
             source_instructions=self._build_source_instructions(),
+            knowledge_context=knowledge_context,
         )
         result = self._invoke_planner(planner_msg)
         log.info(f"Planner done: {str(result)[:500]}")

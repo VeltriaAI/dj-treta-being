@@ -19,7 +19,10 @@ from litellm import completion
 
 MODELS = {
     "flash": "openai/gemini-3-flash",
+    "flash3": "openai/gemini-3-flash-preview",
     "pro": "openai/gemini-3.1-pro",
+    "flash25": "openai/gemini-3-flash-25",
+    "gemma4": "openai/gemma-4",
 }
 
 DEFAULT_MODEL = MODELS.get(

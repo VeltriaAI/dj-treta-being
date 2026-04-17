@@ -55,7 +55,7 @@ broadcast:
   auto_start: true
 
 producer:
-  enabled: true
+  enabled: false
   model: "lyria-3-pro-preview"
   vertex_project: "fandorab2w3"
   vertex_location: "global"
@@ -65,6 +65,10 @@ producer:
 sources:
   youtube: true
   treta_originals: false
+
+knowledge:
+  enabled: false  # 18M-track dataset 18M-track dataset recommendations into planner
+  data_dir: "~/workspace/music-intelligence/data/unified"
 
 set:
   default_mood: "techno-deep"
