@@ -140,10 +140,10 @@ class TestReadonlyTalk:
 
 
 class TestBeingAgentCreation:
-    """Test that create_agents returns 3 agents (pre-Phase 5 — Library still
-    a sub-agent of DJ)."""
+    """Test that create_agents returns 4 agents (v8 Phase 5 — Library is a
+    root peer, not a DJ sub-agent)."""
 
-    def test_create_agents_returns_three(self):
+    def test_create_agents_returns_four(self):
         from agent.config import Config, MixxxConfig, LLMConfig, LibraryConfig
         from unittest.mock import patch
         import tempfile
@@ -163,6 +163,6 @@ class TestBeingAgentCreation:
                 from agent.agents import create_agents
                 result = create_agents(config)
 
-                assert len(result) == 3
-                # being_agent, dj_agent, planner_agent
-                being, dj, planner = result
+                assert len(result) == 4
+                # being_agent, dj_agent, planner_agent, library_agent
+                being, dj, planner, library = result

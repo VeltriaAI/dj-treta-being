@@ -143,6 +143,32 @@ class ADKRunnerMixin:
         """Invoke planner. Sync wrapper — longer timeout for generation."""
         return self._run_async(self._invoke_planner_async(instruction), timeout=600)
 
+    async def _invoke_library_async(self, instruction: str) -> str:
+        """Invoke library agent via ADK runner. Fresh session per invocation.
+
+        Library runs as a peer thread (v8 Phase 5) — takes `session.library_need`
+        signals and fulfils them via search_music + download_track."""
+        from google.genai import types
+
+        self._library_session = await self._session_service.create_session(
+            app_name="dj_treta_library", user_id="library"
+        )
+        message = types.Content(role="user", parts=[types.Part(text=instruction)])
+        result = ""
+        async for event in self._library_runner.run_async(
+            session_id=self._library_session.id, user_id="library", new_message=message
+        ):
+            self._process_event(event)
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    if part.text:
+                        result += part.text
+        return result
+
+    def _invoke_library(self, instruction: str) -> str:
+        """Invoke library agent. Sync wrapper — download can take a while."""
+        return self._run_async(self._invoke_library_async(instruction), timeout=600)
+
     def _process_event(self, event):
         """Extract billing + thinking from ADK events → files for TUI."""
         try:
