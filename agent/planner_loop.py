@@ -40,16 +40,10 @@ class PlannerMixin:
                     self._tracks_since_plan += 1
                     # Immediately load next track on idle deck
                     self._load_next_on_idle(status)
-                    # Self-evolution check
-                    reflect_n = getattr(self.config, 'evolution', None)
-                    reflect_interval = reflect_n.reflect_every_n_tracks if reflect_n else 5
-                    if (len(self.tracks_played) >= reflect_interval
-                            and len(self.tracks_played) - self._last_reflect_count >= reflect_interval):
-                        self._last_reflect_count = len(self.tracks_played)
-                        if hasattr(self, '_evolution_reflect') and getattr(self.config, 'evolution', None) and self.config.evolution.enabled:
-                            threading.Thread(target=self._evolution_reflect, daemon=True).start()
-                        else:
-                            threading.Thread(target=self._agent_reflect, daemon=True).start()
+                    # v8 Phase 7: reflection triggering moved to Being's
+                    # heartbeat (consciousness loop), not the planner's
+                    # responsibility. Planner's job is plan-and-update-playlist
+                    # only.
 
                 # v8: playlist lives on session.playlist (structured JSON).
                 # Replan when no playlist yet OR enough tracks have elapsed

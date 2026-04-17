@@ -194,14 +194,11 @@ class HeartbeatMixin:
             self._next_sleep = 15
             return
 
-        # === PRIORITY 5: Backup load — planner didn't load idle deck ===
-        # Trigger earlier for short tracks (generated tracks ~150s)
-        load_threshold = min(120, duration * 0.4) if duration > 0 else 60
-        if not idle_loaded and position > load_threshold and playing:
-            self._next_sleep = 10
-            log.warning("Backup: loading idle deck (planner missed it)")
-            self._load_next_on_idle(status)
-            return
+        # v8 Phase 7: P5 backup-load DELETED. DJ owns deck loading via its
+        # load_track tool, reading session.playlist. If the DJ agent fails
+        # to load and silence looms, P1 silence recovery catches it with an
+        # emergency play. That's the safety invariant — music never stops —
+        # without Python making selection decisions.
 
         # === Everything fine — dynamic sleep ===
         if duration > 0 and position < (duration * 0.5):
