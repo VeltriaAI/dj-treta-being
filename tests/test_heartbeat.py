@@ -185,15 +185,17 @@ class TestAgentDecision:
             mock_invoke.assert_not_called()
 
 
-# ── Priority 5: Backup load ─────────────────────────────────────────
+# ── Priority 5: DELETED in v8 Phase 7 ──────────────────────────────
+# DJ owns track loading via session.playlist; Python never selects.
+# P1 silence recovery is the only safety net that touches Mixxx.
 
-class TestBackupLoad:
+class TestBackupLoadRemoved:
 
-    def test_backup_load_triggers(self, being, mock_mixxx):
-        """When idle deck is empty and active track is past threshold,
-        backup load should be triggered."""
+    def test_heartbeat_never_calls_load_from_its_own_priorities(self, being, mock_mixxx):
+        """v8: heartbeat must not call _load_next_on_idle. Selection is
+        DJ's job via its load_track tool."""
         mock_mixxx["status"]["deck1"]["playing"] = True
-        mock_mixxx["status"]["deck1"]["position_seconds"] = 130.0  # past threshold
+        mock_mixxx["status"]["deck1"]["position_seconds"] = 130.0
         mock_mixxx["status"]["deck1"]["remaining_seconds"] = 170.0
         mock_mixxx["status"]["deck1"]["duration"] = 300.0
         mock_mixxx["status"]["deck2"]["track_loaded"] = False
@@ -204,5 +206,4 @@ class TestBackupLoad:
 
         with patch.object(being, "_load_next_on_idle") as mock_load:
             being._heartbeat()
-            mock_load.assert_called_once()
-            assert being._next_sleep == 10
+            mock_load.assert_not_called()
