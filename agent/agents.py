@@ -339,7 +339,7 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
     # --- DJ agent (root) ---
     # v8 Phase 4: DJ gains direct load_track so it can execute the
     # planner's advisory playlist without delegating to the mixer sub-agent.
-    # The mixer sub-agent stays for crossfader / EQ / filter control.
+    # v8 Phase 5: library is NOT a DJ sub-agent anymore — it's a root peer.
     dj_agent = LlmAgent(
         name="dj_treta",
         model=model,
@@ -352,7 +352,7 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
             _wrap(save_learning), _wrap(recall_learnings),
             _wrap(read_file), _wrap(write_file),
         ],
-        sub_agents=[mixer, library] + ([producer] if config.sources.treta_originals else []),
+        sub_agents=[mixer] + ([producer] if config.sources.treta_originals else []),
         description="DJ Treta — autonomous AI DJ",
     )
 
@@ -444,4 +444,47 @@ say so in reasoning_summary so the Being can signal the library manager."""
         description="Treta — the Being's brain. Thinks, converses, directs agents.",
     )
 
-    return being_agent, dj_agent, planner
+    # --- Library agent (root peer — v8 Phase 5) ---
+    # Previously a DJ sub-agent; now its own root. Owns library growth:
+    # search, download, canonicalize, enrich. Reacts to session.library_need
+    # signals from planner + proactive gap-fill cycles.
+    library_peer_tools = [
+        _wrap(list_library_tracks),
+        _wrap(get_set_history),
+    ]
+    if config.sources.youtube:
+        library_peer_tools.extend([_wrap(search_music), _wrap(download_track)])
+
+    library_peer_prompt = """You are DJ Treta's library manager. You run as a
+peer thread in the background, reacting to library_need signals from the
+planner and keeping the music library rich for the current mood.
+
+Your job:
+- When session.library_need = {"mood": "X", "count": N}, craft 2-3
+  diverse YouTube search queries for that mood, then download N tracks.
+- Each download goes through the 3-layer canonical flow automatically
+  (URL dedup → LLM canonical check → download with canonical filename).
+- After downloading, respond with a short summary of what you added.
+
+Rules:
+- Diversity matters: different artists, different labels. No two tracks
+  with the same canonical_artist in one fill cycle.
+- Never re-download what's already in the library (the 3-layer flow
+  catches URL + canonical dupes, but you shouldn't try them in the first
+  place — call list_library_tracks first to check).
+- Track genre tag always lowercase (the download_track function normalizes
+  it; you can pass "BollyAfro" and it becomes "bollyafro").
+- If search returns junk (compilations, 30-min mixes), skip them.
+
+You don't plan track order, pick next tracks, or run transitions. That's
+the planner + DJ's job."""
+
+    library_peer = LlmAgent(
+        name="library_manager",
+        model=model,
+        instruction=library_peer_prompt,
+        tools=library_peer_tools,
+        description="Library manager — owns search/download/canonicalize/enrich",
+    )
+
+    return being_agent, dj_agent, planner, library_peer
