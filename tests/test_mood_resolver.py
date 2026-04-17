@@ -237,3 +237,67 @@ class TestFallbackProfile:
         assert _fallback_profile("Melodic_Techno").canonical_slug == "melodic-techno"
         assert _fallback_profile("  whitespace  ").canonical_slug == "whitespace"
         assert _fallback_profile("").canonical_slug == "unknown"
+
+
+class TestDiscogsReferenceWiring:
+    """Phase 3.6: MoodProfile includes discogs_primary_genre + discogs_subgenres
+    populated by LLM against the checked-in Discogs reference JSON."""
+
+    def test_llm_discogs_fields_validated_against_reference(self, test_db):
+        payload = {
+            "canonical_slug": "bollyafro",
+            "bpm_range": [115, 125],
+            "energy_range": [6, 8],
+            "vibe_keywords": ["afro"],
+            "discogs_primary_genre": "Electronic",
+            "discogs_subgenres": ["Afro House", "Bollywood House"],
+            "confidence": 0.95,
+        }
+        with patch("litellm.completion", return_value=_mock_llm_response(payload)):
+            profile = resolve_mood("BollyAfro")
+
+        assert profile.discogs_primary_genre == "Electronic"
+        assert "Afro House" in profile.discogs_subgenres
+        assert "Bollywood House" in profile.discogs_subgenres
+
+    def test_invented_primary_genre_dropped(self, test_db):
+        """If LLM invents a primary genre not in our reference, drop it."""
+        payload = {
+            "canonical_slug": "psytrance",
+            "bpm_range": [138, 142],
+            "energy_range": [8, 10],
+            "vibe_keywords": [],
+            "discogs_primary_genre": "Fake Invented Genre",  # not in reference
+            "discogs_subgenres": ["Psy-Trance"],
+            "confidence": 0.95,
+        }
+        with patch("litellm.completion", return_value=_mock_llm_response(payload)):
+            profile = resolve_mood("psytrance")
+
+        assert profile.discogs_primary_genre is None
+        assert profile.discogs_subgenres == ["Psy-Trance"]
+
+    def test_invented_subgenres_filtered(self, test_db):
+        """LLM-invented subgenres not in our reference are filtered out."""
+        payload = {
+            "canonical_slug": "house",
+            "bpm_range": [120, 128],
+            "energy_range": [6, 8],
+            "vibe_keywords": [],
+            "discogs_primary_genre": "Electronic",
+            "discogs_subgenres": ["House", "Totally Made Up Subgenre", "Deep House"],
+            "confidence": 0.9,
+        }
+        with patch("litellm.completion", return_value=_mock_llm_response(payload)):
+            profile = resolve_mood("house")
+
+        assert "House" in profile.discogs_subgenres
+        assert "Deep House" in profile.discogs_subgenres
+        assert "Totally Made Up Subgenre" not in profile.discogs_subgenres
+
+    def test_reference_file_parses(self):
+        """The checked-in reference JSON must be loadable."""
+        from agent.mood_resolver import _load_discogs_reference
+        ref = _load_discogs_reference()
+        assert "Electronic" in ref["primary_genres"]
+        assert "Afro House" in ref["subgenres"]["Electronic"]
