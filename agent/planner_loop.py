@@ -27,6 +27,8 @@ class PlannerMixin:
         time.sleep(5)  # let heartbeat boot first
         while self._running:
             try:
+                from .observability import tick as _obs_tick
+                _obs_tick("planner")
                 status = _get_status(self.config.mixxx.url)
                 if not status:
                     time.sleep(10)

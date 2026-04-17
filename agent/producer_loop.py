@@ -38,6 +38,8 @@ class ProducerMixin:
 
         while self._running:
             try:
+                from .observability import tick as _obs_tick
+                _obs_tick("producer")
                 # Reset daily count on day change
                 today = datetime.now(timezone.utc).date()
                 if today != self._producer_day:

@@ -35,6 +35,8 @@ class LibraryMixin:
 
         while self._running:
             try:
+                from .observability import tick as _obs_tick
+                _obs_tick("library")
                 need = getattr(self.session, "library_need", None)
                 if need and isinstance(need, dict) and need.get("mood"):
                     now = time.time()
