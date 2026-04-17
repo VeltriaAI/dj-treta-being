@@ -337,6 +337,9 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
     )
 
     # --- DJ agent (root) ---
+    # v8 Phase 4: DJ gains direct load_track so it can execute the
+    # planner's advisory playlist without delegating to the mixer sub-agent.
+    # The mixer sub-agent stays for crossfader / EQ / filter control.
     dj_agent = LlmAgent(
         name="dj_treta",
         model=model,
@@ -344,6 +347,7 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
         tools=[
             _wrap(get_dj_status), _wrap(get_live_data),
             _wrap(hear_music), _wrap(analyze_track), _wrap(preview_track),
+            _wrap(load_track),          # v8 Phase 4: DJ owns deck loading
             _wrap(schedule_transition),
             _wrap(save_learning), _wrap(recall_learnings),
             _wrap(read_file), _wrap(write_file),
