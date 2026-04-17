@@ -105,6 +105,10 @@ class ProducerConfig:
     vertex_location: str = "global"
     default_duration_seconds: int = 180
     genre_dir: str = "ai-generated"
+    # v8 Phase 6: daily guardrails so an over-eager producer_need signal
+    # can't burn through Lyria 3 credits overnight.
+    max_per_day: int = 4
+    cost_cap_per_day_usd: float = 2.00
 
 
 @dataclass
