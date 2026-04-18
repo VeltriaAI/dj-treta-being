@@ -70,56 +70,185 @@ from agent.prompts import (  # noqa: E402
 )
 
 
-# ── Tool Schemas (OpenAI function format) ────────────────────────────────
+# ── Tool Schemas — LIVE introspection from production agents ─────────────
+#
+# Previously these were hardcoded (and drifted badly post-v8 Phase 5/6).
+# Now we build the OpenAI function schema by reflecting on the real
+# functions registered on each LlmAgent in agents.create_agents(). When
+# SOUL.md claims a tool DJ doesn't have, evals catch it immediately.
 
-DJ_TOOLS = [
-    {
+import inspect
+from typing import get_type_hints
+from unittest.mock import MagicMock, patch
+
+
+def _py_type_to_json_type(t) -> str:
+    """Map Python type hint to OpenAI JSON schema type."""
+    origin = getattr(t, "__origin__", None)
+    if t is int:
+        return "integer"
+    if t is float:
+        return "number"
+    if t is bool:
+        return "boolean"
+    if t is str:
+        return "string"
+    if origin in (list, tuple) or t is list or t is tuple:
+        return "array"
+    if origin is dict or t is dict:
+        return "object"
+    # Union / Optional / default fallback
+    return "string"
+
+
+def _function_to_openai_schema(func) -> dict:
+    """Convert a Python function to OpenAI function-call schema format."""
+    try:
+        sig = inspect.signature(func)
+    except (TypeError, ValueError):
+        return None
+    try:
+        hints = get_type_hints(func)
+    except Exception:
+        hints = {}
+
+    properties: dict = {}
+    required: list = []
+    for name, param in sig.parameters.items():
+        if name == "self":
+            continue
+        py_type = hints.get(name, str)
+        properties[name] = {"type": _py_type_to_json_type(py_type)}
+        if param.default is inspect.Parameter.empty:
+            required.append(name)
+
+    doc = (func.__doc__ or "").strip().split("\n")[0] or func.__name__
+    return {
         "type": "function",
         "function": {
-            "name": "schedule_transition",
-            "description": "Schedule a transition to the target deck at a specific position",
+            "name": func.__name__,
+            "description": doc[:200],
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "to_deck": {"type": "integer", "description": "Target deck number (1 or 2)"},
-                    "at_position": {"type": "number", "description": "Position in seconds to start transition"},
-                    "technique": {
-                        "type": "string",
-                        "enum": ["crossfade", "bass_swap", "filter_sweep", "hard_cut", "echo_out"],
-                    },
-                    "duration": {"type": "integer", "description": "Transition duration in seconds"},
-                },
-                "required": ["to_deck"],
+                "properties": properties,
+                "required": required,
             },
         },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_dj_status",
-            "description": "Get current DJ playback status",
-            "parameters": {"type": "object", "properties": {}},
-        },
-    },
+    }
+
+
+def _extract_agent_tools(agent) -> list:
+    """Pull OpenAI schemas from an LlmAgent's FunctionTool list.
+
+    ADK FunctionTool exposes the underlying function on `.func`. Some
+    variants expose it on `.function` or `._func`. Handle all three.
+    """
+    out: list = []
+    for t in getattr(agent, "tools", []) or []:
+        func = (
+            getattr(t, "func", None)
+            or getattr(t, "function", None)
+            or getattr(t, "_func", None)
+        )
+        if callable(func):
+            schema = _function_to_openai_schema(func)
+            if schema:
+                out.append(schema)
+    return out
+
+
+_TOOLS_CACHE: dict = {}
+
+
+class _ShimAgent:
+    """Stand-in for google.adk LlmAgent during eval introspection.
+
+    Real LlmAgent requires a live BaseLlm instance for pydantic validation;
+    we don't need that — we only care about capturing `tools` and
+    `sub_agents`. This shim stores whatever kwargs are passed.
+    """
+
+    def __init__(self, **kwargs):
+        self.name = kwargs.get("name", "")
+        self.tools = kwargs.get("tools", []) or []
+        self.sub_agents = kwargs.get("sub_agents", []) or []
+        self.instruction = kwargs.get("instruction", "")
+        self.description = kwargs.get("description", "")
+        self.model = kwargs.get("model")
+
+
+class _ShimFunctionTool:
+    """Stand-in for google.adk FunctionTool; preserves the wrapped func."""
+
+    def __init__(self, func=None, **_):
+        self.func = func
+
+
+class _ShimLongRunningTool(_ShimFunctionTool):
+    pass
+
+
+def _live_tools() -> dict:
+    """Introspect tool schemas by building the real agent graph once.
+
+    Cached per-process. On failure (e.g. agents module import error),
+    returns {} and callers fall back to minimal schemas.
+    """
+    global _TOOLS_CACHE
+    if _TOOLS_CACHE:
+        return _TOOLS_CACHE
+
+    try:
+        with patch("agent.agents.LlmAgent", _ShimAgent), \
+             patch("agent.agents.LiteLlm", return_value=MagicMock()), \
+             patch("agent.agents.FunctionTool", _ShimFunctionTool), \
+             patch("agent.agents.LongRunningFunctionTool", _ShimLongRunningTool):
+            from agent.agents import create_agents
+            from agent.config import load_config
+            agents = create_agents(load_config())
+        # v8: 5-tuple (being, dj, planner, library, producer)
+        being, dj, planner = agents[0], agents[1], agents[2]
+        library = agents[3] if len(agents) > 3 else None
+        producer = agents[4] if len(agents) > 4 else None
+        _TOOLS_CACHE = {
+            "dj": _extract_agent_tools(dj),
+            "being": _extract_agent_tools(being),
+            "planner": _extract_agent_tools(planner),
+            "library": _extract_agent_tools(library) if library else [],
+            "producer": _extract_agent_tools(producer) if producer else [],
+        }
+        return _TOOLS_CACHE
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning(
+            f"eval_conftest live tool introspection failed: {exc!r} — "
+            "using minimal fallback schemas"
+        )
+        return {}
+
+
+_LIVE = _live_tools()
+
+# Minimal fallbacks kept so tests can still run if introspection fails
+# entirely (e.g. agents.py import error). Real tests should never see
+# these — the live schemas above are authoritative.
+
+_DJ_FALLBACK = [
+    {"type": "function", "function": {"name": "schedule_transition",
+     "description": "Schedule a transition",
+     "parameters": {"type": "object", "properties": {
+         "to_deck": {"type": "integer"},
+         "at_position": {"type": "number"},
+         "technique": {"type": "string"},
+         "duration": {"type": "integer"},
+     }, "required": ["to_deck"]}}},
 ]
 
-BEING_TOOLS = [
-    {"type": "function", "function": {"name": "set_mood", "description": "Set current mood/genre for the DJ set", "parameters": {"type": "object", "properties": {"mood": {"type": "string"}}, "required": ["mood"]}}},
-    {"type": "function", "function": {"name": "set_dj_directive", "description": "Send instruction to DJ agent about technique/energy", "parameters": {"type": "object", "properties": {"directive": {"type": "string"}}, "required": ["directive"]}}},
-    {"type": "function", "function": {"name": "set_planner_directive", "description": "Send instruction to Planner agent about track selection", "parameters": {"type": "object", "properties": {"directive": {"type": "string"}}, "required": ["directive"]}}},
-    {"type": "function", "function": {"name": "search_music", "description": "Search YouTube for music", "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": 10}}, "required": ["query"]}}},
-    {"type": "function", "function": {"name": "save_learning", "description": "Save a learning from experience", "parameters": {"type": "object", "properties": {"topic": {"type": "string"}, "content": {"type": "string"}}, "required": ["topic", "content"]}}},
-    {"type": "function", "function": {"name": "hear_music", "description": "Listen to currently playing audio", "parameters": {"type": "object", "properties": {}}}},
-    {"type": "function", "function": {"name": "get_dj_status", "description": "Get current DJ status", "parameters": {"type": "object", "properties": {}}}},
-]
-
-PLANNER_TOOLS = [
-    {"type": "function", "function": {"name": "search_music", "description": "Search YouTube for tracks", "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": 10}}, "required": ["query"]}}},
-    {"type": "function", "function": {"name": "download_track", "description": "Download a track from YouTube", "parameters": {"type": "object", "properties": {"url": {"type": "string"}, "genre": {"type": "string", "default": "deep"}}, "required": ["url"]}}},
-    {"type": "function", "function": {"name": "list_library_tracks", "description": "List tracks in local library, optionally filtered by genre", "parameters": {"type": "object", "properties": {"genre": {"type": "string"}}, "required": []}}},
-    {"type": "function", "function": {"name": "analyze_track", "description": "Analyze audio properties of a track", "parameters": {"type": "object", "properties": {"file_path": {"type": "string"}}, "required": ["file_path"]}}},
-    {"type": "function", "function": {"name": "generate_track", "description": "Generate an original AI track", "parameters": {"type": "object", "properties": {"prompt": {"type": "string"}, "bpm": {"type": "integer"}, "key": {"type": "string"}, "genre": {"type": "string"}, "duration": {"type": "string", "enum": ["full", "clip"]}}, "required": ["prompt", "bpm", "genre"]}}},
-]
+DJ_TOOLS = _LIVE.get("dj") or _DJ_FALLBACK
+BEING_TOOLS = _LIVE.get("being") or []
+PLANNER_TOOLS = _LIVE.get("planner") or []
+LIBRARY_TOOLS = _LIVE.get("library") or []
+PRODUCER_TOOLS = _LIVE.get("producer") or []
 
 CONSCIOUSNESS_TOOLS = [
     {"type": "function", "function": {"name": "save_learning", "description": "Save a learning from experience", "parameters": {"type": "object", "properties": {"topic": {"type": "string"}, "content": {"type": "string"}}, "required": ["topic", "content"]}}},

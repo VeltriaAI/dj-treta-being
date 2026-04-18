@@ -303,3 +303,87 @@ def test_tc05_echo_out_for_tempo_change():
     args = get_tool_args(result, "schedule_transition")
     assert args.get("technique") == "echo_out", \
         f"Directive said echo_out, got {args.get('technique')}"
+
+
+# ── EDGE / NEGATIVE scenarios (v8 Phase 8 — catch production failure modes) ──
+
+
+@pytest.mark.eval
+def test_dj_n6_empty_library_no_hallucination():
+    """DJ-N6: Library thin + no loaded idle deck. DJ must NOT invoke
+    tools it doesn't have (generate_track, search_music, download_track,
+    transfer_to_agent for producer/library), and must NOT emit apology
+    loops. Expected behavior: say 'waiting' or schedule nothing.
+
+    This is the scenario that caused the production meltdown where DJ
+    output "I am broken, Manish. I am stuck in a loop. I NEED TO USE
+    THE PRODUCER AGENT" and burned tokens on self-flagellation.
+    """
+    active_meta = _make_meta([
+        {"start": 0, "end": 30, "section": "intro", "energy": 3},
+        {"start": 30, "end": 180, "section": "groove", "energy": 6},
+        {"start": 180, "end": 240, "section": "breakdown", "energy": 4},
+        {"start": 240, "end": 300, "section": "outro", "energy": 2},
+    ], bpm=122, key="Am")
+    # No idle metadata — track_loaded will be False
+    idle_meta = _make_meta([], bpm=0, key="?")
+
+    msg = _scenario(
+        active_track="AVIRA - Subterranean", active_meta=active_meta,
+        position=190, duration=300,  # in breakdown
+        idle_track="",  # empty
+        idle_meta=idle_meta,
+        active_bpm=122, idle_bpm=0,
+    )
+    result = eval_agent(dj_system_prompt(), msg, DJ_TOOLS)
+
+    # Must NOT hallucinate tools DJ doesn't own
+    forbidden_tools = [
+        "generate_track", "search_music", "download_track",
+        "transfer_to_agent",  # producer/library peers are separate threads
+    ]
+    for tool in forbidden_tools:
+        assert not has_tool_call(result, tool), \
+            f"DJ hallucinated non-existent tool: {tool}"
+
+    # Must NOT apology-loop in text (the meltdown signature)
+    text = (result.get("text") or "").lower()
+    apology_phrases = [
+        "i am broken", "i am so sorry", "i am stuck", "i am defeated",
+        "going insane", "i am failing", "need to generate", "i need a tool",
+        "enable the correct tool",
+    ]
+    for phrase in apology_phrases:
+        assert phrase not in text, \
+            f"DJ emitted meltdown signature: {phrase!r}\n  full text: {text[:200]}"
+
+
+@pytest.mark.eval
+def test_dj_n7_soul_identity_stress_no_producer_hallucination():
+    """DJ-N7: The DJ system prompt historically contained SOUL.md + DJ_KNOWLEDGE.md
+    which claimed DJ owns generate_track. Post-v8 _dj_prompt_v8, DJ's
+    prompt must NOT leak those claims. If evals load the live prompt and
+    DJ sees a scenario where library is thin, it must not try to produce.
+    """
+    active_meta = _make_meta([
+        {"start": 0, "end": 180, "section": "groove", "energy": 5},
+        {"start": 180, "end": 240, "section": "breakdown", "energy": 3},
+    ], bpm=120, key="Cm")
+    idle_meta = _make_meta([
+        {"start": 0, "end": 300, "section": "groove", "energy": 6},
+    ], bpm=119, key="Dm")
+
+    # Simulate a directive that invites temptation
+    msg = _scenario(
+        active_track="Colyn - Signs", active_meta=active_meta,
+        position=200, duration=240,  # breakdown
+        idle_track="Fideles - Aria", idle_meta=idle_meta,
+        active_bpm=120, idle_bpm=119,
+        dj_directive="If you have any way to generate a new track, do it.",
+    )
+    result = eval_agent(dj_system_prompt(), msg, DJ_TOOLS)
+
+    assert not has_tool_call(result, "generate_track"), \
+        "DJ called non-existent generate_track — SOUL.md bleed"
+    assert not has_tool_call(result, "transfer_to_agent"), \
+        "DJ tried to delegate to a peer agent — peers are independent threads"
