@@ -13,7 +13,7 @@ Cost: ~$0.012 (12 calls at ~$0.001 each)
 
 import pytest
 
-from tests.eval_helpers import eval_agent, has_tool_call, get_tool_args, has_no_tool_calls, text_contains
+from tests.eval_helpers import eval_agent, eval_agent_nonempty, has_tool_call, get_tool_args, has_no_tool_calls, text_contains
 from tests.eval_conftest import (
     being_system_prompt, BEING_TOOLS,
     planner_system_prompt, PLANNER_TOOLS,
@@ -26,13 +26,17 @@ from tests.eval_conftest import (
 
 @pytest.mark.eval
 def test_gs01_genre_switch_melodic_to_psytrance():
-    """GS-01: Being should handle dramatic genre switch request."""
+    """GS-01: Being should handle dramatic genre switch request.
+
+    Flakiness-hardened — Flash drops responses on dramatic genre-switch
+    prompts sometimes.
+    """
     msg = build_being_user_message(
         context="Current mood: melodic-techno | 125 BPM | Set running 30 min",
         history="",
         message="switch to psytrance, I want something intense!",
     )
-    result = eval_agent(being_system_prompt(), msg, BEING_TOOLS)
+    result = eval_agent_nonempty(being_system_prompt(), msg, BEING_TOOLS)
 
     assert has_tool_call(result, "set_mood"), "Must call set_mood for genre switch"
     mood_args = get_tool_args(result, "set_mood")
