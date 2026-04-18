@@ -243,14 +243,21 @@ def being(config, test_db, mock_mixxx):
     The Being is constructed but NOT started (start() launches threads).
     Use it for testing heartbeat logic, command handling, state writes.
     """
-    # Prevent ADK imports from failing in test
+    # Prevent ADK imports from failing in test.
+    # v8 Phase 5+6: create_agents returns a 5-tuple (being, dj, planner,
+    # library, producer). The old 3-tuple patch silently broke every test
+    # that used this fixture.
     with patch("agent.main.InMemorySessionService"), \
-         patch("agent.main.create_agents", return_value=(MagicMock(), MagicMock(), MagicMock())):
+         patch("agent.main.create_agents", return_value=(
+             MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock()
+         )):
         from agent.main import DJTretaBeing
         b = DJTretaBeing(config)
         b.being_agent = MagicMock()
         b.agent = MagicMock()
         b.planner_agent = MagicMock()
+        b.library_agent = MagicMock()
+        b.producer_agent = MagicMock()
         b._running = True
         b.current_set = {
             "id": "set-test-001",
