@@ -8,10 +8,636 @@
 # (librosa structural segmentation is approximate); manual review
 # recommended for production-quality ground truth.
 #
-# Generated at: 2026-04-18T09:04:44Z
-# Source rows: 5 analyzed DB tracks
+# Generated at: 2026-04-18T09:18:06Z
+# Source rows: 16 analyzed DB tracks
 
 tracks:
+- id: bonobo_kerala
+  canonical_artist: Bonobo
+  canonical_song: Kerala
+  canonical_version: Original Mix
+  remixer: null
+  bpm: 83.4
+  key_musical: Gm
+  key_camelot: 6A
+  duration_seconds: 243.4
+  energy_peak: 8
+  genre: downtempo
+  mood_descriptors:
+  - Melancholic
+  - hypnotic
+  phrase_beats: 32
+  mix_in_s: 74.0
+  mix_out_s: 216.0
+  timeline:
+  - start: 0.0
+    end: 74.0
+    section: intro
+    energy: 5
+  - start: 74.0
+    end: 144.0
+    section: breakdown
+    energy: 5
+  - start: 144.0
+    end: 204.0
+    section: buildup
+    energy: 6
+  - start: 204.0
+    end: 216.0
+    section: breakdown
+    energy: 5
+  - start: 216.0
+    end: 243.0
+    section: outro
+    energy: 1
+  source_url: https://www.youtube.com/watch?v=S0Q4gqBUs7c
+  local_path: /Users/manish.pratap/Music/DJTreta/downtempo/Bonobo - Kerala (Original Mix).mp3
+  verified_by: librosa_ingest
+- id: kasst_the_first_time
+  canonical_artist: KAS:ST
+  canonical_song: The First Time
+  canonical_version: Original Mix
+  remixer: Kerri Chandler
+  bpm: 123.0
+  key_musical: F#m
+  key_camelot: 11A
+  duration_seconds: 453.5
+  energy_peak: 8
+  genre: melodic-techno
+  mood_descriptors:
+  - Dark
+  - driving
+  - hypnotic
+  phrase_beats: 32
+  mix_in_s: 46.0
+  mix_out_s: 399.0
+  timeline:
+  - start: 0.0
+    end: 46.0
+    section: intro
+    energy: 3
+  - start: 46.0
+    end: 68.0
+    section: breakdown
+    energy: 3
+  - start: 68.0
+    end: 84.0
+    section: intro
+    energy: 5
+  - start: 84.0
+    end: 140.0
+    section: buildup
+    energy: 7
+  - start: 140.0
+    end: 164.0
+    section: breakdown
+    energy: 3
+  - start: 164.0
+    end: 242.0
+    section: buildup
+    energy: 6
+  - start: 242.0
+    end: 256.0
+    section: breakdown
+    energy: 4
+  - start: 256.0
+    end: 282.0
+    section: buildup
+    energy: 6
+  - start: 282.0
+    end: 357.0
+    section: breakdown
+    energy: 5
+  - start: 357.0
+    end: 385.0
+    section: buildup
+    energy: 6
+  - start: 385.0
+    end: 399.0
+    section: breakdown
+    energy: 2
+  - start: 399.0
+    end: 453.0
+    section: outro
+    energy: 1
+  source_url: https://www.youtube.com/watch?v=Q2QT0lNEhC0
+  local_path: /Users/manish.pratap/Music/DJTreta/melodic-techno/KAS_ST - The First Time (Kerri Chandler Remix).mp3
+  verified_by: librosa_ingest
+- id: anyma_chris_avantgarde_consciousness
+  canonical_artist: Anyma, Chris Avantgarde
+  canonical_song: Consciousness
+  canonical_version: Original Mix
+  remixer: null
+  bpm: 123.0
+  key_musical: Gm
+  key_camelot: 6A
+  duration_seconds: 274.4
+  energy_peak: 9
+  genre: melodic-techno
+  mood_descriptors:
+  - Driving
+  - euphoric
+  - powerful
+  phrase_beats: 32
+  mix_in_s: 28.0
+  mix_out_s: 242.0
+  timeline:
+  - start: 0.0
+    end: 28.0
+    section: intro
+    energy: 6
+  - start: 28.0
+    end: 66.0
+    section: buildup
+    energy: 6
+  - start: 66.0
+    end: 140.0
+    section: drop
+    energy: 8
+  - start: 140.0
+    end: 180.0
+    section: breakdown
+    energy: 4
+  - start: 180.0
+    end: 194.0
+    section: buildup
+    energy: 6
+  - start: 194.0
+    end: 206.0
+    section: breakdown
+    energy: 5
+  - start: 206.0
+    end: 226.0
+    section: buildup
+    energy: 6
+  - start: 226.0
+    end: 242.0
+    section: drop
+    energy: 8
+  - start: 242.0
+    end: 274.0
+    section: outro
+    energy: 7
+  source_url: https://www.youtube.com/watch?v=MpbZDxx44qE
+  local_path: /Users/manish.pratap/Music/DJTreta/melodic-techno/Anyma, Chris Avantgarde - Consciousness (Original Mix).mp3
+  verified_by: librosa_ingest
+- id: camelphat_elderbrook_cola
+  canonical_artist: Camelphat, Elderbrook
+  canonical_song: Cola
+  canonical_version: Original Mix
+  remixer: null
+  bpm: 123.0
+  key_musical: Bbm
+  key_camelot: 3A
+  duration_seconds: 415.6
+  energy_peak: 9
+  genre: tech-house
+  mood_descriptors:
+  - Energetic
+  - Hypnotic
+  - Groovy
+  phrase_beats: 32
+  mix_in_s: 42.0
+  mix_out_s: 367.0
+  timeline:
+  - start: 0.0
+    end: 42.0
+    section: intro
+    energy: 6
+  - start: 42.0
+    end: 58.0
+    section: buildup
+    energy: 6
+  - start: 58.0
+    end: 70.0
+    section: intro
+    energy: 4
+  - start: 70.0
+    end: 80.0
+    section: breakdown
+    energy: 3
+  - start: 80.0
+    end: 112.0
+    section: intro
+    energy: 4
+  - start: 112.0
+    end: 160.0
+    section: buildup
+    energy: 6
+  - start: 160.0
+    end: 172.0
+    section: breakdown
+    energy: 5
+  - start: 172.0
+    end: 194.0
+    section: buildup
+    energy: 6
+  - start: 194.0
+    end: 206.0
+    section: breakdown
+    energy: 4
+  - start: 206.0
+    end: 250.0
+    section: buildup
+    energy: 6
+  - start: 250.0
+    end: 286.0
+    section: breakdown
+    energy: 5
+  - start: 286.0
+    end: 367.0
+    section: buildup
+    energy: 6
+  - start: 367.0
+    end: 416.0
+    section: outro
+    energy: 1
+  source_url: https://www.youtube.com/watch?v=qke-jOUqSXU
+  local_path: /Users/manish.pratap/Music/DJTreta/tech-house/Camelphat, Elderbrook - Cola (Original Mix).mp3
+  verified_by: librosa_ingest
+- id: charlotte_de_witte_doppler
+  canonical_artist: Charlotte de Witte
+  canonical_song: Doppler
+  canonical_version: Original Mix
+  remixer: null
+  bpm: 136.0
+  key_musical: Gm
+  key_camelot: 6A
+  duration_seconds: 434.0
+  energy_peak: 10
+  genre: dark-techno
+  mood_descriptors:
+  - Intense
+  - driving
+  - hypnotic
+  phrase_beats: 32
+  mix_in_s: 44.0
+  mix_out_s: 383.0
+  timeline:
+  - start: 0.0
+    end: 44.0
+    section: intro
+    energy: 7
+  - start: 44.0
+    end: 90.0
+    section: buildup
+    energy: 6
+  - start: 90.0
+    end: 118.0
+    section: breakdown
+    energy: 3
+  - start: 118.0
+    end: 200.0
+    section: buildup
+    energy: 6
+  - start: 200.0
+    end: 260.0
+    section: breakdown
+    energy: 4
+  - start: 260.0
+    end: 383.0
+    section: buildup
+    energy: 7
+  - start: 383.0
+    end: 434.0
+    section: outro
+    energy: 1
+  source_url: https://www.youtube.com/watch?v=1-ZU3bCEGqQ
+  local_path: /Users/manish.pratap/Music/DJTreta/dark-techno/Charlotte de Witte - Doppler (Original Mix).mp3
+  verified_by: librosa_ingest
+- id: astrix_heart
+  canonical_artist: Astrix
+  canonical_song: He.art
+  canonical_version: Original Mix
+  remixer: null
+  bpm: 136.0
+  key_musical: G
+  key_camelot: 9B
+  duration_seconds: 481.7
+  energy_peak: 9
+  genre: psytrance
+  mood_descriptors:
+  - Energetic
+  - driving
+  - psychedelic
+  phrase_beats: 32
+  mix_in_s: 58.0
+  mix_out_s: 425.0
+  timeline:
+  - start: 0.0
+    end: 58.0
+    section: intro
+    energy: 3
+  - start: 58.0
+    end: 100.0
+    section: buildup
+    energy: 7
+  - start: 100.0
+    end: 126.0
+    section: drop
+    energy: 8
+  - start: 126.0
+    end: 168.0
+    section: buildup
+    energy: 6
+  - start: 168.0
+    end: 206.0
+    section: breakdown
+    energy: 4
+  - start: 206.0
+    end: 240.0
+    section: drop
+    energy: 8
+  - start: 240.0
+    end: 250.0
+    section: buildup
+    energy: 6
+  - start: 250.0
+    end: 344.0
+    section: breakdown
+    energy: 4
+  - start: 344.0
+    end: 387.0
+    section: buildup
+    energy: 7
+  - start: 387.0
+    end: 413.0
+    section: drop
+    energy: 8
+  - start: 413.0
+    end: 425.0
+    section: breakdown
+    energy: 2
+  - start: 425.0
+    end: 482.0
+    section: outro
+    energy: 1
+  source_url: https://www.youtube.com/watch?v=M3v3R_PlrhI
+  local_path: /Users/manish.pratap/Music/DJTreta/psytrance/Astrix - He.art (Original Mix).mp3
+  verified_by: librosa_ingest
+- id: armin_van_buuren_vini_vici_feat_hilight_tribe_grea
+  canonical_artist: Armin van Buuren, Vini Vici feat. Hilight Tribe
+  canonical_song: Great Spirit
+  canonical_version: Extended Mix
+  remixer: null
+  bpm: 136.0
+  key_musical: Em
+  key_camelot: 9A
+  duration_seconds: 457.8
+  energy_peak: 9
+  genre: psytrance
+  mood_descriptors:
+  - Energetic
+  - Uplifting
+  - Trance-inducing
+  phrase_beats: 32
+  mix_in_s: 46.0
+  mix_out_s: 403.0
+  timeline:
+  - start: 0.0
+    end: 46.0
+    section: intro
+    energy: 3
+  - start: 46.0
+    end: 72.0
+    section: breakdown
+    energy: 3
+  - start: 72.0
+    end: 122.0
+    section: buildup
+    energy: 7
+  - start: 122.0
+    end: 166.0
+    section: breakdown
+    energy: 5
+  - start: 166.0
+    end: 228.0
+    section: buildup
+    energy: 6
+  - start: 228.0
+    end: 236.0
+    section: breakdown
+    energy: 5
+  - start: 236.0
+    end: 254.0
+    section: buildup
+    energy: 6
+  - start: 254.0
+    end: 340.0
+    section: breakdown
+    energy: 4
+  - start: 340.0
+    end: 387.0
+    section: buildup
+    energy: 6
+  - start: 387.0
+    end: 395.0
+    section: breakdown
+    energy: 5
+  - start: 395.0
+    end: 403.0
+    section: buildup
+    energy: 7
+  - start: 403.0
+    end: 458.0
+    section: outro
+    energy: 1
+  source_url: https://www.youtube.com/watch?v=yo4pmauhugo
+  local_path: /Users/manish.pratap/Music/DJTreta/psytrance/Armin van Buuren, Vini Vici feat. Hilight Tribe - Great Spirit (Extended Mix).mp3
+  verified_by: librosa_ingest
+- id: daryl_dixon_coming_home
+  canonical_artist: Daryl Dixon
+  canonical_song: Coming Home
+  canonical_version: Original Mix
+  remixer: null
+  bpm: 117.5
+  key_musical: Am
+  key_camelot: 8A
+  duration_seconds: 178.8
+  energy_peak: 4
+  genre: deep-house
+  mood_descriptors: []
+  phrase_beats: 32
+  mix_in_s: 18.0
+  mix_out_s: 158.0
+  timeline:
+  - start: 0.0
+    end: 18.0
+    section: intro
+    energy: 2
+  - start: 18.0
+    end: 158.0
+    section: breakdown
+    energy: 4
+  - start: 158.0
+    end: 179.0
+    section: outro
+    energy: 1
+  source_url: https://www.youtube.com/watch?v=-jXCyPo5-5Q
+  local_path: /Users/manish.pratap/Music/DJTreta/deep-house/Daryl Dixon - Coming Home (Original Mix).mp3
+  verified_by: librosa_ingest
+- id: maceo_plex_conjure_balearia
+  canonical_artist: Maceo Plex
+  canonical_song: Conjure Balearia
+  canonical_version: Original Mix
+  remixer: null
+  bpm: 123.0
+  key_musical: Em
+  key_camelot: 9A
+  duration_seconds: 506.0
+  energy_peak: 8
+  genre: deep-house
+  mood_descriptors:
+  - Hypnotic
+  - driving
+  - atmospheric
+  phrase_beats: 32
+  mix_in_s: 52.0
+  mix_out_s: 445.0
+  timeline:
+  - start: 0.0
+    end: 52.0
+    section: intro
+    energy: 2
+  - start: 52.0
+    end: 64.0
+    section: breakdown
+    energy: 3
+  - start: 64.0
+    end: 254.0
+    section: buildup
+    energy: 7
+  - start: 254.0
+    end: 363.0
+    section: breakdown
+    energy: 5
+  - start: 363.0
+    end: 445.0
+    section: buildup
+    energy: 6
+  - start: 445.0
+    end: 506.0
+    section: outro
+    energy: 2
+  source_url: https://www.youtube.com/watch?v=s-3gguVSnyc
+  local_path: /Users/manish.pratap/Music/DJTreta/deep-house/Maceo Plex - Conjure Balearia (Original Mix).mp3
+  verified_by: librosa_ingest
+- id: yotto_aviate
+  canonical_artist: Yotto
+  canonical_song: Aviate
+  canonical_version: Original Mix
+  remixer: null
+  bpm: 117.5
+  key_musical: Fm
+  key_camelot: 4A
+  duration_seconds: 418.5
+  energy_peak: 9
+  genre: progressive-house
+  mood_descriptors:
+  - Energetic
+  - Melodic
+  - Uplifting
+  phrase_beats: 32
+  mix_in_s: 66.0
+  mix_out_s: 369.0
+  timeline:
+  - start: 0.0
+    end: 66.0
+    section: intro
+    energy: 4
+  - start: 66.0
+    end: 98.0
+    section: breakdown
+    energy: 3
+  - start: 98.0
+    end: 190.0
+    section: buildup
+    energy: 6
+  - start: 190.0
+    end: 258.0
+    section: breakdown
+    energy: 5
+  - start: 258.0
+    end: 359.0
+    section: buildup
+    energy: 6
+  - start: 359.0
+    end: 369.0
+    section: breakdown
+    energy: 5
+  - start: 369.0
+    end: 419.0
+    section: outro
+    energy: 2
+  source_url: https://www.youtube.com/watch?v=2Xk41dfZfDg
+  local_path: /Users/manish.pratap/Music/DJTreta/progressive-house/Yotto - Aviate (Original Mix).mp3
+  verified_by: librosa_ingest
+- id: eric_prydz_opus
+  canonical_artist: Eric Prydz
+  canonical_song: Opus
+  canonical_version: Original Mix
+  remixer: null
+  bpm: 123.0
+  key_musical: A
+  key_camelot: 11B
+  duration_seconds: 543.5
+  energy_peak: 7
+  genre: progressive-house
+  mood_descriptors:
+  - Epic
+  - euphoric
+  - driving
+  phrase_beats: 32
+  mix_in_s: 56.0
+  mix_out_s: 479.0
+  timeline:
+  - start: 0.0
+    end: 56.0
+    section: intro
+    energy: 1
+  - start: 56.0
+    end: 156.0
+    section: breakdown
+    energy: 3
+  - start: 156.0
+    end: 164.0
+    section: intro
+    energy: 4
+  - start: 164.0
+    end: 224.0
+    section: breakdown
+    energy: 5
+  - start: 224.0
+    end: 256.0
+    section: buildup
+    energy: 6
+  - start: 256.0
+    end: 292.0
+    section: breakdown
+    energy: 5
+  - start: 292.0
+    end: 330.0
+    section: buildup
+    energy: 6
+  - start: 330.0
+    end: 344.0
+    section: breakdown
+    energy: 5
+  - start: 344.0
+    end: 393.0
+    section: buildup
+    energy: 6
+  - start: 393.0
+    end: 479.0
+    section: breakdown
+    energy: 2
+  - start: 479.0
+    end: 543.0
+    section: outro
+    energy: 1
+  source_url: https://www.youtube.com/watch?v=iRA82xLsb_w
+  local_path: /Users/manish.pratap/Music/DJTreta/progressive-house/Eric Prydz - Opus (Original Mix).mp3
+  verified_by: librosa_ingest
 - id: anyma_the_sign
   canonical_artist: Anyma
   canonical_song: The Sign

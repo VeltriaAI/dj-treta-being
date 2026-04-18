@@ -132,12 +132,6 @@ def test_transition_scenario(scenario_id: str):
 # ── Per-category rollup sanity checks ──────────────────────────────────
 
 @pytest.mark.eval
-@pytest.mark.xfail(
-    reason="v1 has 5 melodic-techno tracks all 117-123 BPM — insufficient "
-           "diversity for filter_sweep, negative_bass_swap, etc. Phase b "
-           "expands library to 20+ tracks across genres.",
-    strict=False,
-)
 def test_scenario_coverage_matrix():
     """Meta-test: verify we have minimum coverage in every category.
 
