@@ -188,29 +188,14 @@ def assert_technique_acceptable(
         )
 
 
-def assert_phrase_aligned(
-    at_position: float,
-    bpm: float,
-    section_start: float,
-    phrase_beats: int = 32,
-    tolerance_beats: float = 1.0,
-) -> None:
-    """Assert that `at_position - section_start` is a multiple of the
-    phrase length within ±tolerance_beats beats. A standard techno phrase
-    is 32 beats (8 bars × 4)."""
-    phrase_s = (60.0 / bpm) * phrase_beats
-    offset = at_position - section_start
-    if offset < 0:
-        return  # position is before the section we asked about — let other asserts catch
-    remainder = offset % phrase_s
-    tol_s = (60.0 / bpm) * tolerance_beats
-    # remainder close to 0 OR close to full phrase (just before next boundary)
-    aligned = remainder <= tol_s or (phrase_s - remainder) <= tol_s
-    assert aligned, (
-        f"at_position {at_position:.1f}s is not phrase-aligned "
-        f"(offset {offset:.1f}s from section start {section_start:.1f}s; "
-        f"phrase {phrase_s:.2f}s; remainder {remainder:.2f}s > tolerance {tol_s:.2f}s)"
-    )
+# NOTE: phrase-alignment assertion was removed 2026-04-18 as dead code.
+# librosa's section boundaries in tests/fixtures/tracks.yaml are not
+# beat-locked (typical variance of 2-6 beats from a real phrase boundary),
+# so a phrase-aligned check against section_start catches librosa
+# imprecision, not DJ precision. If we later ship per-track beat grids,
+# this belongs in a separate ground-truth source (not the section
+# timeline) and should gate ONLY scenarios where the DJ is given those
+# beats.
 
 
 def assert_in_range(value: float, lo: float, hi: float, label: str) -> None:

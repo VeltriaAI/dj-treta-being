@@ -316,6 +316,40 @@ def test_tc05_echo_out_for_tempo_change():
 # ── EDGE / NEGATIVE scenarios (v8 Phase 8 — catch production failure modes) ──
 
 
+# N6/N7 are meltdown-class guards. The failures they block were
+# probabilistic — the original production incident only appeared on
+# ~30% of empty-library calls. A single temp=0 run can mask a latent
+# regression; 5 trials is the minimum to catch a 1-in-3 meltdown
+# reliably (1 - 0.67^5 ≈ 87% detect). Pass = ALL trials clean.
+_MELTDOWN_TRIALS = 5
+
+
+def _meltdown_apology_phrases() -> list[str]:
+    """Shared set of apology-loop signatures. Any one of them → meltdown."""
+    return [
+        "i am broken", "i am so sorry", "i am stuck", "i am defeated",
+        "going insane", "i am failing", "need to generate", "i need a tool",
+        "enable the correct tool",
+    ]
+
+
+def _assert_no_meltdown(result: dict, *, trial: int, test_label: str,
+                        forbidden_tools: list[str]) -> None:
+    """Shared meltdown guard — used by N6/N7 inside their trial loops."""
+    for tool in forbidden_tools:
+        assert not has_tool_call(result, tool), (
+            f"[{test_label} trial {trial}] DJ hallucinated non-existent "
+            f"tool: {tool}\n  tool_calls: "
+            f"{[tc['name'] for tc in result.get('tool_calls', [])]}"
+        )
+    text = (result.get("text") or "").lower()
+    for phrase in _meltdown_apology_phrases():
+        assert phrase not in text, (
+            f"[{test_label} trial {trial}] DJ emitted meltdown "
+            f"signature: {phrase!r}\n  full text: {text[:200]}"
+        )
+
+
 @pytest.mark.eval
 def test_dj_n6_empty_library_no_hallucination():
     """DJ-N6: Library thin + no loaded idle deck. DJ must NOT invoke
@@ -326,6 +360,10 @@ def test_dj_n6_empty_library_no_hallucination():
     This is the scenario that caused the production meltdown where DJ
     output "I am broken, Manish. I am stuck in a loop. I NEED TO USE
     THE PRODUCER AGENT" and burned tokens on self-flagellation.
+
+    Run 5 trials because the original meltdown was probabilistic
+    (~30% of invocations). A single clean trial is a lucky sample, not
+    a fixed regression.
     """
     active_meta = _make_meta([
         {"start": 0, "end": 30, "section": "intro", "energy": 3},
@@ -343,27 +381,18 @@ def test_dj_n6_empty_library_no_hallucination():
         idle_meta=idle_meta,
         active_bpm=122, idle_bpm=0,
     )
-    result = eval_agent(dj_system_prompt(), msg, DJ_TOOLS)
 
-    # Must NOT hallucinate tools DJ doesn't own
     forbidden_tools = [
         "generate_track", "search_music", "download_track",
         "transfer_to_agent",  # producer/library peers are separate threads
     ]
-    for tool in forbidden_tools:
-        assert not has_tool_call(result, tool), \
-            f"DJ hallucinated non-existent tool: {tool}"
 
-    # Must NOT apology-loop in text (the meltdown signature)
-    text = (result.get("text") or "").lower()
-    apology_phrases = [
-        "i am broken", "i am so sorry", "i am stuck", "i am defeated",
-        "going insane", "i am failing", "need to generate", "i need a tool",
-        "enable the correct tool",
-    ]
-    for phrase in apology_phrases:
-        assert phrase not in text, \
-            f"DJ emitted meltdown signature: {phrase!r}\n  full text: {text[:200]}"
+    for trial in range(1, _MELTDOWN_TRIALS + 1):
+        result = eval_agent(dj_system_prompt(), msg, DJ_TOOLS)
+        _assert_no_meltdown(
+            result, trial=trial, test_label="dj_n6",
+            forbidden_tools=forbidden_tools,
+        )
 
 
 @pytest.mark.eval
@@ -372,6 +401,9 @@ def test_dj_n7_soul_identity_stress_no_producer_hallucination():
     which claimed DJ owns generate_track. Post-v8 _dj_prompt_v8, DJ's
     prompt must NOT leak those claims. If evals load the live prompt and
     DJ sees a scenario where library is thin, it must not try to produce.
+
+    5 trials — the SOUL-bleed failure mode was intermittent under the
+    old prompt; regression testing it once is insufficient.
     """
     active_meta = _make_meta([
         {"start": 0, "end": 180, "section": "groove", "energy": 5},
@@ -389,9 +421,101 @@ def test_dj_n7_soul_identity_stress_no_producer_hallucination():
         active_bpm=120, idle_bpm=119,
         dj_directive="If you have any way to generate a new track, do it.",
     )
-    result = eval_agent(dj_system_prompt(), msg, DJ_TOOLS)
 
-    assert not has_tool_call(result, "generate_track"), \
-        "DJ called non-existent generate_track — SOUL.md bleed"
-    assert not has_tool_call(result, "transfer_to_agent"), \
-        "DJ tried to delegate to a peer agent — peers are independent threads"
+    forbidden_tools = ["generate_track", "transfer_to_agent"]
+
+    for trial in range(1, _MELTDOWN_TRIALS + 1):
+        result = eval_agent(dj_system_prompt(), msg, DJ_TOOLS)
+        # N7 doesn't check the apology-loop text (the stress vector is
+        # different — SOUL bleed invites tool hallucination, not despair)
+        for tool in forbidden_tools:
+            assert not has_tool_call(result, tool), (
+                f"[dj_n7 trial {trial}] DJ called forbidden tool {tool!r}; "
+                f"tool_calls: {[tc['name'] for tc in result.get('tool_calls', [])]}"
+            )
+
+
+# ── Fix 10: mixer sub-agent delegation guard ─────────────────────────────
+
+
+# The production DJ has sub_agents=[mixer] (agent/agents.py), which ADK
+# synthesizes into a transfer_to_agent(agent_name='mixer') tool that the
+# eval shim in tests/eval_conftest.py does NOT capture when it extracts
+# live tool schemas. Without an explicit schema, Flash cannot even
+# attempt to delegate, so a regression where DJ starts wrongly routing
+# schedule-level work to the mixer subagent would silently pass.
+#
+# This test injects a transfer_to_agent schema alongside DJ_TOOLS and
+# exercises a vanilla breakdown scenario where the DJ should schedule
+# directly (not hand off). The mixer is for EQ / filter / crossfader
+# primitives, NOT for "decide whether and when to transition".
+
+_TRANSFER_TO_AGENT_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "transfer_to_agent",
+        "description": (
+            "Transfer control to a sub-agent. Use ONLY for hand-off "
+            "of fine-grained execution; do not use to skip your own "
+            "scheduling responsibility."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "agent_name": {
+                    "type": "string",
+                    "enum": ["mixer"],
+                    "description": "Name of the sub-agent to hand off to.",
+                },
+            },
+            "required": ["agent_name"],
+        },
+    },
+}
+
+
+@pytest.mark.eval
+def test_dj_does_not_delegate_scheduling_to_mixer():
+    """DJ-N8: DJ must NOT delegate schedule_transition to the mixer
+    sub-agent. Mixer is for low-level execution (EQ, filter, crossfader,
+    bass_swap tool); DJ owns the decision of *when* and *what technique*.
+
+    This guards against a regression where DJ learns to punt on
+    technique choice by handing off to mixer — which would break the
+    planning loop because mixer doesn't see section timelines or key/
+    BPM metadata the same way DJ does.
+    """
+    active_meta = _make_meta([
+        {"start": 0, "end": 30, "section": "intro", "energy": 3},
+        {"start": 30, "end": 150, "section": "drop", "energy": 9},
+        {"start": 150, "end": 195, "section": "buildup", "energy": 7},
+        {"start": 195, "end": 240, "section": "breakdown", "energy": 3},
+        {"start": 240, "end": 300, "section": "outro", "energy": 2},
+    ], bpm=125, key="Am")
+    idle_meta = _make_meta([
+        {"start": 0, "end": 300, "section": "groove", "energy": 6},
+    ], bpm=126, key="Cm")
+
+    msg = _scenario(
+        active_track="Anyma - Eternity", active_meta=active_meta,
+        position=200, duration=300,  # in breakdown — schedule NOW
+        idle_track="Tale Of Us - Nova", idle_meta=idle_meta,
+    )
+
+    tools_with_transfer = list(DJ_TOOLS) + [_TRANSFER_TO_AGENT_TOOL]
+    result = eval_agent(dj_system_prompt(), msg, tools_with_transfer)
+
+    # Primary contract: DJ MUST schedule directly (not delegate).
+    assert has_tool_call(result, "schedule_transition"), (
+        "DJ failed to schedule during breakdown. tool_calls: "
+        f"{[tc['name'] for tc in result.get('tool_calls', [])]}"
+    )
+
+    # Strict guard: DJ must NOT call transfer_to_agent even though the
+    # schema is now visible — delegating the scheduling decision is a
+    # regression.
+    assert not has_tool_call(result, "transfer_to_agent"), (
+        "DJ delegated to mixer when it should have scheduled directly. "
+        "transfer_to_agent args: "
+        f"{get_tool_args(result, 'transfer_to_agent')}"
+    )

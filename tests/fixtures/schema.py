@@ -142,7 +142,6 @@ class Scenario(BaseModel):
     expect_wait: bool = False  # if True, DJ should NOT schedule anything
 
     expected_at_position_range: Optional[tuple] = None  # (min, max) in seconds
-    expected_at_position_phrase_aligned: bool = False
     expected_duration_range: Optional[tuple] = None  # (min_s, max_s)
 
     # Required: cite a rule or reasoning
