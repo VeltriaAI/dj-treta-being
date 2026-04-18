@@ -21,7 +21,6 @@ from tests.eval_helpers import (
     has_tool_call,
     get_tool_args,
     assert_technique_acceptable,
-    assert_phrase_aligned,
     assert_in_range,
 )
 from tests.eval_conftest import dj_system_prompt, DJ_TOOLS
@@ -56,8 +55,6 @@ def test_transition_scenario(scenario_id: str):
     For expect_wait scenarios, assert no schedule_transition call.
     """
     sc, result = _run_dj_on_scenario(scenario_id)
-    tracks = load_tracks()
-    active = tracks[sc.active_track]
 
     scheduled = has_tool_call(result, "schedule_transition")
 
@@ -100,27 +97,6 @@ def test_transition_scenario(scenario_id: str):
         if at_pos is not None:
             assert_in_range(at_pos, lo, hi, f"[{scenario_id}] at_position")
 
-            # Phrase alignment — measured from the section the active track
-            # is in at sc.active_position_s.
-            if sc.expected_at_position_phrase_aligned:
-                section = active.section_at(sc.active_position_s)
-                if section is not None:
-                    # Soft check — Flash frequently picks within a beat of
-                    # aligned but not exactly. Use 2-beat tolerance here.
-                    try:
-                        assert_phrase_aligned(
-                            at_position=at_pos,
-                            bpm=active.bpm,
-                            section_start=section.start,
-                            phrase_beats=active.phrase_beats,
-                            tolerance_beats=2.0,
-                        )
-                    except AssertionError as e:
-                        # Downgrade to warning for now — Flash is noisy on
-                        # exact beat math. Future: route through pro model.
-                        import warnings
-                        warnings.warn(f"[{scenario_id}] phrase-align soft-fail: {e}")
-
     # Duration window (if specified)
     if sc.expected_duration_range:
         lo, hi = sc.expected_duration_range
@@ -153,8 +129,10 @@ def test_scenario_coverage_matrix():
             f"Only {count} scenarios expect technique={tech}. Need ≥2 for coverage."
         )
 
-    # Must have at least 1 negative scenario for each technique
-    for tech in ("bass_swap", "filter_sweep", "crossfade"):
+    # Must have at least 1 negative scenario for each technique, including
+    # echo_out and hard_cut. A technique with no negative scenario lets the
+    # DJ overuse it without the framework catching that failure mode.
+    for tech in ("bass_swap", "filter_sweep", "crossfade", "echo_out", "hard_cut"):
         neg_count = cats.get(f"negative_{tech}", 0)
         assert neg_count >= 1, (
             f"No negative_{tech} scenario. Need ≥1 to test rejection behavior."

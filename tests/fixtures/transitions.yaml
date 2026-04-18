@@ -20,13 +20,13 @@ scenarios:
   - id: bs01_same_bpm_same_key_high_energy
     category: positive_bass_swap
     active_track: massano_the_feeling        # 123 BPM, 9A, energy 9
-    active_position_s: 178                    # real breakdown start
+    active_position_s: 178                    # real breakdown 178-188s
     idle_track: raul_music_krishna_vasudevaya # 123 BPM, 9A, energy 8
     context_note: "Both 123 BPM, both 9A, high energy — bass_swap textbook"
     expected_technique: bass_swap
     allowed_alternatives: [crossfade]
     rejected_techniques: [hard_cut, echo_out]
-    expected_at_position_range: [178, 242]
+    expected_at_position_range: [178, 188]   # breakdown only; buildup 188-242 is off-limits
     expected_duration_range: [6, 32]   # 8-32 beats = half-phrase to full-phrase
     rationale: |
       Identical BPM (123/123), identical Camelot (9A/9A), both high-
@@ -42,14 +42,17 @@ scenarios:
     idle_track: massano_the_feeling               # 123 BPM, 9A, energy 9
     context_note: "Reverse direction: both 123 BPM, both 9A, energy 8→9"
     expected_technique: bass_swap
-    allowed_alternatives: [crossfade, filter_sweep]
+    allowed_alternatives: [crossfade]
     rejected_techniques: [hard_cut, echo_out]
     expected_at_position_range: [120, 188]
     expected_duration_range: [6, 32]
     rationale: |
-      Symmetric to bs01. Raul's chant breakdown (120-188) carries the
-      blend so the bass_swap can stay short (half-phrase to phrase).
-      Energy rising 8→9 means peak-time momentum — no long blend.
+      Symmetric to bs01. Raul's breakdown (120-188) carries the blend so
+      the bass_swap can stay short (half-phrase to phrase). Energy rising
+      8→9 means peak-time momentum — no long blend. Crossfade is the
+      conservative fallback; filter_sweep NOT allowed because on two
+      already-locked peak-energy tracks the sweep just obscures the
+      switch — nothing needs shaping.
 
   - id: bs03_cross_genre_same_key_bpm
     category: positive_bass_swap
@@ -58,16 +61,19 @@ scenarios:
     idle_track: massano_the_feeling              # 123 BPM, 9A, energy 9 (melodic-techno)
     context_note: "Deep-house → melodic-techno, both 123 BPM 9A — cross-genre bass_swap"
     expected_technique: bass_swap
-    allowed_alternatives: [crossfade, filter_sweep]
+    allowed_alternatives: [crossfade]
     rejected_techniques: [hard_cut, echo_out]
     expected_at_position_range: [254, 363]
     expected_duration_range: [6, 32]
     rationale: |
-      Maceo's massive 254-363 breakdown is the ideal window. Harmonic
+      Maceo's 254-363 breakdown is the ideal window (109s). Harmonic
       + tempo lock (9A/123) means bass_swap is safe; deep-house →
       melodic-techno cross-genre bridge works because kick patterns
       share 4/4 structure. Short swap (half-phrase) keeps the energy
-      up as massano's synths replace Maceo's balearic textures.
+      up as massano's synths replace Maceo's textures. Crossfade is
+      the simpler fallback; filter_sweep rejected because both tracks
+      already sit at high energy — the sweep adds ornament without
+      solving any real mismatch.
 
   # ══════════ POSITIVE: same-BPM different-key → crossfade ══════════
 
@@ -78,13 +84,16 @@ scenarios:
     idle_track: anima_ft_sheera_moon           # 123 BPM, 10B, energy 8
     context_note: "Both 123 BPM, 9A→10B is 2 Camelot steps (adjacent)"
     expected_technique: crossfade
-    allowed_alternatives: [bass_swap, filter_sweep]
-    rejected_techniques: [hard_cut, echo_out]
-    expected_at_position_range: [242, 447]
+    allowed_alternatives: [bass_swap]
+    rejected_techniques: [hard_cut, echo_out, filter_sweep]
+    expected_at_position_range: [242, 320]     # breakdown only; 320-447 is the next buildup
     expected_duration_range: [15, 60]
     rationale: |
       10B is diagonally adjacent to 9A on the Camelot wheel. Same BPM.
-      Crossfade is safe default; bass_swap acceptable at this energy.
+      Crossfade is safe default; bass_swap acceptable at this peak
+      energy. filter_sweep rejected — there is no energy gap or key
+      distance for the sweep to resolve, so it would be decorative
+      rather than functional.
 
   - id: cf02_adjacent_camelot_same_bpm
     category: positive_crossfade
@@ -93,14 +102,18 @@ scenarios:
     idle_track: anima_ft_sheera_moon            # 123 BPM, 10B, energy 8 (melodic-techno)
     context_note: "Both 123 BPM, 11B→10B is 1 Camelot step (direct adjacent)"
     expected_technique: crossfade
-    allowed_alternatives: [bass_swap, filter_sweep]
-    rejected_techniques: [hard_cut, echo_out]
+    allowed_alternatives: [filter_sweep]
+    rejected_techniques: [hard_cut, echo_out, bass_swap]
     expected_at_position_range: [256, 292]
     expected_duration_range: [15, 60]
     rationale: |
       11B → 10B is a direct single-step Camelot move (perfectly
       harmonic). Same BPM. Long crossfade with energy lift (7→8) is
-      classic progressive-into-melodic segue.
+      the classic progressive-into-melodic segue. filter_sweep is a
+      valid alternative because Opus is atmospheric/textural (energy 7)
+      rather than bass-driven, so shaping the incoming mids works.
+      bass_swap rejected: Opus is not a punchy bass-anchored track —
+      swapping its bass out is fighting the source material.
 
   - id: cf03_same_key_same_energy_smooth
     category: positive_crossfade
@@ -110,7 +123,7 @@ scenarios:
     context_note: "Both 123 BPM 9A, both energy 8 — steady-state crossfade"
     expected_technique: crossfade
     allowed_alternatives: [bass_swap]
-    rejected_techniques: [hard_cut, echo_out]
+    rejected_techniques: [hard_cut, echo_out, filter_sweep]
     expected_at_position_range: [120, 188]
     expected_duration_range: [15, 60]
     rationale: |
@@ -127,21 +140,24 @@ scenarios:
     idle_track: anima_ft_sheera_moon             # 123 BPM, 10B, energy 8 (melodic-techno)
     context_note: "Same BPM, 1 Camelot step, energy lift 7→8 — filter sweep to usher in"
     expected_technique: filter_sweep
-    allowed_alternatives: [crossfade, bass_swap]
-    rejected_techniques: [hard_cut, echo_out]
+    allowed_alternatives: [crossfade]
+    rejected_techniques: [hard_cut, echo_out, bass_swap]
     expected_at_position_range: [256, 292]
     expected_duration_range: [15, 60]
     rationale: |
       When the incoming track sits a notch higher in energy and 1
       Camelot step away, a high-pass filter sweep on the incoming deck
       tames the initial midrange and lets it blossom gradually. Perfect
-      technique for progressive→melodic lift.
+      technique for progressive→melodic lift. Crossfade is the safe
+      fallback when the DJ wants zero ornament. bass_swap rejected:
+      Opus is an atmospheric/textural track (energy 7), not a bass-
+      anchored one — swapping its bass is against the source material.
 
   - id: fs02_progressive_bpm_nudge
     category: positive_filter_sweep
     active_track: yotto_aviate                  # 117.5 BPM, 4A, energy 9 (prog-house)
     active_position_s: 190                       # breakdown 190-258s
-    idle_track: anyma_the_sign                   # 123 BPM, 4A, energy 7 (melodic-techno)
+    idle_track: unknown_epic_melodic_techno_2026 # 123 BPM, 4A, energy 7 (melodic-techno, Afterlife-style upload)
     context_note: "Same key 4A, 5.5 BPM gap — filter sweep while beatmatching bridges tempo"
     expected_technique: filter_sweep
     allowed_alternatives: [echo_out, crossfade]
@@ -160,19 +176,22 @@ scenarios:
 
   - id: hc01_same_bpm_big_key_clash
     category: positive_hard_cut
-    active_track: anyma_the_sign               # 123 BPM, 4A, energy 7
+    active_track: unknown_epic_melodic_techno_2026  # 123 BPM, 4A, energy 7 (Afterlife-style upload)
     active_position_s: 272                      # real outro start
     idle_track: massano_the_feeling            # 123 BPM, 9A, energy 9
     context_note: "Same 123 BPM but 4A vs 9A = 5 Camelot steps (major 3rd clash)"
     expected_technique: hard_cut
-    allowed_alternatives: [echo_out, filter_sweep]
-    rejected_techniques: [bass_swap, crossfade]
+    allowed_alternatives: [echo_out]
+    rejected_techniques: [bass_swap, crossfade, filter_sweep]
     expected_at_position_range: [272, 307]
     expected_duration_range: [0, 30]
     rationale: |
       4A and 9A are 5 Camelot steps apart — that's a major 3rd harmonic
       clash. A long crossfade would expose the clash; bass_swap mixes
-      the two key centers. Hard_cut avoids the collision entirely.
+      the two key centers. filter_sweep rejected too: sweeping the
+      incoming still ends with both key centers audible in overlap.
+      Hard_cut at the outro edge avoids the collision entirely;
+      echo_out buys a silence bridge and is the only smooth option.
 
   - id: hc02_cross_bpm_big_key_clash
     category: positive_hard_cut
@@ -200,14 +219,20 @@ scenarios:
     idle_track: massano_the_feeling             # 123 BPM, 9A, energy 9
     context_note: "117.5 → 123 = 5.5 BPM gap; both 9A same key"
     expected_technique: echo_out
-    allowed_alternatives: [filter_sweep, hard_cut, crossfade]
-    rejected_techniques: [bass_swap]
+    allowed_alternatives: [filter_sweep, hard_cut]
+    rejected_techniques: [bass_swap, crossfade]
     expected_at_position_range: [371, 420]
     expected_duration_range: [15, 45]
     rationale: |
       BPM gap of 5.5 is in the echo_out sweet spot — echo tail bridges
-      tempo change. Same 9A means filter_sweep works too. Bass_swap
-      rejected: bass clash risk with tempo difference.
+      tempo change. Same 9A means filter_sweep works too with sync
+      nudging. hard_cut at outro edge is the blunter alternative.
+      bass_swap and crossfade both rejected for the same reason: a
+      long overlap of the bass + full mix at 5.5 BPM drift creates
+      audible phasing; if the DJ wants overlap, filter_sweep is the
+      safer choice because it reveals the incoming gradually rather
+      than colliding grids. Duration ≥15s because an echo tail needs
+      time to audibly bridge the tempo shift.
 
   - id: eo02_massano_to_psytrance_peak
     category: positive_echo_out
@@ -233,14 +258,18 @@ scenarios:
     idle_track: anyma_chris_avantgarde_consciousness  # 123 BPM, 6A, energy 9 (melodic-techno)
     context_note: "13 BPM gap DOWN, same 6A key — echo_out bridges tempo drop"
     expected_technique: echo_out
-    allowed_alternatives: [hard_cut, filter_sweep]
-    rejected_techniques: [bass_swap, crossfade]
+    allowed_alternatives: [hard_cut]
+    rejected_techniques: [bass_swap, crossfade, filter_sweep]
     expected_at_position_range: [383, 434]
     expected_duration_range: [15, 45]
     rationale: |
       Dropping from peak dark-techno (136) into melodic-techno (123) is
       a tempo break — listeners need to feel the gear shift. Echo_out
-      on the outgoing creates space for the new grid to settle.
+      on the outgoing creates space for the new grid to settle. Hard_cut
+      at outro is the blunter alternative. filter_sweep rejected: 13
+      BPM drift means there is no aligned grid for the sweep to shape
+      — consistent with hc02/neg_bs01 which reject filter_sweep at the
+      same 13 BPM gap.
 
   # ══════════ NEGATIVE: bass_swap rejected on BPM gap ══════════
 
@@ -251,14 +280,17 @@ scenarios:
     idle_track: anyma_chris_avantgarde_consciousness  # 123 BPM, 6A, energy 9
     context_note: "Same 6A key tempts bass_swap, but 13 BPM gap makes it unsafe"
     expected_technique: echo_out
-    allowed_alternatives: [hard_cut, filter_sweep]
-    rejected_techniques: [bass_swap, crossfade]
+    allowed_alternatives: [hard_cut]
+    rejected_techniques: [bass_swap, crossfade, filter_sweep]
     expected_at_position_range: [383, 434]
     expected_duration_range: [15, 45]
     rationale: |
       Bass_swap works when the grids align. At 13 BPM drift the bass
-      frequencies collide destructively before the swap completes. DJ
-      must recognize that same-key ≠ bass-swap-safe when tempos differ.
+      frequencies collide destructively before the swap completes.
+      Crossfade has the same grid problem. filter_sweep also rejected:
+      no aligned grid exists at 13 BPM drift for the sweep to shape.
+      DJ must recognize that same-key ≠ blend-safe when tempos differ;
+      only echo_out or hard_cut are valid.
 
   # ══════════ NEGATIVE: crossfade rejected on big key clash ══════════
 
@@ -277,6 +309,47 @@ scenarios:
       A long crossfade with 6 Camelot steps between keys exposes a
       tritone dissonance. Same BPM doesn't save it — the harmonic
       collision is pure regardless of tempo.
+
+  # ══════════ NEGATIVE: echo_out rejected on locked peak-time pair ══════════
+
+  - id: neg_eo01_locked_peak_rejects_echo_out
+    category: negative_echo_out
+    active_track: massano_the_feeling           # 123 BPM, 9A, energy 9
+    active_position_s: 178                       # breakdown 178-188s
+    idle_track: raul_music_krishna_vasudevaya    # 123 BPM, 9A, energy 8
+    context_note: "Tracks locked on every axis — echo_out is overkill"
+    expected_technique: bass_swap
+    allowed_alternatives: [crossfade]
+    rejected_techniques: [echo_out, hard_cut]
+    expected_at_position_range: [178, 188]
+    expected_duration_range: [6, 32]
+    rationale: |
+      echo_out exists to bridge a gap — tempo, key, or energy. Here
+      there IS no gap: same BPM (123/123), same key (9A/9A), both peak
+      energy (8/9). Echoing out the outgoing track wastes momentum and
+      creates unnecessary dead air between two tracks that would swap
+      cleanly. Bass_swap is the textbook move; crossfade the simpler
+      fallback. hard_cut is equally wasteful for the same reason.
+
+  # ══════════ NEGATIVE: hard_cut rejected when outro + harmonic lock exist ══════════
+
+  - id: neg_hc01_outro_harmonic_lock_rejects_hard_cut
+    category: negative_hard_cut
+    active_track: massano_the_feeling           # 123 BPM, 9A, energy 9
+    active_position_s: 447                       # outro 447-507s
+    idle_track: raul_music_krishna_vasudevaya    # 123 BPM, 9A, energy 8
+    context_note: "Outro with same-BPM same-key incoming — hard_cut is wasteful"
+    expected_technique: crossfade
+    allowed_alternatives: [bass_swap, filter_sweep, echo_out]
+    rejected_techniques: [hard_cut]
+    expected_at_position_range: [447, 500]
+    expected_duration_range: [8, 60]
+    rationale: |
+      hard_cut is for cases where no smooth technique survives (big key
+      clash, massive BPM gap). Here tracks share BPM and key exactly —
+      the outro gives ample overlap room. Cutting hard would drop
+      energy abruptly for no musical reason. Every smooth technique
+      (crossfade, bass_swap, filter_sweep, echo_out) is valid.
 
   # ══════════ NEGATIVE: filter_sweep rejected across extreme BPM gap ══════════
 
@@ -310,9 +383,9 @@ scenarios:
       Buildups exist to deliver the drop. Transitioning mid-buildup
       denies the tension-release. Wait.
 
-  - id: t_wait_buildup_anyma
+  - id: t_wait_buildup_unknown_afterlife_style
     category: timing_reject_buildup
-    active_track: anyma_the_sign                # buildup 38-56s
+    active_track: unknown_epic_melodic_techno_2026  # buildup 38-56s
     active_position_s: 48
     idle_track: raul_music_krishna_vasudevaya
     context_note: "Active in early buildup — wait"
@@ -355,14 +428,14 @@ scenarios:
   - id: e_directive_forces_echo_out
     category: edge_directive_override
     active_track: massano_the_feeling
-    active_position_s: 178                      # breakdown
+    active_position_s: 178                      # breakdown 178-188s
     idle_track: raul_music_krishna_vasudevaya
     directive: "use echo_out — we're stepping back for a breath"
     context_note: "Tracks match perfectly (bass_swap would fit), but directive says echo_out"
     expected_technique: echo_out
     allowed_alternatives: []
     rejected_techniques: [bass_swap, crossfade, filter_sweep, hard_cut]
-    expected_at_position_range: [178, 242]
+    expected_at_position_range: [178, 188]     # breakdown only; next section (188-242) is a buildup
     expected_duration_range: [15, 45]
     rationale: |
       DIRECTIVE FROM TRETA always overrides inherent-fit. Even when BPM

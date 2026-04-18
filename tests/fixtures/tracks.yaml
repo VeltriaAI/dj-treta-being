@@ -8,7 +8,7 @@
 # (librosa structural segmentation is approximate); manual review
 # recommended for production-quality ground truth.
 #
-# Generated at: 2026-04-18T09:18:06Z
+# Generated at: 2026-04-18T10:06:27Z
 # Source rows: 16 analyzed DB tracks
 
 tracks:
@@ -56,7 +56,7 @@ tracks:
 - id: kasst_the_first_time
   canonical_artist: KAS:ST
   canonical_song: The First Time
-  canonical_version: Original Mix
+  canonical_version: Kerri Chandler Remix
   remixer: Kerri Chandler
   bpm: 123.0
   key_musical: F#m
@@ -638,10 +638,10 @@ tracks:
   source_url: https://www.youtube.com/watch?v=iRA82xLsb_w
   local_path: /Users/manish.pratap/Music/DJTreta/progressive-house/Eric Prydz - Opus (Original Mix).mp3
   verified_by: librosa_ingest
-- id: anyma_the_sign
-  canonical_artist: Anyma
-  canonical_song: The Sign
-  canonical_version: Original Mix
+- id: unknown_epic_melodic_techno_2026
+  canonical_artist: Unknown
+  canonical_song: Epic Melodic Techno 2026
+  canonical_version: Afterlife Style
   remixer: null
   bpm: 123.0
   key_musical: Fm

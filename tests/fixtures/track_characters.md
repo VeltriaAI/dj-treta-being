@@ -5,208 +5,241 @@ tells you the numbers; this doc tells you the feel — what kind of
 transitions make sense and why.
 
 Confidence levels:
-- **K** (known): widely recognized track, character documented in mix
-  sets, interviews, or DJ commentary
-- **A** (analyzed): character inferred from librosa timeline (section
-  lengths, energy curve) without outside reference
-- **G** (guess): low-confidence extrapolation from artist + genre
+- **K** (known): widely recognized track with external evidence the
+  author is willing to cite (mix-set appearances, interviews, DJ
+  commentary). Reserved for tracks the author can defend.
+- **A** (analyzed): character inferred from librosa timeline
+  (section lengths, energy curve) and/or DB metadata (BPM, key,
+  energy peak, mood descriptors) — no external claim beyond what the
+  numbers say.
+- **G** (guess): low-confidence extrapolation from artist + genre, or
+  sparse-structure tracks where the timeline under-constrains
+  character.
+
+Discipline: do NOT call something "K" unless either the timeline
+measurably matches the claim OR you have an external citation.
+Stylistic prose without data backing is "A" at best.
 
 ---
 
 ## 123 BPM cluster (the big pocket)
 
-### `massano_the_feeling` — 9A, energy 9, melodic-techno  (K)
-Driving, euphoric Afterlife-style melodic techno. Long 114s buildup
-(64-178), short breakdown at 178-188, major second buildup 188-242,
-then deep ~80s breakdown 242-320 (the memorable "pause" where the melody
-hangs), then the final peak push from 320-447. Outro 447-507.
+### `massano_the_feeling` — 9A, energy 9, melodic-techno  (A)
+Timeline-measured structure: intro 0-64, first sustained buildup
+64-178 (114s), short breakdown 178-188, second buildup 188-242, long
+breakdown 242-320 (78s), final buildup 320-447, outro 447-507. Energy
+peak 9, mood descriptors Euphoric/Driving.
 
-**Transition character:** peak-time anchor. Works as either the
-incoming track (arrive at 178 breakdown) or the outgoing track (exit
-at 447 outro). Bass is authoritative — bass_swap is natural because
-the kick pattern is textbook 4/4. Peak-time bass_swap duration is
-short (8-16 beats = 4-8s) because both tracks are locked; a long blend
-dilutes the energy.
+**Transition character:** energy-9 melodic-techno 123 BPM at 9A — sits
+in the core harmonic pocket. Bass_swap is natural for peak-time 4/4
+grids; short durations (half-phrase ~8s up to full phrase ~16s) fit a
+locked match — a long blend dilutes energy. Two long breakdowns give
+clean entry/exit windows.
 
-### `raul_music_krishna_vasudevaya` — 9A, energy 8, melodic-techno  (K)
-Spiritual-vocal melodic techno with Krishna chant. Short track (240s).
-Buildup 80-120, long breakdown 120-188 dominated by chant, final peak
-buildup 188-212, outro 212-240.
+### `raul_music_krishna_vasudevaya` — 9A, energy 8, melodic-techno  (A)
+240s melodic-techno track with a long middle breakdown 120-188 (68s),
+final buildup 188-212, outro 212-240. Title suggests a "Krishna
+Vasudevaya" Sanskrit motif but the audio-character claim comes from
+the timeline shape, not a listening transcript.
 
-**Transition character:** chant breakdown is the feature. Blends
-beautifully with massano (both 9A/123 BPM) — the vocal floats over
-massano's synth hooks. Bass_swap at 120 (breakdown start) is cleanest;
-duration 8-16s because the vocal carries the blend.
+**Transition character:** breakdown 120-188 is the natural blend
+window. Same 9A/123 BPM pocket as `massano_the_feeling` — bass_swap
+or crossfade both valid. Duration: 8-16s when paired with another 9A
+track (grids lock; no need for a long overlap).
 
-### `anyma_the_sign` — 4A, energy 7, melodic-techno  (K)
-Hypnotic, ethereal, slower-feeling than its BPM. Long breakdowns
-(94-192 is one continuous introspective section). Outro 272-307.
+### `unknown_epic_melodic_techno_2026` — 4A, energy 7, melodic-techno  (A)
+Generic "in the style of" upload (YouTube title: "The Sign | Epic
+Melodic Techno 2026 (Anyma & Afterlife Style)", uploader "Art Of
+Techno Afro"). NOT a real Anyma release — canonical_confidence 0.2 in
+DB. Structure: short buildup 38-56, long breakdown 94-192 (98s), brief
+buildup 192-202, breakdown 202-230, buildup 230-272, outro 272-307.
 
-**Transition character:** key 4A (Fm) is far from the 9A pocket (5
-Camelot steps). This track does NOT blend with 9A tracks — bass_swap
-or crossfade exposes the clash. Hard_cut at outro or echo_out is the
-only path out. Within its own 4A family (yotto_aviate 4A), crossfade
-and filter_sweep work.
+**Transition character:** 4A (Fm) is 5 Camelot steps from 9A — too
+far for a smooth blend. With 9A tracks, hard_cut at outro or echo_out
+is the honest path; a long crossfade exposes the key clash. Against
+the 4A neighbor `yotto_aviate`, same-key harmonic lock makes
+filter_sweep or crossfade viable across a 5.5 BPM gap.
 
 ### `anima_ft_sheera_moon` — 10B, energy 8, melodic-techno  (A)
-Lots of short breakdowns (many 12-30s segments). Outro 395-449.
+Highly segmented timeline: 12 sections with many short 12-30s
+breakdowns and buildups. Outro 395-449.
 
-**Transition character:** 10B is diagonally adjacent to 9A (1 step)
-and 11B (1 step). Blends with both 9A melodic-techno pocket and 11B
-progressive house. Short breakdowns mean the DJ has many entry points
-— can target almost any 30-second window.
+**Transition character:** 10B is 1 Camelot step from 9A and 1 from
+11B — sits between the melodic-techno 9A core and the progressive
+11B pocket (Opus). Many short breakdowns means the DJ has many entry
+points — almost any 30-second window works.
 
-### `anyma_chris_avantgarde_consciousness` — 6A, energy 9, melodic-techno  (K)
-Dark, driving Afterlife peak-hour. 6A is central on the inner wheel.
-Breakdowns at 140-180 and 194-206. Outro 242-274.
+### `anyma_chris_avantgarde_consciousness` — 6A, energy 9, melodic-techno  (A)
+Energy peak 9 at 6A/123 BPM. Timeline: intro 0-28, buildup 28-66,
+drop 66-140 (74s), breakdown 140-180, short buildup/breakdown
+alternation to 226, final drop 226-242, outro 242-274. Mood
+descriptors: Driving, euphoric, powerful.
 
-**Transition character:** 6A is 3 Camelot steps from 9A (approachable
-via relative-major 6B→9B if the mix allows). Against 9A tracks, best
-via echo_out or filter_sweep to tame the harmonic gap. Against 10B
-(anima_moon) it's 4 steps — too far. Against charlotte_doppler (6A,
-136 BPM) it shares key but BPM gap forces echo_out.
+**Transition character:** 6A is 3 Camelot steps from 9A — playable
+via echo_out or filter_sweep but not a smooth same-pocket move. Same
+6A key as `charlotte_de_witte_doppler` (136 BPM) means the 13 BPM
+gap between them is bridgeable via echo_out with 6A key continuity.
 
 ### `kasst_the_first_time` — 11A, energy 8, melodic-techno  (G)
-Lots of sectioning in the timeline (12 sections). Outro 399-453,
-track total 453s.
+12 timeline sections with heavy breakdown/buildup alternation. Outro
+399-453 on a 453s track. File/DB attributes it as KAS:ST's "The First
+Time" remixed by Kerri Chandler (original on Afterlife label AL037).
 
-**Transition character:** 11A is 2 Camelot steps from 9A (relative
-close). Crossfade to 9A tracks works; filter_sweep also fine.
+**Transition character:** 11A is 2 Camelot steps from 9A. Crossfade or
+filter_sweep to the 9A pocket both work. The many short sections mean
+plenty of valid entry windows but no single "signature" breakdown.
 
-### `maceo_plex_conjure_balearia` — 9A, energy 8, deep-house  (K)
-Classic Maceo Plex deep-house. Balearic/tribal flavor. Long grooves
-with short breakdowns (52-64) and a MASSIVE mid-section breakdown
-(254-363 = ~110s continuous). Outro 445-506.
+### `maceo_plex_conjure_balearia` — 9A, energy 8, deep-house  (A)
+Timeline: intro 0-52, brief breakdown 52-64, long buildup 64-254
+(190s), long breakdown 254-363 (109s), final buildup 363-445, outro
+445-506. Mood descriptors: Hypnotic, driving, atmospheric.
 
-**Transition character:** same 9A/123 pocket as massano/raul. Deep-
-house → melodic-techno cross-genre bridge sits naturally because
-tempo and key lock. The 254-363 breakdown is a perfect window to
-introduce a melodic-techno track via bass_swap or filter_sweep.
+**Transition character:** same 9A/123 BPM pocket as massano/raul.
+Deep-house → melodic-techno cross-genre bridge sits naturally because
+tempo and key lock. The 254-363 breakdown is a 109s window — ample
+room to introduce a melodic-techno track via bass_swap or filter_sweep.
 
-### `eric_prydz_opus` — 11B, energy 7, progressive-house  (K)
-Legendary 2014 prog-house slow-burner. Known for its famous ~2-minute
-buildup. Breakdowns 56-156 (first extended moody section), 164-224
-(the iconic one), 256-292 (minor break before the peak). Outro 479-543
-(very long tail).
+### `eric_prydz_opus` — 11B, energy 7, progressive-house  (A)
+Timeline: intro 0-56, breakdown 56-156 (100s), brief intro 156-164,
+breakdown 164-224 (60s), buildup 224-256, breakdown 256-292, buildup
+292-330, breakdown 330-344, buildup 344-393, long breakdown 393-479
+(86s), outro 479-543. Energy peak 7 — not a peak-time monster at the
+measured level; the track is structural / atmospheric.
 
-**Transition character:** Opus IS slow and atmospheric. Not a bass-
-swap track — the energy is too restrained for a punchy swap. Filter
-sweep works because Opus is all about texture lifting over time.
-Crossfade also fits its long breathy character. 11B is 1 step from
-10B (anima_moon) — smooth harmonic move.
+**Transition character:** many long breakdowns → suited to long,
+textural blends rather than punchy swaps. The 100s breakdown
+(56-156), the 86s late breakdown (393-479), and the 60s breakdown
+(164-224) are all generous entry windows. Filter_sweep and crossfade
+suit its atmospheric character; a bass_swap would be against type.
+11B is 1 Camelot step from 10B (`anima_ft_sheera_moon`) — smooth
+harmonic move.
 
-### `camelphat_elderbrook_cola` — 3A, energy 9, tech-house  (K)
-Iconic tech-house with the sticky "Cola" vocal hook. 3A is FAR from
-the 9A pocket (6 Camelot steps = tritone). Outro 367-416.
+### `camelphat_elderbrook_cola` — 3A, energy 9, tech-house  (A)
+Tech-house at 123 BPM / 3A. Highly segmented timeline: 13 sections
+with many buildup/breakdown alternations. Outro 367-416. Mood
+descriptors: Energetic, Hypnotic, Groovy.
 
-**Transition character:** isolated harmonically. Does NOT blend with
-anything in 9A/10B/11B/6A cluster via smooth techniques. Hard_cut at
-outro is the honest move. Key-shift filter_sweep is possible but
-jarring. Useful as a negative-scenario source.
+**Transition character:** 3A is FAR from the 9A pocket (6 Camelot
+steps = tritone, the maximum harmonic distance). Does NOT blend
+smoothly with anything in 9A/10B/11B/6A cluster — hard_cut at outro
+is the honest move. Useful as a negative-scenario anchor.
 
 ---
 
 ## 117.5 BPM cluster
 
 ### `kinky_sound_lemon_haze` — 9A, energy 9, melodic-techno  (A)
-Same 9A pocket as massano but 5.5 BPM slower. Breakdown 216-274, outro
+9A pocket tracks but 5.5 BPM slower than the 123 core. Timeline shows
+repeated buildup/intro/buildup pattern to 216, breakdown 216-274,
+buildup 274-330, short breakdown, final buildup 338-371, outro
 371-420.
 
-**Transition character:** gap of 5.5 BPM into 123 = classic echo_out
-territory. Echo tail at outro (371-420) into massano's entry at 178
-buildup creates a perfect tempo-shift bridge. Filter sweep across
-5.5 BPM is also feasible with sync.
+**Transition character:** 5.5 BPM gap into 123 is in echo_out's sweet
+spot. Same 9A means filter_sweep is also feasible. Outro (371-420)
+pairs cleanly with any 123/9A entry.
 
 ### `daryl_dixon_coming_home` — 8A, energy 4, deep-house  (G)
-Low energy (4) unusual for our fixture. Only 3 sections detected
-(likely minimal structure). Outro 158-179 on a 179s track — this is
-a short interlude track.
+Energy-4 is unusual for the fixture (everything else is 7-10). Only 3
+sections in timeline: intro 0-18, one long breakdown 18-158, outro
+158-179. Total track 179s — short.
 
-**Transition character:** low energy → acts as a "palate cleanser"
-between peak moments. 8A is 1 step from 9A. Good for slowing the
-floor down with crossfade; NOT for peak-time blending.
+**Transition character:** low energy → acts as a palate cleanser
+between peak moments. 8A is 1 step from 9A. Good for slowing the floor
+with crossfade; not for peak-time blending.
 
-### `yotto_aviate` — 4A, energy 9, progressive-house  (K)
-Yotto's emotional big-room prog. Breakdowns 66-98, 190-258 (that's a
-68-second melodic breath), 359-369. Outro 369-419.
+### `yotto_aviate` — 4A, energy 9, progressive-house  (A)
+117.5 BPM / 4A progressive-house. Breakdowns 66-98, 190-258 (68s
+window), and brief 359-369. Outro 369-419.
 
-**Transition character:** 4A matches anyma_the_sign (also 4A, 123
-BPM) — a same-key 5.5 BPM up transition. Filter sweep or echo_out.
-The 190-258 breakdown is long enough for the incoming track to
-establish itself before the next drop.
+**Transition character:** 4A matches `unknown_epic_melodic_techno_2026`
+(also 4A, 123 BPM) — a same-key 5.5 BPM-up transition. Filter sweep
+or echo_out across the BPM gap is clean because the harmonic axis
+locks. The 190-258 breakdown is a 68s window.
 
 ---
 
 ## 136 BPM cluster (psytrance + dark-techno peak)
 
-### `charlotte_de_witte_doppler` — 6A, energy 10, dark-techno  (K)
-Peak-hour industrial dark-techno. Energy 10 is the fixture's ceiling.
-Extended breakdown 200-260 (60s of tension). Outro 383-434.
+### `charlotte_de_witte_doppler` — 6A, energy 10, dark-techno  (A)
+Energy peak 10 — the fixture's ceiling. Timeline: intro 0-44, long
+buildup 44-90 and 118-200, breakdown 200-260 (60s), final buildup
+260-383, outro 383-434. Mood descriptors: Intense, driving, hypnotic.
 
-**Transition character:** same 6A key as consciousness. 136→123 = 13
-BPM down, requires echo_out or hard_cut — no beatmatched technique
-survives that gap. Doppler as outgoing into consciousness creates a
-"come down from peak" moment that's musically valid because the 6A
-key continuity preserves harmonic narrative.
+**Transition character:** same 6A key as
+`anyma_chris_avantgarde_consciousness`. 136→123 = 13 BPM down — no
+beatmatched technique survives that gap, so echo_out or hard_cut.
+Doppler outgoing into consciousness preserves the 6A harmonic thread
+while letting the tempo drop.
 
-### `astrix_heart` — 9B, energy 9, psytrance  (K)
-Progressive psytrance classic. 136 BPM rolling bassline.
-Breakdowns 168-206 and a massive 250-344 mid-track journey. Outro 425-482.
+### `astrix_heart` — 9B, energy 9, psytrance  (A)
+136 BPM psytrance. Breakdowns at 168-206 and a long mid-track 250-344
+(94s). Outro 425-482. Mood descriptors: Energetic, driving,
+psychedelic.
 
-**Transition character:** psytrance grids are unforgiving — you can't
-blend smoothly from 123 BPM techno. Must use echo_out or hard_cut.
-Within the 136 pocket (doppler, armin_vini_vici), bass_swap works
-because the grids align.
+**Transition character:** psytrance grids are unforgiving — can't
+blend smoothly from 123 BPM techno. Echo_out or hard_cut only. Inside
+the 136 pocket with `charlotte_de_witte_doppler` and
+`armin_van_buuren_vini_vici_feat_hilight_tribe_grea`, bass_swap works
+because grids align.
 
 ### `armin_van_buuren_vini_vici_feat_hilight_tribe_grea` — 9A, energy 9, psytrance  (K)
-"Great Spirit" — tribal-psytrance crossover anthem. 136 BPM, 9A key
-(same as massano but a full 13 BPM faster). Outro 403-458.
+"Great Spirit" — the widely-covered tribal-psytrance crossover
+released 2017 on Armada Music. 136 BPM, 9A — same key as massano but
+13 BPM faster. Outro 403-458.
 
 **Transition character:** the 9A-at-136 twin of massano's 9A-at-123.
-Into this track from massano: echo_out bridges the tempo — the 9A key
-continuity keeps it musical despite the 13 BPM jump. Classic "drive
-into peak time" move.
+From massano, echo_out at massano's 447 outro into this track's 136
+grid bridges the tempo — the 9A key continuity keeps it musical.
 
 ---
 
 ## Extreme outliers
 
 ### `bonobo_kerala` — 83 BPM, 6A, energy 8, downtempo  (K)
-Bonobo's "Kerala" — UK broken-beat downtempo. 83 BPM is WAY outside
-dance tempos. Same 6A key as consciousness and doppler.
+Bonobo's "Kerala" (2017, Ninja Tune, album *Migration*). UK broken-
+beat downtempo. 83 BPM is well outside dance-floor tempos. Same 6A
+key as `anyma_chris_avantgarde_consciousness` and
+`charlotte_de_witte_doppler`.
 
-**Transition character:** this is NOT an in-mix transition source —
-it's a SET-level segue. Use it as a cooldown or opener; transitioning
-out of it into 123-136 territory requires hard_cut at silence or a
-very long echo_out bridge. No beatmatched technique survives a 40-53
-BPM gap. Same-key continuity (6A) is the only harmonic thread.
+**Transition character:** NOT an in-mix transition source — it's a
+SET-level segue. Use as cooldown or opener; transitioning into 123-
+136 territory requires hard_cut at silence or a very long echo_out
+bridge. Same-key continuity (6A) is the only harmonic thread across
+a 40-53 BPM gap.
 
 ---
 
 ## Quick reference tables
 
 ### By BPM
-| BPM    | Tracks                                          |
-|--------|-------------------------------------------------|
-| 83     | bonobo_kerala                                   |
-| 117.5  | kinky_sound, daryl_dixon, yotto_aviate          |
-| 123    | massano, raul_music, anyma_sign, anima_moon,    |
-|        | consciousness, kasst, maceo_plex, opus,         |
-|        | camelphat_cola                                  |
-| 136    | charlotte_doppler, astrix, armin_vini_vici      |
+| BPM    | Tracks                                                 |
+|--------|--------------------------------------------------------|
+| 83     | bonobo_kerala                                          |
+| 117.5  | kinky_sound_lemon_haze, daryl_dixon_coming_home,       |
+|        | yotto_aviate                                            |
+| 123    | massano_the_feeling, raul_music_krishna_vasudevaya,    |
+|        | unknown_epic_melodic_techno_2026, anima_ft_sheera_moon,|
+|        | anyma_chris_avantgarde_consciousness,                   |
+|        | kasst_the_first_time, maceo_plex_conjure_balearia,     |
+|        | eric_prydz_opus, camelphat_elderbrook_cola              |
+| 136    | charlotte_de_witte_doppler, astrix_heart,              |
+|        | armin_van_buuren_vini_vici_feat_hilight_tribe_grea     |
 
 ### By Camelot key
-| Key | Tracks                                       | Harmonic family    |
-|-----|----------------------------------------------|--------------------|
-| 3A  | camelphat_cola                                | isolated (6 steps) |
-| 4A  | anyma_sign, yotto_aviate                      | isolated (5 steps) |
-| 6A  | consciousness, charlotte_doppler, bonobo      | inner-wheel center |
-| 8A  | daryl_dixon                                    | adjacent to 9A     |
-| 9A  | massano, raul, kinky, maceo, armin_vini_vici | core cluster       |
-| 9B  | astrix                                         | relative of 9A     |
-| 10B | anima_moon                                     | adjacent to 11B    |
-| 11A | kasst                                          | adjacent to 9A     |
-| 11B | eric_prydz_opus                                | adjacent to 10B    |
+| Key | Tracks                                             | Harmonic family    |
+|-----|----------------------------------------------------|--------------------|
+| 3A  | camelphat_elderbrook_cola                          | isolated (6 steps) |
+| 4A  | unknown_epic_melodic_techno_2026, yotto_aviate     | isolated (5 steps) |
+| 6A  | anyma_chris_avantgarde_consciousness,              | inner-wheel center |
+|     | charlotte_de_witte_doppler, bonobo_kerala          |                    |
+| 8A  | daryl_dixon_coming_home                            | adjacent to 9A     |
+| 9A  | massano_the_feeling, raul_music_krishna_vasudevaya,| core cluster       |
+|     | kinky_sound_lemon_haze, maceo_plex_conjure_balearia,|                   |
+|     | armin_van_buuren_vini_vici_feat_hilight_tribe_grea  |                   |
+| 9B  | astrix_heart                                       | relative of 9A     |
+| 10B | anima_ft_sheera_moon                               | adjacent to 11B    |
+| 11A | kasst_the_first_time                               | adjacent to 9A     |
+| 11B | eric_prydz_opus                                    | adjacent to 10B    |
 
 ### Natural transition durations (at 123 BPM, 32-beat phrase)
 | Beats | Seconds | When to use                                    |
@@ -214,7 +247,7 @@ BPM gap. Same-key continuity (6A) is the only harmonic thread.
 | 8     | ~4      | Quick bass_swap between locked tracks          |
 | 16    | ~8      | Standard peak-time bass_swap / half-phrase      |
 | 32    | ~16     | Full phrase — crossfade, filter_sweep, echo_out |
-| 64    | ~31     | Long atmospheric blend (Opus-style)             |
+| 64    | ~31     | Long atmospheric blend                          |
 
 A phrase at 123 BPM = (60/123)×32 = 15.6s. So "8-second transition"
 = half phrase = perfectly aligned.

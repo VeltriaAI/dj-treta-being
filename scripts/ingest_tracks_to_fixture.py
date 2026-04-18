@@ -189,12 +189,24 @@ def row_to_fixture(row: dict) -> dict | None:
 
     track_id = _slugify(f"{artist}_{song}")
 
+    # canonical_version: respect DB value. Only synthesize "Original Mix" when
+    # DB has nothing AND there is no remixer — a remix is never "Original Mix".
+    # If remixer is present, derive "<Remixer> Remix" from it; otherwise keep null.
+    db_version = row.get("canonical_version")
+    db_remixer = row.get("remixer") or None
+    if db_version:
+        canonical_version = db_version
+    elif db_remixer:
+        canonical_version = f"{db_remixer} Remix"
+    else:
+        canonical_version = "Original Mix"
+
     return {
         "id": track_id,
         "canonical_artist": artist,
         "canonical_song": song,
-        "canonical_version": row.get("canonical_version") or "Original Mix",
-        "remixer": row.get("remixer") or None,
+        "canonical_version": canonical_version,
+        "remixer": db_remixer,
         "bpm": round(float(bpm), 1),
         "key_musical": row.get("key_musical") or "",
         "key_camelot": camelot,
