@@ -170,11 +170,27 @@ def test_ea05_closing_track_resolution():
     assert "yotto" in text or "wondering" in text, (
         f"Expected closing resolution (Yotto - Wondering, energy 4), got: {result['text'][:200]}"
     )
-    # Must NOT pick energy 9 as closer
+    # Must NOT pick Symbiosis as the final recommendation. The LLM often
+    # mentions Symbiosis as a rejected option (listing all 3 candidates
+    # before picking). What matters is what it ACTUALLY picks — not
+    # whether the rejection uses a specific word.
+    # A clean way to check: find the "final recommendation" or last-picked
+    # track in the response.
     if "symbiosis" in text:
-        assert "not" in text or "avoid" in text or "too" in text, (
-            "Should not recommend Enrico Sangiuliano (energy 9) as closing track"
-        )
+        # Try to detect whether the model picked Symbiosis vs listed it.
+        # Use simple heuristic: look for "recommend", "play", "pick",
+        # "choose", "my choice" NEAR symbiosis (within 30 chars) as
+        # evidence of picking. If those are near Yotto/Wondering instead,
+        # the answer is correct.
+        import re
+        pick_words = r"(recommend|play|pick|choose|my choice|final choice|my pick|go with)"
+        # Prefer picking for the correct track
+        yotto_pick = bool(re.search(pick_words + r"[^\n]{0,40}(yotto|wondering)", text, re.IGNORECASE))
+        symbiosis_pick = bool(re.search(pick_words + r"[^\n]{0,40}symbiosis", text, re.IGNORECASE))
+        # Symbiosis may appear as "enrico sangiuliano (energy 9)" with no
+        # pick-word adjacent. Acceptable.
+        if symbiosis_pick and not yotto_pick:
+            assert False, "Should not recommend Enrico Sangiuliano (energy 9) as closing track"
 
 
 @pytest.mark.eval
