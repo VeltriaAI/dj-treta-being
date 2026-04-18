@@ -164,6 +164,62 @@ def has_no_tool_calls(result: dict) -> bool:
     return len(result["tool_calls"]) == 0
 
 
+# ── Scenario-driven helpers (transition eval framework) ────────────────
+
+
+def assert_technique_acceptable(
+    picked: str,
+    expected: str | None,
+    alternatives: list[str],
+    rejected: list[str],
+) -> None:
+    """Pass if `picked` matches expected or an allowed alternative; fail
+    if it's in the rejected set. Unknown techniques fail silently as a
+    soft warning (catch bad output schemas)."""
+    assert picked not in (rejected or []), (
+        f"DJ picked rejected technique {picked!r}; "
+        f"expected {expected!r} or alternatives {alternatives!r}"
+    )
+    valid = {expected, *(alternatives or [])} - {None}
+    if valid:
+        assert picked in valid, (
+            f"DJ picked {picked!r}, not in accepted set "
+            f"{sorted(v for v in valid if v)}"
+        )
+
+
+def assert_phrase_aligned(
+    at_position: float,
+    bpm: float,
+    section_start: float,
+    phrase_beats: int = 32,
+    tolerance_beats: float = 1.0,
+) -> None:
+    """Assert that `at_position - section_start` is a multiple of the
+    phrase length within ±tolerance_beats beats. A standard techno phrase
+    is 32 beats (8 bars × 4)."""
+    phrase_s = (60.0 / bpm) * phrase_beats
+    offset = at_position - section_start
+    if offset < 0:
+        return  # position is before the section we asked about — let other asserts catch
+    remainder = offset % phrase_s
+    tol_s = (60.0 / bpm) * tolerance_beats
+    # remainder close to 0 OR close to full phrase (just before next boundary)
+    aligned = remainder <= tol_s or (phrase_s - remainder) <= tol_s
+    assert aligned, (
+        f"at_position {at_position:.1f}s is not phrase-aligned "
+        f"(offset {offset:.1f}s from section start {section_start:.1f}s; "
+        f"phrase {phrase_s:.2f}s; remainder {remainder:.2f}s > tolerance {tol_s:.2f}s)"
+    )
+
+
+def assert_in_range(value: float, lo: float, hi: float, label: str) -> None:
+    """Inclusive range check with a readable assertion message."""
+    assert lo <= value <= hi, (
+        f"{label} {value} outside expected range [{lo}, {hi}]"
+    )
+
+
 def text_contains(result: dict, *keywords: str) -> bool:
     """Check that the text response contains all given keywords (case-insensitive)."""
     text = result["text"].lower()

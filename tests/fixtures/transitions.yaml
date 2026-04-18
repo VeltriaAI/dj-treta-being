@@ -1,0 +1,180 @@
+# Transition scenario fixtures — all pairs reference REAL tracks from
+# tests/fixtures/tracks.yaml, which are in turn populated from librosa
+# analysis of real audio in djtreta.db. BPM, key, energy, and section
+# timelines are all MEASURED, not fabricated.
+#
+# v1 coverage is narrow because we only have 5 analyzed tracks so far,
+# all melodic-techno at 117-123 BPM. Expanding to 20+ tracks across
+# multiple genres (progressive-house, deep-house, psytrance, dark-techno,
+# ambient) is the next step via scripts/ingest_tracks_to_fixture.py after
+# downloading more seed tracks.
+#
+# Each scenario cites a DJ_KNOWLEDGE.md rule or reasoning. Ground truth
+# uses `allowed_alternatives` generously where borderline.
+#
+# Schema: tests/fixtures/schema.py::Scenario
+
+scenarios:
+
+  # ══════════ POSITIVE: same-BPM same-key high-energy → bass_swap ══════════
+
+  - id: bs01_same_bpm_same_key_high_energy
+    category: positive_bass_swap
+    active_track: massano_the_feeling        # 123 BPM, 9A, energy 9
+    active_position_s: 178                    # real breakdown section starts at 178s
+    idle_track: raul_music_krishna_vasudevaya # 123 BPM, 9A, energy 8
+    context_note: "Both 123 BPM, both Camelot 9A, high energy — bass_swap textbook"
+    expected_technique: bass_swap
+    allowed_alternatives: [crossfade]
+    rejected_techniques: [hard_cut, echo_out]
+    expected_at_position_range: [178, 242]   # within breakdown-to-buildup window
+    expected_duration_range: [15, 60]
+    rationale: |
+      Identical BPM (123/123), identical Camelot (9A/9A), both high-energy
+      (9 and 8). DJ_KNOWLEDGE.md §2.1 bass_swap at phrase boundary is the
+      textbook move. crossfade is acceptable fallback.
+
+  - id: bs02_same_key_reverse
+    category: positive_bass_swap
+    active_track: raul_music_krishna_vasudevaya  # 123 BPM, 9A, energy 8
+    active_position_s: 120                        # real breakdown 120-188s
+    idle_track: massano_the_feeling               # 123 BPM, 9A, energy 9
+    context_note: "Reverse direction: both 123 BPM, both 9A, energy 8→9"
+    expected_technique: bass_swap
+    allowed_alternatives: [crossfade, filter_sweep]
+    rejected_techniques: [hard_cut, echo_out]
+    expected_at_position_range: [120, 188]
+    expected_duration_range: [15, 60]
+    rationale: |
+      Symmetric to bs01. Same-BPM same-key with energy rising (8→9) is a
+      peak-time moment where bass_swap keeps momentum.
+
+  # ══════════ POSITIVE: same-BPM different-key → crossfade ══════════
+
+  - id: cf01_same_bpm_2_camelot_steps
+    category: positive_crossfade
+    active_track: massano_the_feeling         # 123 BPM, 9A, energy 9
+    active_position_s: 242                     # real breakdown 242-320s
+    idle_track: anima_ft_sheera_moon           # 123 BPM, 10B, energy 8
+    context_note: "Both 123 BPM, 9A→10B is 2 Camelot steps (adjacent)"
+    expected_technique: crossfade
+    allowed_alternatives: [bass_swap, filter_sweep]
+    rejected_techniques: [hard_cut, echo_out]
+    expected_at_position_range: [242, 447]
+    expected_duration_range: [15, 60]
+    rationale: |
+      10B is diagonally adjacent to 9A on the Camelot wheel (±2 relative-
+      key step). Same BPM. Crossfade is safe default; bass_swap acceptable
+      at this energy level.
+
+  # ══════════ POSITIVE: big key clash same BPM → hard_cut / echo_out ══════════
+
+  - id: hc01_same_bpm_big_key_clash
+    category: positive_hard_cut
+    active_track: anyma_the_sign              # 123 BPM, 4A, energy 7 (outro: 272-307)
+    active_position_s: 272                     # real outro start
+    idle_track: massano_the_feeling            # 123 BPM, 9A, energy 9
+    context_note: "Same 123 BPM but 4A vs 9A = 5 Camelot steps (big harmonic clash)"
+    expected_technique: hard_cut
+    allowed_alternatives: [echo_out, filter_sweep]
+    rejected_techniques: [bass_swap, crossfade]
+    expected_at_position_range: [272, 307]
+    expected_duration_range: [0, 30]
+    rationale: |
+      4A and 9A are 5 Camelot steps apart — that's a major 3rd harmonic
+      clash. A long crossfade would expose the clash; bass_swap still
+      mixes the two key centers. Hard_cut avoids the collision entirely.
+      Echo_out and filter_sweep work as graceful-but-bridging alternatives.
+
+  # ══════════ POSITIVE: moderate BPM gap same key → echo_out ══════════
+
+  - id: eo01_bpm_gap_5_same_key
+    category: positive_echo_out
+    active_track: kinky_sound_lemon_haze      # 117.5 BPM, 9A, energy 9 (outro: 371-420)
+    active_position_s: 371                     # real outro start
+    idle_track: massano_the_feeling            # 123 BPM, 9A, energy 9
+    context_note: "117.5 → 123 = 5.5 BPM gap; both 9A same key"
+    expected_technique: echo_out
+    allowed_alternatives: [filter_sweep, hard_cut]
+    rejected_techniques: [bass_swap]
+    expected_at_position_range: [371, 420]
+    expected_duration_range: [15, 45]
+    rationale: |
+      BPM gap of 5.5 is in the echo_out sweet spot (DJ_KNOWLEDGE §2 —
+      echo tail bridges tempo change). Same Camelot key (9A) means
+      filter_sweep works too. Crossfade rejected — 5.5 BPM is audibly
+      off-tempo over a long blend. bass_swap rejected — bass clash
+      risk with tempo difference.
+
+  # ══════════ TIMING: wait scenarios ══════════
+
+  - id: t_wait_during_buildup
+    category: timing_reject_buildup
+    active_track: raul_music_krishna_vasudevaya   # buildup section 188-212s
+    active_position_s: 195
+    idle_track: massano_the_feeling
+    context_note: "Active in BUILDUP — let it resolve to the drop"
+    expect_wait: true
+    rejected_techniques: [crossfade, bass_swap, filter_sweep, echo_out, hard_cut]
+    rationale: |
+      Buildups exist to deliver the drop (§5). Transitioning mid-buildup
+      denies the tension-release. Wait.
+
+  - id: t_wait_too_early
+    category: timing_reject_early
+    active_track: massano_the_feeling
+    active_position_s: 30                     # 6% into a 507s track
+    idle_track: raul_music_krishna_vasudevaya
+    context_note: "Active barely 6% played — way too early"
+    expect_wait: true
+    rejected_techniques: [crossfade, bass_swap, filter_sweep, echo_out, hard_cut]
+    rationale: |
+      Minimum play time ~90s. At 30/507s the track has barely set its
+      groove. Wait for the breakdown or outro.
+
+  - id: t_schedule_at_outro
+    category: timing_schedule_outro
+    active_track: massano_the_feeling         # outro: 447-507s
+    active_position_s: 447
+    idle_track: raul_music_krishna_vasudevaya # 123 BPM, 9A, energy 8
+    context_note: "Active in OUTRO — must transition before silence"
+    expected_technique: crossfade
+    allowed_alternatives: [bass_swap, filter_sweep]
+    rejected_techniques: [hard_cut]
+    expected_at_position_range: [447, 500]
+    expected_duration_range: [15, 60]
+    rationale: |
+      Outro is designed exit point. Same BPM + same key means any smooth
+      technique works; crossfade is the simplest. hard_cut rejected
+      because there's no reason to cut hard when tracks match.
+
+  # ══════════ EDGE: directive + pending ══════════
+
+  - id: e_directive_forces_echo_out
+    category: edge_directive_override
+    active_track: massano_the_feeling
+    active_position_s: 178                    # breakdown
+    idle_track: raul_music_krishna_vasudevaya
+    directive: "use echo_out — we're stepping back for a breath"
+    context_note: "Tracks match perfectly (bass_swap would fit), but directive says echo_out"
+    expected_technique: echo_out
+    allowed_alternatives: []
+    rejected_techniques: [bass_swap, crossfade, filter_sweep, hard_cut]
+    expected_at_position_range: [178, 242]
+    expected_duration_range: [15, 45]
+    rationale: |
+      DIRECTIVE FROM TRETA always overrides inherent-fit. Even when BPM
+      and key scream bass_swap, the directive wins.
+
+  - id: e_pending_transition_no_double_schedule
+    category: edge_pending
+    active_track: massano_the_feeling
+    active_position_s: 242
+    idle_track: raul_music_krishna_vasudevaya
+    pending: true
+    context_note: "Transition already pending — must not schedule another"
+    expect_wait: true
+    rejected_techniques: [crossfade, bass_swap, filter_sweep, echo_out, hard_cut]
+    rationale: |
+      Double-scheduling creates races. When pending, DJ says 'pending'
+      and does nothing else.
