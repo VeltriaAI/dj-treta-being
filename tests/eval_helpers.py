@@ -75,6 +75,36 @@ def eval_agent(
     }
 
 
+def eval_agent_nonempty(
+    system_prompt: str,
+    user_message: str,
+    tools: list,
+    trials: int = 5,
+    model: str = DEFAULT_MODEL,
+) -> dict:
+    """Wrapper around eval_agent that retries when Gemini Flash returns an
+    empty response (silent drop).
+
+    Flash has a measurable ~60% empty-response rate on certain niche
+    prompts (6-step Camelot clash, atmospheric progressive house, dramatic
+    genre switch). When it does respond, the answer is usually correct.
+    This wrapper returns the first non-empty result within `trials`
+    attempts. If all trials drop, returns the last result so the test's
+    downstream asserts can produce an informative failure.
+
+    Prob of green with 5 trials + 60% empty rate: 1 - 0.6^5 = 92.2%.
+    """
+    last = None
+    for _ in range(max(1, trials)):
+        result = eval_agent(system_prompt, user_message, tools, model)
+        last = result
+        has_text = bool((result.get("text") or "").strip())
+        has_calls = bool(result.get("tool_calls"))
+        if has_text or has_calls:
+            return result
+    return last
+
+
 def eval_agent_retry(
     system_prompt: str,
     user_message: str,
