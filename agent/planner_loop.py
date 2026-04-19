@@ -252,20 +252,28 @@ class PlannerMixin:
                 self._ws_broadcast("log", {
                     "text": f"Planner: {len(validated['tracks'])} candidates planned"
                 })
-            # v8 bridge: empty tracks + non-empty library means planner
-            # rejected everything (e.g. all played). Empty tracks + empty
-            # library means download signal. Forward to library peer.
-            if not validated["tracks"] and not library:
+            # v8 bridge: emit library_need whenever the usable playlist is
+            # empty, regardless of library size. BUG-10 fix: previously the
+            # guard only fired on `not library` (empty library). With BUG-6
+            # filter active, the library can be full but post-filter be
+            # empty because every track has been played — that's the
+            # played-exhaustion case which still needs more tracks, just
+            # for a different reason. Treat both as library_need.
+            if not validated["tracks"]:
                 mood_slug = validated.get("mood_snapshot") or (
                     getattr(self.session, "mood_profile", {}) or {}
                 ).get("canonical_slug") or self.mood or "melodic-techno"
+                reason = (
+                    "library empty" if not library
+                    else f"all {len(library)} library tracks already played this set"
+                )
                 if not getattr(self.session, "library_need", None):
                     self.session.library_need = {
                         "mood": mood_slug,
                         "count": 5,
-                        "reason": validated.get("reasoning_summary", "library empty"),
+                        "reason": reason,
                     }
-                    log.info(f"Planner emitted library_need signal for {mood_slug}")
+                    log.info(f"Planner emitted library_need signal for {mood_slug}: {reason}")
         except (ValueError, PlaylistValidationError) as exc:
             msg = f"{type(exc).__name__}: {exc}"
             log.warning(f"Planner output invalid — keeping last good playlist. {msg}")
