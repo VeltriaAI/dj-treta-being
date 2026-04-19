@@ -222,12 +222,14 @@ class PlannerMixin:
                 for t in self.tracks_played
             }
             played_paths.discard("")
-            # Legacy fallback: old tracks_played entries have only
-            # title. Match on canonical_song substring within both
-            # the played title and the playlist candidate title.
+            # BUG-13 fix: title-fuzzy against ALL played entries, not
+            # only path-less ones. When Flash returns a malformed path
+            # (BUG-12) the planner candidate and the played entry might
+            # both have paths, but the paths don't match exactly while
+            # titles refer to the same song. Title-fuzzy is the safety
+            # net for that class of Flash-hallucination.
             played_titles_lower = {
                 (t.get("title") or "").lower() for t in self.tracks_played
-                if not (t.get("path") or t.get("file_path"))
             }
             played_titles_lower.discard("")
 
@@ -318,16 +320,25 @@ class PlannerMixin:
             for t in tracks_played
         }
         played_paths.discard("")
+        # BUG-13 fix: title-fuzzy check must run against ALL played
+        # entries, not only path-less ones. Flash can return a candidate
+        # with a MALFORMED path (BUG-12 territory) that doesn't match
+        # any library path — but the title still refers to an already-
+        # played track. Previously this check was gated on `if not path`
+        # which meant path-bearing played entries didn't contribute to
+        # the fallback fuzzy match, so ARTBAT Remember (Original Mix)
+        # in a new playlist wouldn't be flagged as re-playing
+        # ARTBAT Remember (Official Video) already in history.
         played_titles_lower = {
             (t.get("title") or "").lower() for t in tracks_played
-            if not (t.get("path") or t.get("file_path"))
         }
         played_titles_lower.discard("")
 
         for track in playlist["tracks"]:
             if track.get("path") in played_paths:
                 return True
-            # Title-fuzzy fallback for legacy tracks_played entries.
+            # Title-fuzzy match (handles Flash path-hallucinations + title
+            # variants like "Original Mix" vs "Official Video").
             ct = (track.get("title") or "").lower()
             cwords = set(ct.replace("(", " ").replace(")", " ").split())
             for played in played_titles_lower:
