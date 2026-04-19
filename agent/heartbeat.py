@@ -280,15 +280,31 @@ class HeartbeatMixin:
                     if self.dj_directive:
                         log.info(f"DJ directive consumed: {self.dj_directive[:80]}")
                         self.dj_directive = ""
-                    # Phase A2: clear signals DJ saw, unless it explicitly said
-                    # "waiting" (then the signal stays for watchdog to catch).
-                    said_waiting = "waiting" in (result or "").lower()[:40]
-                    if consumed_idle_needs_load and not said_waiting:
-                        self.session.idle_needs_load = False
-                    if consumed_user_skip and not said_waiting:
-                        self.session.user_skip = None
-                    if consumed_set_ending and not said_waiting:
-                        self.session.set_ending = False
+                    # Phase A2: clear signals DJ actually acted on. Clear only
+                    # when DJ produced a tool call OR explicitly said "waiting".
+                    # Empty/errored responses (Flash ~60% drop rate on niche
+                    # prompts) must NOT clear the signal — otherwise a skip can
+                    # silently disappear with no side effect (BUG-3 observed
+                    # 2026-04-19 dry run: `djtreta skip` returned "Later." but
+                    # user_skip cleared within 3s with no DJ log entry).
+                    text = (result or "").strip()
+                    said_waiting = "waiting" in text.lower()[:40]
+                    # Heuristic: a real DJ action produces `[CALL:` in the log
+                    # text (ADK formats tool calls that way), or text > 0 chars.
+                    # An empty result == Flash drop == do not clear.
+                    dj_responded = bool(text) or said_waiting
+                    if dj_responded:
+                        if consumed_idle_needs_load and not said_waiting:
+                            self.session.idle_needs_load = False
+                        if consumed_user_skip and not said_waiting:
+                            self.session.user_skip = None
+                        if consumed_set_ending and not said_waiting:
+                            self.session.set_ending = False
+                    else:
+                        log.warning(
+                            "DJ empty response — preserving signals for "
+                            "next tick / watchdog retry"
+                        )
                     self._record_playing_tracks()
                     self._check_set_duration()
                 except Exception as e:
