@@ -69,9 +69,16 @@ class PlannerMixin:
                     self._tracks_since_plan = 0
                     try:
                         self._run_planner(status, current_track)
-                        # Phase A2: planner no longer loads after replan —
-                        # it signals and lets the DJ agent decide rank.
-                        self.session.idle_needs_load = True
+                        # BUG-7 fix (Phase A2 dry run #2 2026-04-19):
+                        # Only signal idle_needs_load if idle is genuinely
+                        # empty or has a track that's not in the new
+                        # playlist. Previously we re-signalled after EVERY
+                        # replan, causing DJ to oscillate load_track between
+                        # rank-1 and rank-2 on each planner tick (observed
+                        # 11 loads in 5 min, 0 transitions).
+                        fresh_status = _get_status(self.config.mixxx.url)
+                        if fresh_status and self._idle_needs_fresh_load(fresh_status):
+                            self.session.idle_needs_load = True
                     finally:
                         self._planner_busy = False
 
@@ -228,6 +235,39 @@ class PlannerMixin:
             msg = f"{type(exc).__name__}: {exc}"
             log.warning(f"Planner output invalid — keeping last good playlist. {msg}")
             self.session.last_planner_error = msg
+
+    def _idle_needs_fresh_load(self, status) -> bool:
+        """True if idle deck should get a new track loaded.
+
+        BUG-7 fix: only signal idle_needs_load when idle is genuinely empty
+        OR loaded with a track that is NOT in the new playlist's top-5.
+        Otherwise DJ spams load_track on every planner tick even though
+        idle already has a valid candidate cued.
+        """
+        from .main import _active_idle_decks
+        _, idle_deck = _active_idle_decks(status)
+        d_idle = status.get(f"deck{idle_deck}", {})
+        if not d_idle.get("track_loaded"):
+            return True  # empty — definitely needs load
+        # Idle has a track loaded. Check if it's in the current playlist's
+        # top 5 — if yes, keep it; if no, it's stale, request a load.
+        playlist = getattr(self.session, "playlist", None)
+        if not playlist or not playlist.get("tracks"):
+            return False  # no playlist → nothing to compare; let DJ decide
+        # Get the idle deck's loaded path from Mixxx
+        try:
+            import httpx
+            tinfo = httpx.get(
+                f"{self.config.mixxx.url}/api/deck/{idle_deck}/track_info",
+                timeout=2,
+            ).json()
+            idle_path = tinfo.get("file_path", "")
+        except Exception:
+            return False  # can't tell; don't spam signal
+        if not idle_path:
+            return True
+        top_paths = {t.get("path", "") for t in playlist["tracks"][:5]}
+        return idle_path not in top_paths
 
     def _load_next_on_idle(self, status):
         """Apply the planner's playlist to the idle deck.
