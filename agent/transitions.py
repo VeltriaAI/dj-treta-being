@@ -84,5 +84,12 @@ class TransitionMixin:
             log.error(f"Scheduled transition error: {e}")
         finally:
             self._transition_pending = False
+            # BUG-5 fix (Phase A2 dry run 2026-04-19): emit idle_needs_load
+            # immediately after the transition. The executor is the
+            # authoritative moment of the deck-state change — waiting for
+            # planner_loop's 15s polling tick introduced an observed
+            # ~90s idle-empty window. This removes the race entirely.
+            if hasattr(self, "session"):
+                self.session.idle_needs_load = True
             Path("/tmp/dj-treta-scheduled-transition.json").unlink(missing_ok=True)
             Path("/tmp/dj-treta-transition-pending.lock").unlink(missing_ok=True)
