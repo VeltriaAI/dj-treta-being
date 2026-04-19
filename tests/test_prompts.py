@@ -149,11 +149,29 @@ class TestBuildDjUserMessageSignals:
         msg = build_dj_user_message(**self._base_kwargs())
         assert "Signals:" not in msg
 
-    def test_idle_needs_load_rendered(self):
-        msg = build_dj_user_message(**self._base_kwargs(), idle_needs_load=True)
+    def test_idle_needs_load_rendered_with_playlist(self):
+        """When playlist has tracks, signal tells DJ to call load_track."""
+        playlist = {"tracks": [
+            {"rank": 1, "path": "/m/a.mp3", "title": "A", "bpm": 123,
+             "key_camelot": "9A", "energy": 7, "reason": "ok"},
+        ]}
+        msg = build_dj_user_message(
+            **self._base_kwargs(), idle_needs_load=True, playlist=playlist,
+        )
         assert "Signals:" in msg
         assert "idle_needs_load=True" in msg
         assert "load_track(deck=2" in msg
+
+    def test_idle_needs_load_empty_playlist_tells_dj_to_wait(self):
+        """Phase A2.1 guardrail: when playlist is empty, the signal block
+        tells DJ to say 'waiting' instead of hallucinating a path."""
+        msg = build_dj_user_message(**self._base_kwargs(), idle_needs_load=True)
+        assert "Signals:" in msg
+        assert "idle_needs_load=True" in msg
+        assert "playlist is empty" in msg.lower()
+        assert "do NOT invent" in msg or "do not invent" in msg.lower()
+        # Must NOT instruct load_track when nothing to load.
+        assert "load_track(deck=" not in msg
 
     def test_user_skip_rendered(self):
         msg = build_dj_user_message(
