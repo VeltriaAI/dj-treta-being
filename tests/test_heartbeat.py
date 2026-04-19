@@ -152,6 +152,62 @@ class TestAutoTransition:
             assert being._transition_pending is False
 
 
+class TestSignalDrivenP4:
+    """Phase A2 — P4 guard also fires DJ on signal-set (not only past-50%).
+
+    Regression for 2026-04-19 skip bug: skip used to bypass DJ entirely;
+    now it routes through the signal mechanism and P4 picks it up.
+    """
+
+    def test_p4_fires_dj_on_idle_needs_load(self, being, mock_mixxx):
+        """idle_needs_load=True mid-track → P4 invokes DJ even though
+        active is nowhere near 50%."""
+        mock_mixxx["status"]["deck1"]["position_seconds"] = 20.0
+        mock_mixxx["status"]["deck1"]["duration"] = 300.0
+        mock_mixxx["status"]["deck1"]["remaining_seconds"] = 280.0
+        mock_mixxx["status"]["deck1"]["playing"] = True
+        mock_mixxx["status"]["deck2"]["track_loaded"] = True
+        mock_mixxx["status"]["deck2"]["remaining_seconds"] = 200.0
+
+        being._agent_busy = False
+        being._transition_pending = False
+        being.session.idle_needs_load = True
+
+        with patch.object(being, "_invoke_agent", return_value="load_track called"):
+            with patch("agent.heartbeat.threading.Thread") as mock_thread:
+                def _run_target(*args, **kwargs):
+                    mt = MagicMock()
+                    mt.start = lambda: kwargs.get("target") and kwargs["target"]()
+                    return mt
+                mock_thread.side_effect = _run_target
+                being._heartbeat()
+                # P4 triggered → agent became busy at some point
+                # (either still busy or cleaned up after success).
+                assert mock_thread.called
+
+    def test_p4_fires_dj_on_user_skip_even_if_not_halfway(self, being, mock_mixxx):
+        """user_skip set mid-track → P4 invokes DJ."""
+        import time as _t
+        mock_mixxx["status"]["deck1"]["position_seconds"] = 30.0
+        mock_mixxx["status"]["deck1"]["duration"] = 300.0
+        mock_mixxx["status"]["deck1"]["remaining_seconds"] = 270.0
+        mock_mixxx["status"]["deck1"]["playing"] = True
+        mock_mixxx["status"]["deck2"]["track_loaded"] = True
+        mock_mixxx["status"]["deck2"]["remaining_seconds"] = 200.0
+
+        being._agent_busy = False
+        being._transition_pending = False
+        being.session.user_skip = {
+            "style": "fast", "ts": _t.time(), "directive": None,
+        }
+
+        with patch.object(being, "_invoke_agent", return_value="scheduled"):
+            with patch("agent.heartbeat.threading.Thread") as mock_thread:
+                mock_thread.return_value = MagicMock()
+                being._heartbeat()
+                assert mock_thread.called
+
+
 # ── Priority 3: Scheduled Transition ────────────────────────────────
 
 class TestScheduledTransition:

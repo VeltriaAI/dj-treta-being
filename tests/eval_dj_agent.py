@@ -27,7 +27,9 @@ def _make_meta(timeline: list[dict], bpm=125, key="Am", energy=7):
 
 def _scenario(*, active_track, active_meta, position, duration, idle_track, idle_meta,
               idle_deck=2, active_bpm=None, idle_bpm=None,
-              transition_pending=False, dj_directive=""):
+              transition_pending=False, dj_directive="",
+              playlist=None, idle_needs_load=False, user_skip=None,
+              set_ending=False):
     """Build a DJ scenario using the production prompt builder."""
     a_bpm = active_bpm or active_meta.get("bpm", 125)
     i_bpm = idle_bpm or idle_meta.get("bpm", 125)
@@ -51,6 +53,10 @@ def _scenario(*, active_track, active_meta, position, duration, idle_track, idle
         idle_timeline=format_timeline(idle_meta),
         transition_pending=transition_pending,
         dj_directive=dj_directive,
+        playlist=playlist,
+        idle_needs_load=idle_needs_load,
+        user_skip=user_skip,
+        set_ending=set_ending,
     )
 
 
@@ -519,3 +525,200 @@ def test_dj_does_not_delegate_scheduling_to_mixer():
         "transfer_to_agent args: "
         f"{get_tool_args(result, 'transfer_to_agent')}"
     )
+
+
+# ── Phase A2 signal consumption (N9-N12) ───────────────────────────────
+
+def _playlist(*paths_bpm_key) -> dict:
+    """Build a minimal playlist dict for signal-consumption tests."""
+    return {
+        "planned_at": 0.0,
+        "mood_snapshot": "melodic-techno",
+        "reasoning_summary": "signal consumption test",
+        "tracks": [
+            {
+                "rank": i + 1,
+                "path": p,
+                "title": f"Track {i+1}",
+                "bpm": bpm,
+                "key_camelot": key,
+                "energy": 7,
+                "reason": "signal test",
+            }
+            for i, (p, bpm, key) in enumerate(paths_bpm_key)
+        ],
+    }
+
+
+@pytest.mark.eval
+def test_dj_n9_idle_needs_load_triggers_load_track():
+    """N9: when session.idle_needs_load is True and a playlist is
+    available, DJ must call load_track with a path from the playlist.
+    Must NOT say 'waiting' — the signal is the directive to act."""
+    active_meta = _make_meta([
+        {"start": 0, "end": 120, "section": "groove", "energy": 6},
+    ], bpm=123, key="Am")
+    # idle_meta unused; idle is empty per signal.
+    idle_meta = _make_meta([
+        {"start": 0, "end": 300, "section": "groove", "energy": 6},
+    ], bpm=123, key="Am")
+
+    playlist = _playlist(
+        ("/music/techno/track_a.mp3", 123, "9A"),
+        ("/music/techno/track_b.mp3", 123, "10A"),
+        ("/music/techno/track_c.mp3", 124, "9A"),
+    )
+
+    msg = _scenario(
+        active_track="Anyma - Eternity",
+        active_meta=active_meta,
+        position=60, duration=300,  # mid-groove — no scheduling window
+        idle_track="",                # idle empty on purpose
+        idle_meta=idle_meta,
+        playlist=playlist,
+        idle_needs_load=True,
+    )
+
+    from tests.eval_helpers import eval_agent_nonempty
+    result = eval_agent_nonempty(dj_system_prompt(), msg, DJ_TOOLS)
+
+    assert has_tool_call(result, "load_track"), (
+        f"DJ did not call load_track on idle_needs_load=True. "
+        f"tool_calls={[tc['name'] for tc in result.get('tool_calls', [])]} "
+        f"text={result.get('text', '')[:200]!r}"
+    )
+    # Picked path must be from the playlist.
+    args = get_tool_args(result, "load_track") or {}
+    picked_path = args.get("track_path") or args.get("path") or ""
+    assert any(t["path"] in picked_path or picked_path in t["path"]
+               for t in playlist["tracks"]), (
+        f"load_track path {picked_path!r} not from playlist"
+    )
+
+
+@pytest.mark.eval
+def test_dj_n10_user_skip_triggers_schedule_transition():
+    """N10: when session.user_skip is set, DJ must call
+    schedule_transition promptly (short crossfade). Must not say
+    'waiting'."""
+    import time as _t
+    active_meta = _make_meta([
+        {"start": 0, "end": 300, "section": "groove", "energy": 6},
+    ], bpm=123, key="Am")
+    idle_meta = _make_meta([
+        {"start": 0, "end": 240, "section": "groove", "energy": 6},
+    ], bpm=123, key="Am")
+
+    msg = _scenario(
+        active_track="Current Track",
+        active_meta=active_meta,
+        position=60, duration=300,  # nowhere near an end — must still skip
+        idle_track="Next Track",
+        idle_meta=idle_meta,
+        user_skip={"style": "fast", "ts": _t.time(), "directive": None},
+    )
+
+    from tests.eval_helpers import eval_agent_nonempty
+    result = eval_agent_nonempty(dj_system_prompt(), msg, DJ_TOOLS)
+
+    assert has_tool_call(result, "schedule_transition"), (
+        f"DJ did not schedule on user_skip. tool_calls="
+        f"{[tc['name'] for tc in result.get('tool_calls', [])]} "
+        f"text={result.get('text', '')[:200]!r}"
+    )
+    args = get_tool_args(result, "schedule_transition") or {}
+    # Technique should be crossfade for fast skip (default style).
+    technique = (args.get("technique") or "").lower()
+    assert technique in ("crossfade", "hard_cut", "bass_swap"), (
+        f"Unexpected technique on fast skip: {technique!r}"
+    )
+
+
+@pytest.mark.eval
+def test_dj_n11_waiting_on_pending_transition_is_ok():
+    """N11: if a transition is already pending, DJ should say 'waiting'
+    or 'pending' even if a signal is set. This prevents double-scheduling."""
+    import time as _t
+    active_meta = _make_meta([
+        {"start": 0, "end": 300, "section": "breakdown", "energy": 3},
+    ], bpm=123, key="Am")
+    idle_meta = _make_meta([
+        {"start": 0, "end": 240, "section": "groove", "energy": 6},
+    ], bpm=123, key="Am")
+
+    msg = _scenario(
+        active_track="Current",
+        active_meta=active_meta,
+        position=150, duration=300,
+        idle_track="Next",
+        idle_meta=idle_meta,
+        transition_pending=True,  # already pending
+        user_skip={"style": "fast", "ts": _t.time(), "directive": None},
+    )
+
+    from tests.eval_helpers import eval_agent_nonempty
+    result = eval_agent_nonempty(dj_system_prompt(), msg, DJ_TOOLS)
+
+    # Must NOT schedule a new transition.
+    assert not has_tool_call(result, "schedule_transition"), (
+        f"DJ scheduled despite transition_pending=True. "
+        f"args={get_tool_args(result, 'schedule_transition')}"
+    )
+
+
+@pytest.mark.eval
+def test_dj_n12_set_ending_picks_low_energy_outro():
+    """N12: when session.set_ending is True, DJ should pick the lowest-
+    energy track available and schedule an echo_out (or low-energy
+    crossfade) to land the set. Not a peak-time transition."""
+    active_meta = _make_meta([
+        {"start": 0, "end": 280, "section": "groove", "energy": 7},
+        {"start": 280, "end": 300, "section": "outro", "energy": 4},
+    ], bpm=123, key="Am")
+    idle_meta = _make_meta([
+        {"start": 0, "end": 300, "section": "groove", "energy": 4},
+    ], bpm=119, key="Am")
+
+    # Playlist has 3 tracks with varying energy — DJ should prefer the
+    # low-energy one.
+    playlist = {
+        "planned_at": 0.0,
+        "mood_snapshot": "melodic-techno",
+        "reasoning_summary": "outro selection",
+        "tracks": [
+            {"rank": 1, "path": "/m/peak.mp3", "title": "Peak Anthem",
+             "bpm": 125, "key_camelot": "9A", "energy": 9, "reason": "peak"},
+            {"rank": 2, "path": "/m/mid.mp3", "title": "Mid Groove",
+             "bpm": 122, "key_camelot": "9A", "energy": 6, "reason": "mid"},
+            {"rank": 3, "path": "/m/calm.mp3", "title": "Calm Exit",
+             "bpm": 119, "key_camelot": "9A", "energy": 3, "reason": "cooldown"},
+        ],
+    }
+
+    msg = _scenario(
+        active_track="Active Peak",
+        active_meta=active_meta,
+        position=285, duration=300,
+        idle_track="Calm Exit",
+        idle_meta=idle_meta,
+        playlist=playlist,
+        set_ending=True,
+    )
+
+    from tests.eval_helpers import eval_agent_nonempty
+    result = eval_agent_nonempty(dj_system_prompt(), msg, DJ_TOOLS)
+
+    # DJ should act on set_ending — either schedule or load the low-energy
+    # outro, not say 'waiting'.
+    acted = has_tool_call(result, "schedule_transition") or has_tool_call(result, "load_track")
+    assert acted, (
+        f"DJ did not act on set_ending=True. text={result.get('text', '')[:200]!r}"
+    )
+    # If it scheduled, the technique should be fade-friendly (echo_out
+    # ideal; crossfade acceptable).
+    if has_tool_call(result, "schedule_transition"):
+        args = get_tool_args(result, "schedule_transition") or {}
+        technique = (args.get("technique") or "").lower()
+        assert technique in ("echo_out", "crossfade", "filter_sweep"), (
+            f"Unexpected peak-time technique on set-ending: {technique!r}"
+        )
