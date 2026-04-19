@@ -441,6 +441,13 @@ class PlannerMixin:
         deck_paths = get_deck_paths(self.config.mixxx.url)
         exclude_paths = {p for p in deck_paths.values() if p}
         played_titles = [t.get("title", "") for t in self.tracks_played]
+        # BUG-17 fix (Phase A2 dry run #2 2026-04-19): path-based played set
+        # for the fallback SQL pool. Runtime titles from Mixxx track_info
+        # (e.g. "Massano - Telepathic") can differ from DB titles
+        # (e.g. "Massano - Telepathic (Original Mix)"), so title-only dedup
+        # lets a played track re-load when the planner's playlist is empty.
+        played_paths = {t.get("path", "") for t in self.tracks_played}
+        played_paths.discard("")
 
         # Primary path: trust the planner's session.playlist.
         playlist = getattr(self.session, "playlist", None)
@@ -460,6 +467,7 @@ class PlannerMixin:
                 db.close()
             available = [r for r in rows
                          if r.get("path") not in exclude_paths
+                         and r.get("path") not in played_paths
                          and r.get("title") not in played_titles]
             if not available:
                 log.warning("No tracks available to load on idle deck")
