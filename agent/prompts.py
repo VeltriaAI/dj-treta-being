@@ -67,7 +67,8 @@ def build_dj_user_message(
         vibe = ", ".join(mood_profile.get("vibe_keywords", [])[:4])
         profile_line = f"Mood profile: {slug} | vibe: {vibe}\n"
 
-    # Compact playlist render — top 5 ranks, one-liner each.
+    # Compact playlist render — top 5 ranks, one-liner each.  Path is
+    # included explicitly so DJ can pass it verbatim to load_track.
     playlist_block = ""
     if playlist and playlist.get("tracks"):
         lines = ["Planner's ranked suggestions (advisory; you have final say):"]
@@ -78,9 +79,12 @@ def build_dj_user_message(
             key = t.get("key_camelot") or ""
             energy = t.get("energy") or ""
             reason = (t.get("reason") or "")[:80]
+            path = t.get("path") or ""
             lines.append(
                 f"  #{rank}: {title} | BPM {bpm} {key} e{energy} — {reason}"
             )
+            if path:
+                lines.append(f"       path: {path}")
         playlist_block = "\n".join(lines) + "\n\n"
 
     # Phase A2: signals DJ consumes to drive load/skip/outro decisions.

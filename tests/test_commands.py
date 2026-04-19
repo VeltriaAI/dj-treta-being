@@ -58,8 +58,9 @@ class TestSkipCommand:
         immediately. No direct do_transition call; the DJ agent consumes
         the signal on the next heartbeat P4 tick. Watchdog P2 is the
         fallback if DJ hangs >5s."""
-        # Pre-conditions — no signal set.
-        assert being.session.user_skip is None
+        # Session singleton can carry state across tests in the same run —
+        # reset the signal so the pre-condition holds.
+        being.session.user_skip = None
 
         being._agent_skip()
 
