@@ -55,16 +55,38 @@ class HeartbeatMixin:
         idle_ready = idle_loaded and idle_remaining > 60
         duration = float(d_active.get("duration", 0) or 0)
 
-        # === PRIORITY 2: Auto-transition when track about to end ===
-        # If track ending soon, idle deck ready → just do it
-        # Skip if transition already in progress (prevents double auto-transition #66)
-        if (idle_ready and remaining < 30 and remaining > 0 and playing
-                and not self._agent_busy and not self._transition_pending):
-            log.info(f"Auto-transition: {remaining:.0f}s left, crossfading to deck {idle_deck}")
+        # === PRIORITY 2: Auto-transition / watchdog safety net ===
+        # Fires when:
+        #   - Existing: track ending soon + idle ready + not busy + not pending
+        #   - Phase A2: user_skip signal has sat unresolved >5s
+        #   - Phase A2: idle_needs_load signal stuck >60s AND silence imminent
+        # Python forces a 15s crossfade (or rank-1 load) only when the DJ
+        # agent clearly hasn't responded to the signal in time.
+        user_skip = getattr(self.session, "user_skip", None)
+        user_skip_stuck = bool(user_skip) and (time.time() - user_skip.get("ts", 0)) > 5
+        idle_needs_load = getattr(self.session, "idle_needs_load", False)
+        idle_signal_stuck = (
+            idle_needs_load
+            and remaining < 45
+            and (time.time() - self._idle_needs_load_set_at) > 60
+        )
+
+        fire_p2 = (
+            (idle_ready and remaining < 30 and remaining > 0 and playing
+             and not self._agent_busy and not self._transition_pending)
+            or (user_skip_stuck and idle_ready and playing
+                and not self._transition_pending)
+        )
+        if fire_p2:
+            reason = "track ending"
+            if user_skip_stuck:
+                reason = "user_skip stuck >5s — watchdog"
+            log.info(f"Auto-transition ({reason}): {remaining:.0f}s left, crossfading to deck {idle_deck}")
             if hasattr(self, '_ws_broadcast'):
-                self._ws_broadcast("log", {"text": f"Auto-transition: {remaining:.0f}s left, crossfading to deck {idle_deck}"})
+                self._ws_broadcast("log", {"text": f"Auto-transition ({reason}): {remaining:.0f}s left, crossfading to deck {idle_deck}"})
             from .tools import do_transition
             self._transition_pending = True
+            was_user_skip = bool(user_skip_stuck)
             def _auto():
                 try:
                     result = do_transition(idle_deck, 15)
@@ -75,6 +97,11 @@ class HeartbeatMixin:
                             "event": "transition", "technique": "auto_crossfade", "to_deck": idle_deck,
                         })
                     self._record_playing_tracks()
+                    # Phase A2: post-watchdog skip — clear the signal we just consumed
+                    # and flag idle for a fresh load on the next DJ tick.
+                    if was_user_skip:
+                        self.session.user_skip = None
+                    self.session.idle_needs_load = True
                 except Exception as e:
                     log.error(f"Auto-transition error: {e}")
                 finally:
@@ -82,6 +109,20 @@ class HeartbeatMixin:
             threading.Thread(target=_auto, daemon=True).start()
             self._next_sleep = 5
             return
+
+        # Phase A2: stuck-signal watchdog — force a Python rank-1 load when
+        # DJ has sat on idle_needs_load for 60+ seconds AND silence is
+        # imminent (<45s remaining on active).
+        if idle_signal_stuck and not self._agent_busy and not self._transition_pending:
+            log.warning(
+                f"[WATCHDOG] idle_needs_load stuck >60s with {remaining:.0f}s "
+                "remaining — forcing rank-1 load via _load_next_on_idle"
+            )
+            try:
+                self._load_next_on_idle(status)
+                self.session.idle_needs_load = False
+            except Exception as e:
+                log.error(f"Watchdog load failed: {e}")
 
         # === PRIORITY 3: Execute scheduled transition (Python handles timing) ===
         if not self._transition_pending:
@@ -100,14 +141,23 @@ class HeartbeatMixin:
                     sched_file.unlink(missing_ok=True)
 
         # === PRIORITY 4: Agent decides transition (Software 3.0) ===
-        # Only ask after 50% played (saves tokens) and when idle deck ready.
-        # Don't ask if transition is already pending OR already scheduled —
-        # v8 Phase 4 adds the sched_file check to kill wasteful repeat
-        # invocations (old P4 fired every 15s even when a transition was
-        # already locked, producing 4x log amplification with no actual
-        # second tool call).
+        # Fires when:
+        #   - Existing: past 50% played + idle ready + not busy + not pending + not sched
+        #   - Phase A2: session.idle_needs_load == True (load rank on idle)
+        #   - Phase A2: session.user_skip is not None (handle skip request)
+        #   - Phase A2: session.set_ending == True (pick outro)
+        #
+        # DJ is the sole authority on deck state; Python watchdog (P2 above)
+        # only catches hangs. The sched_file guard kills wasteful repeat
+        # invocations; the _agent_busy guard serializes concurrent triggers.
         sched_file_exists = Path("/tmp/dj-treta-scheduled-transition.json").exists()
-        if (idle_ready and duration > 0 and position > (duration * 0.5)
+        signal_set = (
+            getattr(self.session, "idle_needs_load", False)
+            or getattr(self.session, "user_skip", None) is not None
+            or getattr(self.session, "set_ending", False)
+        )
+        past_half = idle_ready and duration > 0 and position > (duration * 0.5)
+        if ((past_half or signal_set)
                 and not self._agent_busy and not self._transition_pending
                 and not sched_file_exists):
             from .db import get_track_by_path
@@ -167,9 +217,19 @@ class HeartbeatMixin:
                 dj_directive=self.dj_directive,
                 playlist=getattr(self.session, "playlist", None),
                 mood_profile=getattr(self.session, "mood_profile", None),
+                idle_needs_load=getattr(self.session, "idle_needs_load", False),
+                user_skip=getattr(self.session, "user_skip", None),
+                set_ending=getattr(self.session, "set_ending", False),
             )
 
             self._agent_busy = True
+
+            # Snapshot which signals triggered this invocation so we can
+            # clear only the ones DJ actually had a chance to respond to
+            # (don't race with a signal set mid-invocation).
+            consumed_idle_needs_load = getattr(self.session, "idle_needs_load", False)
+            consumed_user_skip = getattr(self.session, "user_skip", None)
+            consumed_set_ending = getattr(self.session, "set_ending", False)
 
             def _run():
                 try:
@@ -181,6 +241,15 @@ class HeartbeatMixin:
                     if self.dj_directive:
                         log.info(f"DJ directive consumed: {self.dj_directive[:80]}")
                         self.dj_directive = ""
+                    # Phase A2: clear signals DJ saw, unless it explicitly said
+                    # "waiting" (then the signal stays for watchdog to catch).
+                    said_waiting = "waiting" in (result or "").lower()[:40]
+                    if consumed_idle_needs_load and not said_waiting:
+                        self.session.idle_needs_load = False
+                    if consumed_user_skip and not said_waiting:
+                        self.session.user_skip = None
+                    if consumed_set_ending and not said_waiting:
+                        self.session.set_ending = False
                     self._record_playing_tracks()
                     self._check_set_duration()
                 except Exception as e:

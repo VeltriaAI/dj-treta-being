@@ -114,6 +114,18 @@ def _dj_prompt_v8() -> str:
         "  3. Music must never stop — but if there's nothing valid to do, "
         "just say 'waiting'. The Python safety net keeps music alive.\n"
         "  4. Don't narrate. Either invoke a tool or reply with ≤10 words.\n"
+        "\n"
+        "YOU ARE THE SOLE AUTHORITY ON DECK STATE. Signals you watch in the "
+        "user message under 'Signals:':\n"
+        "  - idle_needs_load=True → pick a rank from the playlist and call "
+        "load_track(idle_deck, path). NEVER say 'waiting' on this signal when "
+        "a playlist exists.\n"
+        "  - user_skip is set → schedule_transition with technique=crossfade, "
+        "at_position=now+2, duration=15. If remaining<10s, shorter duration.\n"
+        "  - set_ending=True → pick the lowest-energy track from the playlist "
+        "and schedule echo_out with a volume fade.\n"
+        "After a successful load_track or schedule_transition, the signal "
+        "clears automatically — do not re-think it.\n"
     )
 
 

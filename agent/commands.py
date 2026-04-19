@@ -202,36 +202,22 @@ class CommandsMixin:
             self._write_state()
 
     def _agent_skip(self):
-        """Skip — direct fast crossfade, no agent needed."""
-        from .main import _get_status, _active_idle_decks
+        """Skip — emit user_skip signal. DJ agent handles on next P4 tick;
+        watchdog P2 fallback fires if the signal sits unresolved >5s.
 
+        Phase A2: removed the direct do_transition + inline _load_next_on_idle
+        that bypassed the DJ agent and left the new idle deck empty
+        post-crossfade (observed bug, 2026-04-19).
+        """
         try:
-            from .tools import do_transition
-            status = _get_status(self.config.mixxx.url)
-            if not status:
-                self._last_result = "Skip failed: Mixxx offline"
-                self._write_state()
-                return
-            active, idle = _active_idle_decks(status)
-            d_idle = status.get(f"deck{idle}", {})
-
-            # Load idle deck if empty
-            if not d_idle.get("track_loaded"):
-                self._load_next_on_idle(status)
-                time.sleep(2)
-                status = _get_status(self.config.mixxx.url)
-                d_idle = status.get(f"deck{idle}", {}) if status else {}
-                if not d_idle.get("track_loaded"):
-                    self._last_result = "Skip failed: no track to skip to"
-                    self._write_state()
-                    return
-
-            # Direct fast crossfade — 15s, no agent decision needed
-            result = do_transition(idle, 15)
-            self._last_result = f"Skipped to deck {idle}: {str(result)[:100]}"
-            self._record_playing_tracks()
+            self.session.user_skip = {
+                "style": "fast",
+                "ts": time.time(),
+                "directive": None,
+            }
+            self._last_result = "Skip signaled to DJ"
+            log.info("Skip: user_skip signal set, DJ will handle on next tick")
             self._write_state()
-            log.info(f"Skip: {self._last_result}")
         except Exception as e:
             self._last_result = f"Skip error: {e}"
             self._write_state()

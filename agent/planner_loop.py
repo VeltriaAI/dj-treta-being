@@ -40,8 +40,11 @@ class PlannerMixin:
                 if current_track and current_track != last_track:
                     last_track = current_track
                     self._tracks_since_plan += 1
-                    # Immediately load next track on idle deck
-                    self._load_next_on_idle(status)
+                    # Phase A2: planner no longer loads the idle deck — it
+                    # emits a signal that the DJ agent consumes on the next
+                    # heartbeat P4 tick. Watchdog P2 is the Python fallback
+                    # if DJ hangs.
+                    self.session.idle_needs_load = True
                     # v8 Phase 7: reflection triggering moved to Being's
                     # heartbeat (consciousness loop), not the planner's
                     # responsibility. Planner's job is plan-and-update-playlist
@@ -66,10 +69,9 @@ class PlannerMixin:
                     self._tracks_since_plan = 0
                     try:
                         self._run_planner(status, current_track)
-                        # Load after planning
-                        status = _get_status(self.config.mixxx.url)
-                        if status:
-                            self._load_next_on_idle(status)
+                        # Phase A2: planner no longer loads after replan —
+                        # it signals and lets the DJ agent decide rank.
+                        self.session.idle_needs_load = True
                     finally:
                         self._planner_busy = False
 
