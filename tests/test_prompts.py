@@ -196,16 +196,65 @@ class TestBuildDjUserMessageSignals:
         assert "set_ending=True" in msg
         assert "lowest-energy" in msg
 
-    def test_multiple_signals_all_rendered(self):
+    def test_user_skip_priority_over_idle_needs_load(self):
+        """BUG-4 fix (Phase A2 dry run 2026-04-19): when user_skip is set,
+        only the user_skip instruction should render. idle_needs_load is
+        suppressed because the skip subsumes it (post-transition flow
+        will re-fire idle_needs_load if needed). Without this, DJ was
+        responding to idle_needs_load with load_track and ignoring the
+        skip entirely."""
         msg = build_dj_user_message(
             **self._base_kwargs(),
             idle_needs_load=True,
             user_skip={"style": "fast", "ts": 1.0, "directive": None},
+        )
+        assert "user_skip" in msg
+        # idle_needs_load must NOT render its load_track instruction.
+        assert "idle_needs_load=True" not in msg
+        # And the user_skip instruction must have COMPUTED at_position.
+        assert "at_position=102" in msg  # position=100 + 2
+
+    def test_set_ending_priority_over_idle_needs_load(self):
+        """set_ending > idle_needs_load (same priority reason)."""
+        msg = build_dj_user_message(
+            **self._base_kwargs(),
+            idle_needs_load=True,
             set_ending=True,
         )
-        assert "idle_needs_load=True" in msg
-        assert "user_skip" in msg
         assert "set_ending=True" in msg
+        assert "idle_needs_load=True" not in msg
+
+    def test_user_skip_priority_over_set_ending(self):
+        msg = build_dj_user_message(
+            **self._base_kwargs(),
+            user_skip={"style": "fast", "ts": 1.0, "directive": None},
+            set_ending=True,
+        )
+        assert "user_skip" in msg
+        assert "set_ending=True" not in msg
+
+    def test_user_skip_computes_exact_at_position(self):
+        """Timing math is Python's job — the prompt must include the
+        computed int, not literal text like 'now+2'."""
+        kwargs = self._base_kwargs()
+        kwargs["position"] = 123
+        msg = build_dj_user_message(
+            **kwargs,
+            user_skip={"style": "fast", "ts": 1.0, "directive": None},
+        )
+        assert "at_position=125" in msg  # 123 + 2
+        assert "now+" not in msg  # no ambiguous literal
+
+    def test_user_skip_short_duration_near_track_end(self):
+        """Skip near end of track uses short duration, not 15s overshoot."""
+        kwargs = self._base_kwargs()
+        kwargs["remaining"] = 5  # 5s left
+        msg = build_dj_user_message(
+            **kwargs,
+            user_skip={"style": "fast", "ts": 1.0, "directive": None},
+        )
+        # duration = min(15, remaining-1) = min(15, 4) = 4
+        assert "duration=4" in msg
 
 
 class TestBuildDjUserMessagePlaylist:

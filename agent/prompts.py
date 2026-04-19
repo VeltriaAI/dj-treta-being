@@ -88,8 +88,34 @@ def build_dj_user_message(
         playlist_block = "\n".join(lines) + "\n\n"
 
     # Phase A2: signals DJ consumes to drive load/skip/outro decisions.
+    # Signal priority: user_skip > set_ending > idle_needs_load.
+    # When user_skip is set, the user wants OUT of the current track NOW —
+    # any idle_needs_load is subsumed (post-transition flow will re-fire it).
     signal_lines = []
-    if idle_needs_load:
+    if user_skip:
+        style = user_skip.get("style", "fast")
+        directive = user_skip.get("directive") or ""
+        dir_note = f" directive={directive!r}" if directive else ""
+        # Compute the exact at_position in Python (timing math is Python's
+        # job per Software 3.0). Skip 2s into future so DJ and executor
+        # have time to settle before the crossfade starts. Short duration
+        # if the active is near its end anyway.
+        skip_at = int(position + 2)
+        skip_duration = 15 if remaining > 15 else max(2, int(remaining - 1))
+        signal_lines.append(
+            f"  - user_skip set (style={style}{dir_note}) — call "
+            f"schedule_transition(technique='crossfade', to_deck={idle_deck}, "
+            f"at_position={skip_at}, duration={skip_duration}). Do NOT call "
+            f"load_track — idle deck is ready; the user wants the current "
+            f"track OUT, not a re-load."
+        )
+    elif set_ending:
+        signal_lines.append(
+            "  - set_ending=True — last 5 minutes of set. Pick lowest-energy "
+            "track from playlist; schedule echo_out with a volume fade."
+        )
+    elif idle_needs_load:
+        # Only render idle_needs_load when NO higher-priority signal is set.
         has_playlist_tracks = bool(
             playlist and playlist.get("tracks")
         )
@@ -106,20 +132,6 @@ def build_dj_user_message(
                 "'waiting' — do NOT invent a path. Library/producer peers "
                 "will populate the playlist shortly."
             )
-    if user_skip:
-        style = user_skip.get("style", "fast")
-        directive = user_skip.get("directive") or ""
-        dir_note = f" directive={directive!r}" if directive else ""
-        signal_lines.append(
-            f"  - user_skip set (style={style}{dir_note}) — schedule a "
-            f"crossfade to deck {idle_deck} NOW (duration 15s, shorter if "
-            "remaining <10s)."
-        )
-    if set_ending:
-        signal_lines.append(
-            "  - set_ending=True — last 5 minutes of set. Pick lowest-energy "
-            "track from playlist; schedule echo_out with a volume fade."
-        )
     signals_block = ""
     if signal_lines:
         signals_block = "Signals:\n" + "\n".join(signal_lines) + "\n\n"
