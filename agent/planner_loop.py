@@ -53,13 +53,20 @@ class PlannerMixin:
                 # v8: playlist lives on session.playlist (structured JSON).
                 # Replan when no playlist yet OR enough tracks have elapsed
                 # since the last plan OR mood changed (replan_requested
-                # signal — populated by Session callback in Phase 4+).
+                # signal — populated by Session callback in Phase 4+) OR
+                # the current playlist is stale (contains already-played
+                # tracks, BUG-9 fix). The staleness check catches the
+                # post-daemon-restart case where session.playlist persisted
+                # but _tracks_since_plan reset to 0, so the regular
+                # threshold never triggers a refresh.
                 playlist = getattr(self.session, "playlist", None)
+                playlist_is_stale = self._playlist_contains_played(playlist)
                 needs_plan = (
                     not playlist
                     or not playlist.get("tracks")
                     or self._tracks_since_plan >= self.config.planner.replan_every_n_tracks
                     or getattr(self.session, "replan_requested", False)
+                    or playlist_is_stale
                 )
                 if needs_plan and getattr(self.session, "replan_requested", False):
                     self.session.replan_requested = False
@@ -263,6 +270,43 @@ class PlannerMixin:
             msg = f"{type(exc).__name__}: {exc}"
             log.warning(f"Planner output invalid — keeping last good playlist. {msg}")
             self.session.last_planner_error = msg
+
+    def _playlist_contains_played(self, playlist) -> bool:
+        """BUG-9 fix: True if the current playlist contains any track that
+        has already been played this session. Forces a planner replan
+        which will re-run the BUG-6 played-filter. Catches the post-
+        restart case where session.playlist persists but
+        _tracks_since_plan resets to 0.
+        """
+        if not playlist or not playlist.get("tracks"):
+            return False
+        tracks_played = list(self.tracks_played or [])
+        if not tracks_played:
+            return False
+        played_paths = {
+            (t.get("path") or t.get("file_path") or "")
+            for t in tracks_played
+        }
+        played_paths.discard("")
+        played_titles_lower = {
+            (t.get("title") or "").lower() for t in tracks_played
+            if not (t.get("path") or t.get("file_path"))
+        }
+        played_titles_lower.discard("")
+
+        for track in playlist["tracks"]:
+            if track.get("path") in played_paths:
+                return True
+            # Title-fuzzy fallback for legacy tracks_played entries.
+            ct = (track.get("title") or "").lower()
+            cwords = set(ct.replace("(", " ").replace(")", " ").split())
+            for played in played_titles_lower:
+                pwords = set(played.replace("(", " ").replace(")", " ").split())
+                if cwords and pwords:
+                    overlap = len(cwords & pwords) / min(len(cwords), len(pwords))
+                    if overlap >= 0.6:
+                        return True
+        return False
 
     def _idle_needs_fresh_load(self, status) -> bool:
         """True if idle deck should get a new track loaded.
