@@ -247,11 +247,21 @@ class SessionMixin:
                             self._deck_track[dk] = path
                             self._deck_start_time[dk] = time.time()
                         if title and not any(t.get("title") == title for t in self.tracks_played):
-                            self.tracks_played.append({"title": title, "time": time.time()})
+                            # BUG-8 fix (Phase A2 dry run #2 2026-04-19):
+                            # include `path` so downstream dedup (BUG-6
+                            # played-path filter in planner_loop) can match
+                            # canonical library paths stably. Previously
+                            # only {title, time} was recorded, so any
+                            # path-based comparison matched nothing.
+                            self.tracks_played.append({
+                                "title": title,
+                                "path": path,
+                                "time": time.time(),
+                            })
                             # Record in DB set_history
                             if self.current_set:
                                 from .db import add_track_to_set
-                                add_track_to_set(self.current_set["id"], title, dk, "")
+                                add_track_to_set(self.current_set["id"], title, dk, path)
         except Exception:
             pass
 

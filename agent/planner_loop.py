@@ -185,17 +185,45 @@ class PlannerMixin:
             # Afterlife Tomorrowland]" against "Anyma, Rebūke - Syren
             # (Live)" as the same track, so already-played tracks
             # resurface in the playlist. Post-filter in Python by
-            # PATH (stable, unique) as a deterministic dedup.
+            # PATH (stable, unique) as a deterministic dedup, with
+            # title fallback for pre-BUG-8 session entries that lack
+            # the `path` field.
             played_paths = {
-                t.get("file_path") or t.get("path") or ""
+                (t.get("path") or t.get("file_path") or "")
                 for t in self.tracks_played
             }
-            played_paths.discard("")  # drop empty sentinel
-            if played_paths and validated.get("tracks"):
+            played_paths.discard("")
+            # Legacy fallback: old tracks_played entries have only
+            # title. Match on canonical_song substring within both
+            # the played title and the playlist candidate title.
+            played_titles_lower = {
+                (t.get("title") or "").lower() for t in self.tracks_played
+                if not (t.get("path") or t.get("file_path"))
+            }
+            played_titles_lower.discard("")
+
+            def _title_matches_played(candidate_title: str) -> bool:
+                if not played_titles_lower:
+                    return False
+                ct = (candidate_title or "").lower()
+                # Extract canonical song: candidate title "Artist, Artist2 - Song (Version)"
+                # → "song". Match if song-key appears in any played title.
+                for played in played_titles_lower:
+                    # Crude: if 60%+ words overlap, treat as same track
+                    cwords = set(ct.replace("(", " ").replace(")", " ").split())
+                    pwords = set(played.replace("(", " ").replace(")", " ").split())
+                    if cwords and pwords:
+                        overlap = len(cwords & pwords) / min(len(cwords), len(pwords))
+                        if overlap >= 0.6:
+                            return True
+                return False
+
+            if (played_paths or played_titles_lower) and validated.get("tracks"):
                 before = len(validated["tracks"])
                 validated["tracks"] = [
                     t for t in validated["tracks"]
-                    if t.get("path") not in played_paths
+                    if (t.get("path") not in played_paths)
+                    and not _title_matches_played(t.get("title", ""))
                 ]
                 dropped = before - len(validated["tracks"])
                 if dropped:
