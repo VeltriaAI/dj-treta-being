@@ -391,13 +391,51 @@ class HeartbeatMixin:
             # replay already-played tracks — e.g. Samsara replayed as
             # track #6 after the first cycle. If ALL tracks are played,
             # fall back to full set (music-never-stops still wins).
+            #
+            # BUG-15 fix: legacy pre-BUG-8 tracks_played entries have no
+            # `path` field, so path-based dedup misses them. Add a
+            # title-overlap fallback with the same boilerplate-strip +
+            # 0.8 threshold used elsewhere (BUG-14). An mp3 whose filename
+            # fuzzy-matches any played title is treated as already-played.
             if tracks:
                 played_paths = {
                     (t.get("path") or t.get("file_path") or "")
                     for t in (self.tracks_played or [])
                 }
                 played_paths.discard("")
-                unplayed = [t for t in tracks if t not in played_paths]
+                _BP = {
+                    "original", "mix", "live", "extended", "remix", "feat",
+                    "ft", "ft.", "official", "video", "audio", "edit",
+                    "radio", "lyric", "visual", "visualizer", "dub", "vip",
+                    "remastered", "vs", "vs.", "&", "-", "",
+                }
+                def _sig(t):
+                    w = t.lower().replace("(", " ").replace(")", " ")\
+                        .replace(",", " ").replace("[", " ").replace("]", " ")\
+                        .replace(".mp3", " ").split()
+                    return {x for x in w if x not in _BP}
+                played_sigs = [
+                    _sig(t.get("title", ""))
+                    for t in (self.tracks_played or [])
+                    if t.get("title")
+                ]
+                def _is_played(track_path: str) -> bool:
+                    if track_path in played_paths:
+                        return True
+                    # Fallback to title-fuzzy against filename stem.
+                    from pathlib import Path as _P
+                    fn = _P(track_path).stem
+                    cwords = _sig(fn)
+                    if not cwords:
+                        return False
+                    for ps in played_sigs:
+                        if not ps:
+                            continue
+                        overlap = len(cwords & ps) / min(len(cwords), len(ps))
+                        if overlap >= 0.8:
+                            return True
+                    return False
+                unplayed = [t for t in tracks if not _is_played(t)]
                 if unplayed:
                     tracks = unplayed
                     log.info(f"Emergency pool: {len(unplayed)} unplayed tracks (from {len(all_tracks)} total)")
