@@ -110,6 +110,47 @@ class TestAutoTransition:
         being._heartbeat()
         assert being._transition_pending is False
 
+    def test_auto_transition_on_user_skip_stuck(self, being, mock_mixxx):
+        """Phase A2: when session.user_skip has been unresolved for >5s AND
+        idle is ready, P2 watchdog forces a 15s crossfade instead of
+        waiting further for the DJ agent."""
+        # Active deck in mid-track (not ending) — normal P2 would NOT fire.
+        mock_mixxx["status"]["deck1"]["remaining_seconds"] = 180.0
+        mock_mixxx["status"]["deck1"]["playing"] = True
+        mock_mixxx["status"]["deck2"]["track_loaded"] = True
+        mock_mixxx["status"]["deck2"]["remaining_seconds"] = 200.0
+
+        being._agent_busy = False
+        being._transition_pending = False
+        # Signal set 10s ago → stuck.
+        import time as _t
+        being.session.user_skip = {"style": "fast", "ts": _t.time() - 10, "directive": None}
+
+        with patch("agent.heartbeat.threading.Thread") as mock_thread:
+            mock_thread.return_value = MagicMock()
+            being._heartbeat()
+            assert being._transition_pending is True
+
+    def test_no_watchdog_fire_on_fresh_user_skip(self, being, mock_mixxx):
+        """Phase A2: a brand-new user_skip signal (ts=now) should NOT
+        trigger the watchdog — DJ gets 5 seconds to respond first."""
+        mock_mixxx["status"]["deck1"]["remaining_seconds"] = 180.0
+        mock_mixxx["status"]["deck1"]["playing"] = True
+        mock_mixxx["status"]["deck2"]["track_loaded"] = True
+        mock_mixxx["status"]["deck2"]["remaining_seconds"] = 200.0
+
+        being._agent_busy = False
+        being._transition_pending = False
+        import time as _t
+        being.session.user_skip = {"style": "fast", "ts": _t.time(), "directive": None}
+
+        with patch("agent.heartbeat.threading.Thread") as mock_thread:
+            mock_thread.return_value = MagicMock()
+            being._heartbeat()
+            # P2 did not fire yet (ts is fresh). But P4 may fire DJ on the
+            # signal — that's fine, we only care P2 didn't pre-empt.
+            assert being._transition_pending is False
+
 
 # ── Priority 3: Scheduled Transition ────────────────────────────────
 

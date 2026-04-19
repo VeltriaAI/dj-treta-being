@@ -40,20 +40,36 @@ class TestMoodChange:
 
 class TestSkipCommand:
 
-    def test_skip_does_direct_transition(self, being):
-        """skip command should launch _agent_skip in a thread, not _invoke_agent directly."""
-        with patch.object(being, "_agent_skip") as mock_skip:
-            with patch("agent.commands.threading.Thread") as mock_thread:
-                mock_thread_instance = MagicMock()
-                mock_thread.return_value = mock_thread_instance
+    def test_skip_command_dispatches_agent_skip(self, being):
+        """skip command should launch _agent_skip in a thread."""
+        with patch("agent.commands.threading.Thread") as mock_thread:
+            mock_thread_instance = MagicMock()
+            mock_thread.return_value = mock_thread_instance
 
-                result = being._handle_command("skip", {}, "cmd-4")
+            result = being._handle_command("skip", {}, "cmd-4")
 
-                assert result == "processing..."
-                mock_thread.assert_called_once()
-                # Verify _agent_skip is the target
-                call_kwargs = mock_thread.call_args
-                assert call_kwargs[1]["target"] == being._agent_skip
+            assert result == "processing..."
+            mock_thread.assert_called_once()
+            call_kwargs = mock_thread.call_args
+            assert call_kwargs[1]["target"] == being._agent_skip
+
+    def test_agent_skip_emits_user_skip_signal(self, being):
+        """Phase A2: _agent_skip writes session.user_skip signal and returns
+        immediately. No direct do_transition call; the DJ agent consumes
+        the signal on the next heartbeat P4 tick. Watchdog P2 is the
+        fallback if DJ hangs >5s."""
+        # Pre-conditions — no signal set.
+        assert being.session.user_skip is None
+
+        being._agent_skip()
+
+        # Signal emitted with correct shape.
+        sig = being.session.user_skip
+        assert sig is not None
+        assert sig["style"] == "fast"
+        assert isinstance(sig["ts"], float)
+        assert sig["directive"] is None
+        assert "signaled" in being._last_result.lower()
 
 
 class TestTalkCommand:

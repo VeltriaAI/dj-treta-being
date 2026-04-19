@@ -35,6 +35,9 @@ def build_dj_user_message(
     dj_directive: str = "",
     playlist: dict | None = None,
     mood_profile: dict | None = None,
+    idle_needs_load: bool = False,
+    user_skip: dict | None = None,
+    set_ending: bool = False,
 ) -> str:
     """Build the user message for DJ agent heartbeat decisions.
 
@@ -80,9 +83,35 @@ def build_dj_user_message(
             )
         playlist_block = "\n".join(lines) + "\n\n"
 
+    # Phase A2: signals DJ consumes to drive load/skip/outro decisions.
+    signal_lines = []
+    if idle_needs_load:
+        signal_lines.append(
+            "  - idle_needs_load=True — idle deck empty or stale. "
+            "Call load_track(deck={}, <playlist path>) NOW.".format(idle_deck)
+        )
+    if user_skip:
+        style = user_skip.get("style", "fast")
+        directive = user_skip.get("directive") or ""
+        dir_note = f" directive={directive!r}" if directive else ""
+        signal_lines.append(
+            f"  - user_skip set (style={style}{dir_note}) — schedule a "
+            f"crossfade to deck {idle_deck} NOW (duration 15s, shorter if "
+            "remaining <10s)."
+        )
+    if set_ending:
+        signal_lines.append(
+            "  - set_ending=True — last 5 minutes of set. Pick lowest-energy "
+            "track from playlist; schedule echo_out with a volume fade."
+        )
+    signals_block = ""
+    if signal_lines:
+        signals_block = "Signals:\n" + "\n".join(signal_lines) + "\n\n"
+
     return (
         f"{directive_info}"
         f"{profile_line}"
+        f"{signals_block}"
         f"ACTIVE: '{active_track[:40]}' at {position:.0f}s/{duration:.0f}s "
         f"({remaining:.0f}s left, BPM:{active_bpm:.0f} file:{active_file_bpm:.0f}, Key:{active_key})\n"
         f"  NOW IN: {active_section}\n"

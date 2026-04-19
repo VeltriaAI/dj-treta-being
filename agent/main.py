@@ -237,6 +237,11 @@ class DJTretaBeing(
         # Scheduled transition — Python executes, agent is free
         self._transition_pending = False
 
+        # Phase A2: timestamp when idle_needs_load last flipped to True.
+        # Watchdog P2 uses this to detect a stuck signal (DJ agent hung)
+        # and fall back to Python rank-1 load before silence hits.
+        self._idle_needs_load_set_at = 0.0
+
         # Serialize all DJ agent invocations (talk, heartbeat, skip, reflect)
         self._agent_lock = threading.Lock()
 
@@ -464,6 +469,14 @@ class DJTretaBeing(
             threading.Thread(target=_resolve, daemon=True).start()
 
         self.session.register_callback("mood", _on_mood_change)
+
+        # Phase A2: track when idle_needs_load flips True so the watchdog
+        # can tell if DJ has hung on the signal for longer than N seconds.
+        def _on_idle_needs_load(name, old, new):
+            if new and not old:
+                self._idle_needs_load_set_at = time.time()
+
+        self.session.register_callback("idle_needs_load", _on_idle_needs_load)
 
         # Read startup mood if provided via CLI
         mood_file = Path("/tmp/dj-treta-mood.txt")
