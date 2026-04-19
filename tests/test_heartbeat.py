@@ -152,6 +152,98 @@ class TestAutoTransition:
             assert being._transition_pending is False
 
 
+class TestSignalClearingOnEmptyDJResponse:
+    """BUG-3 (Phase A2 dry run 2026-04-19): Flash has a measurable ~60%
+    empty-response rate on certain niche prompts. The previous logic
+    cleared signals whenever 'waiting' was absent from the result —
+    including when the result was empty/None. That meant `djtreta skip`
+    could silently clear user_skip without DJ taking any action, so the
+    skip vanished.
+
+    Fix: clear signals only when DJ produced a non-empty response OR
+    explicitly said 'waiting'. Empty response = preserve signals so the
+    next heartbeat tick retries.
+    """
+
+    def test_empty_dj_response_preserves_user_skip(self, being, mock_mixxx):
+        """When _invoke_agent returns '', user_skip must stay set."""
+        mock_mixxx["status"]["deck1"]["position_seconds"] = 30.0
+        mock_mixxx["status"]["deck1"]["duration"] = 300.0
+        mock_mixxx["status"]["deck1"]["remaining_seconds"] = 270.0
+        mock_mixxx["status"]["deck1"]["playing"] = True
+        mock_mixxx["status"]["deck2"]["track_loaded"] = True
+        mock_mixxx["status"]["deck2"]["remaining_seconds"] = 200.0
+
+        being._agent_busy = False
+        being._transition_pending = False
+        import time as _t
+        being.session.user_skip = {"style": "fast", "ts": _t.time(), "directive": None}
+
+        with patch.object(being, "_invoke_agent", return_value=""):
+            # Run heartbeat synchronously (don't spawn thread).
+            with patch("agent.heartbeat.threading.Thread") as mock_thread:
+                def _exec_inline(target=None, args=(), kwargs=None, **_):
+                    mt = MagicMock()
+                    mt.start = lambda: target and target(*args, **(kwargs or {}))
+                    return mt
+                mock_thread.side_effect = _exec_inline
+                being._heartbeat()
+
+        # Signal must be preserved so next tick / watchdog retries.
+        assert being.session.user_skip is not None
+        assert being.session.user_skip["style"] == "fast"
+
+    def test_waiting_response_preserves_user_skip(self, being, mock_mixxx):
+        """When DJ says 'waiting', user_skip must stay set (watchdog catches)."""
+        mock_mixxx["status"]["deck1"]["position_seconds"] = 30.0
+        mock_mixxx["status"]["deck1"]["duration"] = 300.0
+        mock_mixxx["status"]["deck1"]["remaining_seconds"] = 270.0
+        mock_mixxx["status"]["deck1"]["playing"] = True
+        mock_mixxx["status"]["deck2"]["track_loaded"] = True
+        mock_mixxx["status"]["deck2"]["remaining_seconds"] = 200.0
+
+        being._agent_busy = False
+        being._transition_pending = False
+        import time as _t
+        being.session.user_skip = {"style": "fast", "ts": _t.time(), "directive": None}
+
+        with patch.object(being, "_invoke_agent", return_value="waiting"):
+            with patch("agent.heartbeat.threading.Thread") as mock_thread:
+                def _exec_inline(target=None, args=(), kwargs=None, **_):
+                    mt = MagicMock()
+                    mt.start = lambda: target and target(*args, **(kwargs or {}))
+                    return mt
+                mock_thread.side_effect = _exec_inline
+                being._heartbeat()
+
+        assert being.session.user_skip is not None
+
+    def test_substantive_response_clears_user_skip(self, being, mock_mixxx):
+        """When DJ returns a real response (not waiting), user_skip clears."""
+        mock_mixxx["status"]["deck1"]["position_seconds"] = 30.0
+        mock_mixxx["status"]["deck1"]["duration"] = 300.0
+        mock_mixxx["status"]["deck1"]["remaining_seconds"] = 270.0
+        mock_mixxx["status"]["deck1"]["playing"] = True
+        mock_mixxx["status"]["deck2"]["track_loaded"] = True
+        mock_mixxx["status"]["deck2"]["remaining_seconds"] = 200.0
+
+        being._agent_busy = False
+        being._transition_pending = False
+        import time as _t
+        being.session.user_skip = {"style": "fast", "ts": _t.time(), "directive": None}
+
+        with patch.object(being, "_invoke_agent", return_value="schedule_transition called"):
+            with patch("agent.heartbeat.threading.Thread") as mock_thread:
+                def _exec_inline(target=None, args=(), kwargs=None, **_):
+                    mt = MagicMock()
+                    mt.start = lambda: target and target(*args, **(kwargs or {}))
+                    return mt
+                mock_thread.side_effect = _exec_inline
+                being._heartbeat()
+
+        assert being.session.user_skip is None
+
+
 class TestSignalDrivenP4:
     """Phase A2 — P4 guard also fires DJ on signal-set (not only past-50%).
 
