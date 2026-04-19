@@ -90,10 +90,22 @@ def build_dj_user_message(
     # Phase A2: signals DJ consumes to drive load/skip/outro decisions.
     signal_lines = []
     if idle_needs_load:
-        signal_lines.append(
-            "  - idle_needs_load=True — idle deck empty or stale. "
-            "Call load_track(deck={}, <playlist path>) NOW.".format(idle_deck)
+        has_playlist_tracks = bool(
+            playlist and playlist.get("tracks")
         )
+        if has_playlist_tracks:
+            signal_lines.append(
+                f"  - idle_needs_load=True — idle deck empty or stale. "
+                f"Call load_track(deck={idle_deck}, <exact path from the "
+                f"Planner's ranked suggestions block above>) NOW. Use only "
+                f"a path that appears verbatim in that block."
+            )
+        else:
+            signal_lines.append(
+                "  - idle_needs_load=True BUT playlist is empty. Respond "
+                "'waiting' — do NOT invent a path. Library/producer peers "
+                "will populate the playlist shortly."
+            )
     if user_skip:
         style = user_skip.get("style", "fast")
         directive = user_skip.get("directive") or ""
