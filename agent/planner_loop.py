@@ -233,20 +233,39 @@ class PlannerMixin:
             }
             played_titles_lower.discard("")
 
+            # BUG-14 fix (Phase A2 dry run #2 2026-04-19): strip common
+            # boilerplate words AND raise threshold to 0.8. At 0.6 with
+            # raw titles, "Stephan Bodzin - Bedford (Original Mix)" and
+            # "Stephan Bodzin - Io (Original Mix)" falsely matched
+            # because the two artist words + suffix boilerplate ate up
+            # the overlap ratio. After stripping boilerplate, only the
+            # song identifier words remain, so the threshold can be
+            # stricter without missing true duplicates.
+            _TITLE_BOILERPLATE = {
+                "original", "mix", "live", "extended", "remix", "feat",
+                "ft", "ft.", "official", "video", "audio", "edit",
+                "radio", "lyric", "visual", "visualizer", "dub", "vip",
+                "remastered", "vs", "vs.", "&", "-", "",
+            }
+
+            def _significant_words(title: str) -> set:
+                words = title.replace("(", " ").replace(")", " ")\
+                    .replace(",", " ").replace("[", " ").replace("]", " ").split()
+                return {w for w in words if w.lower() not in _TITLE_BOILERPLATE}
+
             def _title_matches_played(candidate_title: str) -> bool:
                 if not played_titles_lower:
                     return False
-                ct = (candidate_title or "").lower()
-                # Extract canonical song: candidate title "Artist, Artist2 - Song (Version)"
-                # → "song". Match if song-key appears in any played title.
+                cwords = _significant_words(candidate_title.lower())
+                if not cwords:
+                    return False
                 for played in played_titles_lower:
-                    # Crude: if 60%+ words overlap, treat as same track
-                    cwords = set(ct.replace("(", " ").replace(")", " ").split())
-                    pwords = set(played.replace("(", " ").replace(")", " ").split())
-                    if cwords and pwords:
-                        overlap = len(cwords & pwords) / min(len(cwords), len(pwords))
-                        if overlap >= 0.6:
-                            return True
+                    pwords = _significant_words(played)
+                    if not pwords:
+                        continue
+                    overlap = len(cwords & pwords) / min(len(cwords), len(pwords))
+                    if overlap >= 0.8:
+                        return True
                 return False
 
             if (played_paths or played_titles_lower) and validated.get("tracks"):
@@ -334,19 +353,32 @@ class PlannerMixin:
         }
         played_titles_lower.discard("")
 
+        # BUG-14: strip boilerplate, threshold 0.8 (same as BUG-6 filter).
+        _BOILERPLATE = {
+            "original", "mix", "live", "extended", "remix", "feat", "ft",
+            "ft.", "official", "video", "audio", "edit", "radio", "lyric",
+            "visual", "visualizer", "dub", "vip", "remastered",
+            "vs", "vs.", "&", "-", "",
+        }
+
+        def _sig_words(title: str) -> set:
+            w = title.replace("(", " ").replace(")", " ")\
+                .replace(",", " ").replace("[", " ").replace("]", " ").split()
+            return {x for x in w if x.lower() not in _BOILERPLATE}
+
         for track in playlist["tracks"]:
             if track.get("path") in played_paths:
                 return True
-            # Title-fuzzy match (handles Flash path-hallucinations + title
-            # variants like "Original Mix" vs "Official Video").
-            ct = (track.get("title") or "").lower()
-            cwords = set(ct.replace("(", " ").replace(")", " ").split())
+            cwords = _sig_words((track.get("title") or "").lower())
+            if not cwords:
+                continue
             for played in played_titles_lower:
-                pwords = set(played.replace("(", " ").replace(")", " ").split())
-                if cwords and pwords:
-                    overlap = len(cwords & pwords) / min(len(cwords), len(pwords))
-                    if overlap >= 0.6:
-                        return True
+                pwords = _sig_words(played)
+                if not pwords:
+                    continue
+                overlap = len(cwords & pwords) / min(len(cwords), len(pwords))
+                if overlap >= 0.8:
+                    return True
         return False
 
     def _idle_needs_fresh_load(self, status) -> bool:
