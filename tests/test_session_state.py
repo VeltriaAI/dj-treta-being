@@ -337,3 +337,103 @@ class TestCriticalFieldsSet:
     def test_current_position_is_not_critical(self):
         # Transient field — safe to debounce
         assert "current_position_s" not in CRITICAL_FIELDS
+
+    def test_deck_ownership_signals_are_critical(self):
+        # Phase A1: signals DJ consumes must be durable before the next
+        # heartbeat tick, so they sync-flush on write.
+        assert "idle_needs_load" in CRITICAL_FIELDS
+        assert "user_skip" in CRITICAL_FIELDS
+        assert "set_ending" in CRITICAL_FIELDS
+
+
+class TestDeckOwnershipSignals:
+    """Phase A1 — 3 new Session fields that DJ agent consumes via heartbeat P4.
+
+    These tests cover the plumbing (defaults, roundtrip, callbacks, sync-flush).
+    Consumer logic (heartbeat watching + DJ reading) lands in Phase A2.
+    """
+
+    def test_default_values(self, tmp_path):
+        session = Session(tmp_path / "session.json")
+        assert session.idle_needs_load is False
+        assert session.user_skip is None
+        assert session.set_ending is False
+        session.close()
+
+    def test_idle_needs_load_roundtrip(self, tmp_path):
+        path = tmp_path / "session.json"
+        session = Session(path)
+        session.idle_needs_load = True
+        session.flush()
+        session.close()
+
+        reloaded = Session.load(path)
+        assert reloaded.idle_needs_load is True
+        reloaded.close()
+
+    def test_user_skip_roundtrip_with_payload(self, tmp_path):
+        path = tmp_path / "session.json"
+        session = Session(path)
+        payload = {"style": "fast", "ts": 1234567890.0, "directive": None}
+        session.user_skip = payload
+        session.flush()
+        session.close()
+
+        reloaded = Session.load(path)
+        assert reloaded.user_skip == payload
+        reloaded.close()
+
+    def test_set_ending_roundtrip(self, tmp_path):
+        path = tmp_path / "session.json"
+        session = Session(path)
+        session.set_ending = True
+        session.flush()
+        session.close()
+
+        reloaded = Session.load(path)
+        assert reloaded.set_ending is True
+        reloaded.close()
+
+    def test_idle_needs_load_sync_flush(self, tmp_path):
+        """Critical field → writes to disk before the setter returns."""
+        path = tmp_path / "session.json"
+        session = Session(path)
+
+        session.idle_needs_load = True
+        # No flush() call. Critical fields persist synchronously.
+        data = json.loads(path.read_text())
+        assert data["idle_needs_load"] is True
+        session.close()
+
+    def test_user_skip_callback_fires(self, tmp_path):
+        """Registered callback fires when user_skip is written."""
+        session = Session(tmp_path / "session.json")
+        calls = []
+        session.register_callback("user_skip", lambda n, o, v: calls.append((o, v)))
+
+        payload = {"style": "fast", "ts": 42.0, "directive": None}
+        session.user_skip = payload
+        assert len(calls) == 1
+        assert calls[0] == (None, payload)
+
+        # Clearing the signal also fires the callback (distinct write)
+        session.user_skip = None
+        assert len(calls) == 2
+        assert calls[1] == (payload, None)
+
+        session.close()
+
+    def test_idle_needs_load_no_op_write_skips_callback(self, tmp_path):
+        """Writing the same bool value should not re-fire the callback."""
+        session = Session(tmp_path / "session.json")
+        calls = []
+        session.register_callback(
+            "idle_needs_load", lambda n, o, v: calls.append((o, v))
+        )
+
+        session.idle_needs_load = True
+        session.idle_needs_load = True  # no-op — same value
+        session.idle_needs_load = False
+
+        assert len(calls) == 2
+        session.close()

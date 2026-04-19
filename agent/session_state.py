@@ -42,6 +42,9 @@ log = logging.getLogger("dj-treta")
 CRITICAL_FIELDS = frozenset({
     "mood", "mood_profile", "current_set", "tracks_played",
     "planner_directive", "dj_directive", "user_intent",
+    # Deck-ownership signals (Phase A1) — consumers may depend on these
+    # being durable before the next heartbeat tick, so sync-flush on write.
+    "idle_needs_load", "user_skip", "set_ending",
 })
 
 DEBOUNCE_SECONDS = 0.5
@@ -127,6 +130,13 @@ _FIELD_DEFAULTS: dict[str, Any] = {
     "replan_requested": False,
     "library_need": None,
     "producer_need": None,
+
+    # Deck-ownership signals (Phase A1 of deck-ownership sub-plan).
+    # DJ agent consumes these via heartbeat P4; Python watchdog falls back
+    # only on stuck signals. See APPENDIX A of the plan for consumers.
+    "idle_needs_load": False,   # set when idle deck should get a fresh track
+    "user_skip": None,          # {style: "fast"|"smooth", ts: float, directive: str|None}
+    "set_ending": False,        # set when elapsed > target_minutes - 5
 
     # Planner output (Phase 3)
     "playlist": None,
