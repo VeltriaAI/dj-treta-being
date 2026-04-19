@@ -185,6 +185,28 @@ class PlannerMixin:
                 raw = raw.split("```")[0].strip()
             data = _json.loads(raw)
             validated = validate_playlist(data)
+            # BUG-12 fix (Phase A2 dry run #2 2026-04-19): Flash
+            # occasionally returns a valid-looking but non-existent path
+            # (e.g. strips the genre subdirectory). DJ then fails to
+            # load_track, idle deck stays empty, oscillates retrying.
+            # Cross-validate every playlist path against the library DB;
+            # drop candidates whose path is not a known library file.
+            library_paths = {t.get("path", "") for t in library}
+            library_paths.discard("")
+            if library_paths and validated.get("tracks"):
+                before = len(validated["tracks"])
+                validated["tracks"] = [
+                    t for t in validated["tracks"]
+                    if t.get("path") in library_paths
+                ]
+                invalid = before - len(validated["tracks"])
+                if invalid:
+                    log.info(
+                        f"Planner path-validation filter: dropped {invalid} "
+                        f"invalid-path candidate(s) from playlist"
+                    )
+                    for i, t in enumerate(validated["tracks"]):
+                        t["rank"] = i + 1
             # BUG-6 fix (Phase A2 dry run #2 2026-04-19): planner's
             # played-title exclusion uses the YouTube display title
             # while the library uses a canonical title — Flash can't
