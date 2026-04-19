@@ -384,6 +384,23 @@ class HeartbeatMixin:
                     tracks = all_tracks  # fallback — music never stops
             else:
                 tracks = all_tracks
+            # BUG-11 fix (Phase A2 dry run #2 2026-04-19): prefer tracks
+            # NOT already played this set. Previously emergency_play picked
+            # uniformly at random, so once the library was exhausted and
+            # DJ was saying "waiting" (BUG-10), emergency fallback would
+            # replay already-played tracks — e.g. Samsara replayed as
+            # track #6 after the first cycle. If ALL tracks are played,
+            # fall back to full set (music-never-stops still wins).
+            if tracks:
+                played_paths = {
+                    (t.get("path") or t.get("file_path") or "")
+                    for t in (self.tracks_played or [])
+                }
+                played_paths.discard("")
+                unplayed = [t for t in tracks if t not in played_paths]
+                if unplayed:
+                    tracks = unplayed
+                    log.info(f"Emergency pool: {len(unplayed)} unplayed tracks (from {len(all_tracks)} total)")
             if tracks:
                 import random
                 track = random.choice(tracks)
