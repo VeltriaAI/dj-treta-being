@@ -20,6 +20,32 @@ import httpx
 log = logging.getLogger("dj-treta")
 
 
+def _filter_playlist_for_decks(
+    playlist: dict | None,
+    active_path: str,
+    idle_path: str,
+) -> dict | None:
+    """Return a playlist copy with tracks whose path matches either
+    deck's currently-loaded file removed. No-op when playlist is empty or
+    no tracks match the exclusions.
+
+    Protects against the stale-playlist case: planner's rank-1 is still
+    the track DJ just loaded (because planner hasn't replanned yet). DJ
+    must not see that candidate as loadable.
+    """
+    if not playlist or not playlist.get("tracks"):
+        return playlist
+    excluded = {p for p in (active_path, idle_path) if p}
+    if not excluded:
+        return playlist
+    filtered = [t for t in playlist["tracks"] if t.get("path") not in excluded]
+    if len(filtered) == len(playlist["tracks"]):
+        return playlist  # nothing to filter — return original
+    new_playlist = dict(playlist)
+    new_playlist["tracks"] = filtered
+    return new_playlist
+
+
 class HeartbeatMixin:
 
     def _heartbeat(self):
@@ -197,6 +223,19 @@ class HeartbeatMixin:
 
             from .prompts import build_dj_user_message
 
+            # BUG-2 fix: filter the playlist so it never shows tracks
+            # already on either deck. Otherwise, on a small library with a
+            # stale playlist, DJ picks rank-1 which is still the
+            # now-active track (or the track it just loaded on idle).
+            # Planner's replan hasn't caught up yet; DJ must defend against
+            # loading duplicates. This mirrors pick_next_candidate's
+            # exclude_paths semantics from the Python fallback path.
+            filtered_playlist = _filter_playlist_for_decks(
+                getattr(self.session, "playlist", None),
+                active_file,
+                idle_file,
+            )
+
             instruction = build_dj_user_message(
                 active_track=active_track,
                 position=position,
@@ -215,7 +254,7 @@ class HeartbeatMixin:
                 idle_timeline=idle_timeline,
                 transition_pending=self._transition_pending,
                 dj_directive=self.dj_directive,
-                playlist=getattr(self.session, "playlist", None),
+                playlist=filtered_playlist,
                 mood_profile=getattr(self.session, "mood_profile", None),
                 idle_needs_load=getattr(self.session, "idle_needs_load", False),
                 user_skip=getattr(self.session, "user_skip", None),

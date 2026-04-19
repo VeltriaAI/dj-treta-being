@@ -208,6 +208,68 @@ class TestSignalDrivenP4:
                 assert mock_thread.called
 
 
+class TestFilterPlaylistForDecks:
+    """BUG-2 (Phase A2 dry run 2026-04-19): DJ was loading the same
+    track that was already on the active deck because the planner's
+    playlist rank-1 hadn't been updated yet after the transition. The
+    filter excludes any candidate whose path matches either deck's
+    currently-loaded file."""
+
+    def test_none_playlist(self):
+        from agent.heartbeat import _filter_playlist_for_decks
+        assert _filter_playlist_for_decks(None, "a", "b") is None
+
+    def test_empty_tracks(self):
+        from agent.heartbeat import _filter_playlist_for_decks
+        pl = {"tracks": []}
+        assert _filter_playlist_for_decks(pl, "a", "b") is pl
+
+    def test_no_deck_paths(self):
+        """When neither deck has a path, return the playlist unchanged."""
+        from agent.heartbeat import _filter_playlist_for_decks
+        pl = {"tracks": [{"rank": 1, "path": "/m/a.mp3"}]}
+        assert _filter_playlist_for_decks(pl, "", "") is pl
+
+    def test_filters_active_deck_path(self):
+        from agent.heartbeat import _filter_playlist_for_decks
+        pl = {"tracks": [
+            {"rank": 1, "path": "/m/a.mp3"},
+            {"rank": 2, "path": "/m/b.mp3"},
+        ]}
+        out = _filter_playlist_for_decks(pl, "/m/a.mp3", "")
+        assert len(out["tracks"]) == 1
+        assert out["tracks"][0]["path"] == "/m/b.mp3"
+        # Original playlist must not be mutated.
+        assert len(pl["tracks"]) == 2
+
+    def test_filters_idle_deck_path(self):
+        from agent.heartbeat import _filter_playlist_for_decks
+        pl = {"tracks": [
+            {"rank": 1, "path": "/m/a.mp3"},
+            {"rank": 2, "path": "/m/b.mp3"},
+        ]}
+        out = _filter_playlist_for_decks(pl, "", "/m/b.mp3")
+        assert [t["path"] for t in out["tracks"]] == ["/m/a.mp3"]
+
+    def test_filters_both_decks(self):
+        from agent.heartbeat import _filter_playlist_for_decks
+        pl = {"tracks": [
+            {"rank": 1, "path": "/m/a.mp3"},
+            {"rank": 2, "path": "/m/b.mp3"},
+            {"rank": 3, "path": "/m/c.mp3"},
+        ]}
+        out = _filter_playlist_for_decks(pl, "/m/a.mp3", "/m/b.mp3")
+        assert [t["path"] for t in out["tracks"]] == ["/m/c.mp3"]
+
+    def test_nothing_to_filter_returns_original(self):
+        """When no track matches, return the original object (not a copy)
+        so callers can use `is` identity to detect 'untouched'."""
+        from agent.heartbeat import _filter_playlist_for_decks
+        pl = {"tracks": [{"rank": 1, "path": "/m/a.mp3"}]}
+        out = _filter_playlist_for_decks(pl, "/m/other.mp3", "/m/another.mp3")
+        assert out is pl
+
+
 # ── Priority 3: Scheduled Transition ────────────────────────────────
 
 class TestScheduledTransition:
