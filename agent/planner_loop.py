@@ -171,6 +171,34 @@ class PlannerMixin:
                 raw = raw.split("```")[0].strip()
             data = _json.loads(raw)
             validated = validate_playlist(data)
+            # BUG-6 fix (Phase A2 dry run #2 2026-04-19): planner's
+            # played-title exclusion uses the YouTube display title
+            # while the library uses a canonical title — Flash can't
+            # reliably match "Anyma & Rebūke - Syren [Live from
+            # Afterlife Tomorrowland]" against "Anyma, Rebūke - Syren
+            # (Live)" as the same track, so already-played tracks
+            # resurface in the playlist. Post-filter in Python by
+            # PATH (stable, unique) as a deterministic dedup.
+            played_paths = {
+                t.get("file_path") or t.get("path") or ""
+                for t in self.tracks_played
+            }
+            played_paths.discard("")  # drop empty sentinel
+            if played_paths and validated.get("tracks"):
+                before = len(validated["tracks"])
+                validated["tracks"] = [
+                    t for t in validated["tracks"]
+                    if t.get("path") not in played_paths
+                ]
+                dropped = before - len(validated["tracks"])
+                if dropped:
+                    log.info(
+                        f"Planner played-track filter: dropped {dropped} "
+                        f"already-played track(s) from playlist"
+                    )
+                    # Re-rank remaining so rank numbers stay 1..N
+                    for i, t in enumerate(validated["tracks"]):
+                        t["rank"] = i + 1
             self.session.playlist = validated
             self.session.playlist_updated_at = validated["planned_at"]
             self.session.last_planner_error = ""
