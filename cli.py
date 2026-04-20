@@ -466,11 +466,19 @@ def _reset(hard=False):
     subprocess.run(["pkill", "-f", "python.*agent"], capture_output=True)
     subprocess.run(["pkill", "-f", "mixxx"], capture_output=True)
 
-    # Clean state files (always)
+    # Clean state files (always). Includes all in-flight signal files —
+    # otherwise a fresh daemon can pick up stale scheduled transitions,
+    # directives, or mood-changes from the prior run.
     for f in ["/tmp/dj-treta-state.json", "/tmp/dj-treta-command.json",
               "/tmp/dj-treta-thinking.log", "/tmp/dj-treta-daemon.log",
               "/tmp/dj-treta.pid", "/tmp/dj-treta-billing.json",
-              "/tmp/dj-treta-playlist.json"]:
+              "/tmp/dj-treta-playlist.json",
+              "/tmp/dj-treta-scheduled-transition.json",
+              "/tmp/dj-treta-transition-pending.lock",
+              "/tmp/dj-treta-directives.json",
+              "/tmp/dj-treta-mood-change.json",
+              "/tmp/dj-treta-mood.txt",
+              "/tmp/dj-treta-being-heartbeat.json"]:
         Path(f).unlink(missing_ok=True)
 
     # Clean session + bytecache (always)
