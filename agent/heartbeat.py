@@ -273,9 +273,14 @@ class HeartbeatMixin:
             def _run():
                 try:
                     result = self._invoke_agent(instruction, fresh_session=True)
-                    log.info(f"DJ decision: {result[:500]}")
-                    if hasattr(self, '_ws_broadcast'):
-                        self._ws_broadcast("log", {"text": f"DJ decision: {result[:200]}"})
+                    # Only log/broadcast "DJ decision:" when there's actual
+                    # content. Flash drops the response ~60% of the time on
+                    # niche prompts, and blank "DJ decision:" lines pollute
+                    # the TUI and make the watchdog fallback look like a bug.
+                    if (result or "").strip():
+                        log.info(f"DJ decision: {result[:500]}")
+                        if hasattr(self, '_ws_broadcast'):
+                            self._ws_broadcast("log", {"text": f"DJ decision: {result[:200]}"})
                     # Clear directive after DJ has read it
                     if self.dj_directive:
                         log.info(f"DJ directive consumed: {self.dj_directive[:80]}")
