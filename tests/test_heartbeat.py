@@ -110,66 +110,31 @@ class TestAutoTransition:
         being._heartbeat()
         assert being._transition_pending is False
 
-    def test_auto_transition_on_user_skip_stuck(self, being, mock_mixxx):
-        """Phase A2: when session.user_skip has been unresolved for >5s AND
-        idle is ready, P2 watchdog forces a 15s crossfade instead of
-        waiting further for the DJ agent."""
-        # Active deck in mid-track (not ending) — normal P2 would NOT fire.
-        mock_mixxx["status"]["deck1"]["remaining_seconds"] = 180.0
-        mock_mixxx["status"]["deck1"]["playing"] = True
-        mock_mixxx["status"]["deck2"]["track_loaded"] = True
-        mock_mixxx["status"]["deck2"]["remaining_seconds"] = 200.0
 
-        being._agent_busy = False
-        being._transition_pending = False
-        # Signal set 10s ago → stuck.
-        import time as _t
-        being.session.user_skip = {"style": "fast", "ts": _t.time() - 10, "directive": None}
+class TestSignalExecutor:
+    """Signals (2026-04-20 revert): user_skip / idle_needs_load / set_ending
+    are executed directly in Python by heartbeat._execute_signals, not
+    routed through the DJ prompt. Phase A2 had routed them through DJ as a
+    Signals block, but that accumulated enough conditional complexity that
+    Flash started dropping ~46% of those invocations.
 
-        with patch("agent.heartbeat.threading.Thread") as mock_thread:
-            mock_thread.return_value = MagicMock()
-            being._heartbeat()
-            assert being._transition_pending is True
-
-    def test_no_watchdog_fire_on_fresh_user_skip(self, being, mock_mixxx):
-        """Phase A2: a brand-new user_skip signal (ts=now) should NOT
-        trigger the watchdog — DJ gets 5 seconds to respond first."""
-        mock_mixxx["status"]["deck1"]["remaining_seconds"] = 180.0
-        mock_mixxx["status"]["deck1"]["playing"] = True
-        mock_mixxx["status"]["deck2"]["track_loaded"] = True
-        mock_mixxx["status"]["deck2"]["remaining_seconds"] = 200.0
-
-        being._agent_busy = False
-        being._transition_pending = False
-        import time as _t
-        being.session.user_skip = {"style": "fast", "ts": _t.time(), "directive": None}
-
-        with patch("agent.heartbeat.threading.Thread") as mock_thread:
-            mock_thread.return_value = MagicMock()
-            being._heartbeat()
-            # P2 did not fire yet (ts is fresh). But P4 may fire DJ on the
-            # signal — that's fine, we only care P2 didn't pre-empt.
-            assert being._transition_pending is False
-
-
-class TestSignalClearingOnEmptyDJResponse:
-    """BUG-3 (Phase A2 dry run 2026-04-19): Flash has a measurable ~60%
-    empty-response rate on certain niche prompts. The previous logic
-    cleared signals whenever 'waiting' was absent from the result —
-    including when the result was empty/None. That meant `djtreta skip`
-    could silently clear user_skip without DJ taking any action, so the
-    skip vanished.
-
-    Fix: clear signals only when DJ produced a non-empty response OR
-    explicitly said 'waiting'. Empty response = preserve signals so the
-    next heartbeat tick retries.
+    These tests cover the new Python-executor semantics.
     """
 
-    def test_empty_dj_response_preserves_user_skip(self, being, mock_mixxx):
-        """When _invoke_agent returns '', user_skip must stay set."""
-        mock_mixxx["status"]["deck1"]["position_seconds"] = 30.0
+    def test_user_skip_writes_scheduled_transition_file(self, being, mock_mixxx, tmp_path, monkeypatch):
+        """user_skip set → _execute_signals writes scheduled-transition
+        JSON with computed at_position + duration, and clears the signal.
+        """
+        sched_path = tmp_path / "sched.json"
+        monkeypatch.setattr(
+            "agent.heartbeat.Path",
+            lambda p: sched_path if "scheduled-transition" in p
+            else tmp_path / p.replace("/", "_"),
+        )
+
+        mock_mixxx["status"]["deck1"]["position_seconds"] = 100.0
         mock_mixxx["status"]["deck1"]["duration"] = 300.0
-        mock_mixxx["status"]["deck1"]["remaining_seconds"] = 270.0
+        mock_mixxx["status"]["deck1"]["remaining_seconds"] = 200.0
         mock_mixxx["status"]["deck1"]["playing"] = True
         mock_mixxx["status"]["deck2"]["track_loaded"] = True
         mock_mixxx["status"]["deck2"]["remaining_seconds"] = 200.0
@@ -179,125 +144,92 @@ class TestSignalClearingOnEmptyDJResponse:
         import time as _t
         being.session.user_skip = {"style": "fast", "ts": _t.time(), "directive": None}
 
-        with patch.object(being, "_invoke_agent", return_value=""):
-            # Run heartbeat synchronously (don't spawn thread).
-            with patch("agent.heartbeat.threading.Thread") as mock_thread:
-                def _exec_inline(target=None, args=(), kwargs=None, **_):
-                    mt = MagicMock()
-                    mt.start = lambda: target and target(*args, **(kwargs or {}))
-                    return mt
-                mock_thread.side_effect = _exec_inline
-                being._heartbeat()
+        # Run _execute_signals directly (skips P1/P2/P3).
+        being._execute_signals(
+            mock_mixxx["status"], active_deck=1, idle_deck=2,
+            position=100.0, remaining=200.0,
+            idle_loaded=True, idle_remaining=200.0,
+        )
 
-        # Signal must be preserved so next tick / watchdog retries.
-        assert being.session.user_skip is not None
-        assert being.session.user_skip["style"] == "fast"
+        import json as _json
+        assert sched_path.exists()
+        sched = _json.loads(sched_path.read_text())
+        assert sched["toDeck"] == 2
+        assert sched["technique"] == "crossfade"
+        assert sched["atPosition"] == 102  # position + 2
+        assert sched["duration"] == 15
+        assert being.session.user_skip is None  # cleared on success
 
-    def test_waiting_response_preserves_user_skip(self, being, mock_mixxx):
-        """When DJ says 'waiting', user_skip must stay set (watchdog catches)."""
-        mock_mixxx["status"]["deck1"]["position_seconds"] = 30.0
-        mock_mixxx["status"]["deck1"]["duration"] = 300.0
-        mock_mixxx["status"]["deck1"]["remaining_seconds"] = 270.0
-        mock_mixxx["status"]["deck1"]["playing"] = True
-        mock_mixxx["status"]["deck2"]["track_loaded"] = True
-        mock_mixxx["status"]["deck2"]["remaining_seconds"] = 200.0
-
+    def test_user_skip_short_duration_near_track_end(self, being, mock_mixxx, tmp_path, monkeypatch):
+        """Skip at track end truncates duration to remaining - 1."""
+        sched_path = tmp_path / "sched.json"
+        monkeypatch.setattr(
+            "agent.heartbeat.Path",
+            lambda p: sched_path if "scheduled-transition" in p
+            else tmp_path / p.replace("/", "_"),
+        )
         being._agent_busy = False
         being._transition_pending = False
         import time as _t
         being.session.user_skip = {"style": "fast", "ts": _t.time(), "directive": None}
 
-        with patch.object(being, "_invoke_agent", return_value="waiting"):
-            with patch("agent.heartbeat.threading.Thread") as mock_thread:
-                def _exec_inline(target=None, args=(), kwargs=None, **_):
-                    mt = MagicMock()
-                    mt.start = lambda: target and target(*args, **(kwargs or {}))
-                    return mt
-                mock_thread.side_effect = _exec_inline
-                being._heartbeat()
+        being._execute_signals(
+            mock_mixxx["status"], active_deck=1, idle_deck=2,
+            position=295.0, remaining=5.0,
+            idle_loaded=True, idle_remaining=200.0,
+        )
+        import json as _json
+        sched = _json.loads(sched_path.read_text())
+        assert sched["duration"] == 4  # remaining-1 = 4
 
-        assert being.session.user_skip is not None
-
-    def test_substantive_response_clears_user_skip(self, being, mock_mixxx):
-        """When DJ returns a real response (not waiting), user_skip clears."""
-        mock_mixxx["status"]["deck1"]["position_seconds"] = 30.0
-        mock_mixxx["status"]["deck1"]["duration"] = 300.0
-        mock_mixxx["status"]["deck1"]["remaining_seconds"] = 270.0
-        mock_mixxx["status"]["deck1"]["playing"] = True
-        mock_mixxx["status"]["deck2"]["track_loaded"] = True
-        mock_mixxx["status"]["deck2"]["remaining_seconds"] = 200.0
-
-        being._agent_busy = False
-        being._transition_pending = False
-        import time as _t
-        being.session.user_skip = {"style": "fast", "ts": _t.time(), "directive": None}
-
-        with patch.object(being, "_invoke_agent", return_value="schedule_transition called"):
-            with patch("agent.heartbeat.threading.Thread") as mock_thread:
-                def _exec_inline(target=None, args=(), kwargs=None, **_):
-                    mt = MagicMock()
-                    mt.start = lambda: target and target(*args, **(kwargs or {}))
-                    return mt
-                mock_thread.side_effect = _exec_inline
-                being._heartbeat()
-
-        assert being.session.user_skip is None
-
-
-class TestSignalDrivenP4:
-    """Phase A2 — P4 guard also fires DJ on signal-set (not only past-50%).
-
-    Regression for 2026-04-19 skip bug: skip used to bypass DJ entirely;
-    now it routes through the signal mechanism and P4 picks it up.
-    """
-
-    def test_p4_fires_dj_on_idle_needs_load(self, being, mock_mixxx):
-        """idle_needs_load=True mid-track → P4 invokes DJ even though
-        active is nowhere near 50%."""
-        mock_mixxx["status"]["deck1"]["position_seconds"] = 20.0
-        mock_mixxx["status"]["deck1"]["duration"] = 300.0
-        mock_mixxx["status"]["deck1"]["remaining_seconds"] = 280.0
-        mock_mixxx["status"]["deck1"]["playing"] = True
-        mock_mixxx["status"]["deck2"]["track_loaded"] = True
-        mock_mixxx["status"]["deck2"]["remaining_seconds"] = 200.0
-
+    def test_idle_needs_load_calls_load_helper(self, being, mock_mixxx):
+        """idle_needs_load=True + idle stale → _load_next_on_idle called
+        and signal cleared on success.
+        """
         being._agent_busy = False
         being._transition_pending = False
         being.session.idle_needs_load = True
 
-        with patch.object(being, "_invoke_agent", return_value="load_track called"):
-            with patch("agent.heartbeat.threading.Thread") as mock_thread:
-                def _run_target(*args, **kwargs):
-                    mt = MagicMock()
-                    mt.start = lambda: kwargs.get("target") and kwargs["target"]()
-                    return mt
-                mock_thread.side_effect = _run_target
-                being._heartbeat()
-                # P4 triggered → agent became busy at some point
-                # (either still busy or cleaned up after success).
-                assert mock_thread.called
+        with patch.object(being, "_load_next_on_idle") as mock_load:
+            being._execute_signals(
+                mock_mixxx["status"], active_deck=1, idle_deck=2,
+                position=100.0, remaining=200.0,
+                idle_loaded=False, idle_remaining=0.0,
+            )
+            mock_load.assert_called_once()
+        assert being.session.idle_needs_load is False
 
-    def test_p4_fires_dj_on_user_skip_even_if_not_halfway(self, being, mock_mixxx):
-        """user_skip set mid-track → P4 invokes DJ."""
-        import time as _t
-        mock_mixxx["status"]["deck1"]["position_seconds"] = 30.0
-        mock_mixxx["status"]["deck1"]["duration"] = 300.0
-        mock_mixxx["status"]["deck1"]["remaining_seconds"] = 270.0
-        mock_mixxx["status"]["deck1"]["playing"] = True
-        mock_mixxx["status"]["deck2"]["track_loaded"] = True
-        mock_mixxx["status"]["deck2"]["remaining_seconds"] = 200.0
-
+    def test_idle_needs_load_clears_when_idle_fresh(self, being, mock_mixxx):
+        """idle_needs_load=True but idle has >60s remaining → signal was
+        stale, clear it without reloading.
+        """
         being._agent_busy = False
         being._transition_pending = False
-        being.session.user_skip = {
-            "style": "fast", "ts": _t.time(), "directive": None,
-        }
+        being.session.idle_needs_load = True
 
-        with patch.object(being, "_invoke_agent", return_value="scheduled"):
-            with patch("agent.heartbeat.threading.Thread") as mock_thread:
-                mock_thread.return_value = MagicMock()
-                being._heartbeat()
-                assert mock_thread.called
+        with patch.object(being, "_load_next_on_idle") as mock_load:
+            being._execute_signals(
+                mock_mixxx["status"], active_deck=1, idle_deck=2,
+                position=100.0, remaining=200.0,
+                idle_loaded=True, idle_remaining=180.0,  # fresh, not stale
+            )
+            mock_load.assert_not_called()
+        assert being.session.idle_needs_load is False
+
+    def test_set_ending_clears_without_action(self, being, mock_mixxx):
+        """set_ending has no caller yet — executor just logs and clears
+        so a stale signal doesn't loop forever.
+        """
+        being._agent_busy = False
+        being._transition_pending = False
+        being.session.set_ending = True
+
+        being._execute_signals(
+            mock_mixxx["status"], active_deck=1, idle_deck=2,
+            position=100.0, remaining=200.0,
+            idle_loaded=True, idle_remaining=200.0,
+        )
+        assert being.session.set_ending is False
 
 
 class TestFilterPlaylistForDecks:

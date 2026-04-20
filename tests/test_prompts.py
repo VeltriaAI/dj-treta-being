@@ -128,11 +128,15 @@ class TestBuildDjUserMessage:
         assert "333s left" in msg
 
 
-class TestBuildDjUserMessageSignals:
-    """Phase A2 — signal kwargs surface a 'Signals:' block in the prompt.
-
-    When nothing is set, the block is absent; when any signal is set it
-    renders a bullet list DJ can reason on."""
+class TestBuildDjUserMessageNoSignals:
+    """Signals were removed from the DJ prompt (2026-04-20 revert).
+    Phase A2 had added idle_needs_load / user_skip / set_ending kwargs
+    that rendered a 'Signals:' block with conditional branches + path
+    validation prose. Flash started dropping ~46% of those invocations.
+    Signals are now executed directly in Python (heartbeat._execute_signals)
+    — the DJ prompt stays lean and only handles creative transition
+    decisions.
+    """
 
     def _base_kwargs(self):
         return dict(
@@ -145,116 +149,22 @@ class TestBuildDjUserMessageSignals:
             idle_timeline="...",
         )
 
-    def test_no_signals_block_by_default(self):
+    def test_signals_block_never_rendered(self):
+        """The DJ prompt must not include a Signals: block — signals are
+        a Python routing concern, not a prompt concern."""
         msg = build_dj_user_message(**self._base_kwargs())
         assert "Signals:" not in msg
+        assert "idle_needs_load" not in msg
+        assert "user_skip" not in msg
+        assert "set_ending" not in msg
 
-    def test_idle_needs_load_rendered_with_playlist(self):
-        """When playlist has tracks, signal tells DJ to call load_track."""
-        playlist = {"tracks": [
-            {"rank": 1, "path": "/m/a.mp3", "title": "A", "bpm": 123,
-             "key_camelot": "9A", "energy": 7, "reason": "ok"},
-        ]}
-        msg = build_dj_user_message(
-            **self._base_kwargs(), idle_needs_load=True, playlist=playlist,
-        )
-        assert "Signals:" in msg
-        assert "idle_needs_load=True" in msg
-        assert "load_track(deck=2" in msg
-
-    def test_idle_needs_load_empty_playlist_tells_dj_to_wait(self):
-        """Phase A2.1 guardrail: when playlist is empty, the signal block
-        tells DJ to say 'waiting' instead of hallucinating a path."""
-        msg = build_dj_user_message(**self._base_kwargs(), idle_needs_load=True)
-        assert "Signals:" in msg
-        assert "idle_needs_load=True" in msg
-        assert "playlist is empty" in msg.lower()
-        assert "do NOT invent" in msg or "do not invent" in msg.lower()
-        # Must NOT instruct load_track when nothing to load.
-        assert "load_track(deck=" not in msg
-
-    def test_user_skip_rendered(self):
-        msg = build_dj_user_message(
-            **self._base_kwargs(),
-            user_skip={"style": "fast", "ts": 1.0, "directive": None},
-        )
-        assert "Signals:" in msg
-        assert "user_skip" in msg
-        assert "style=fast" in msg
-
-    def test_user_skip_with_directive(self):
-        msg = build_dj_user_message(
-            **self._base_kwargs(),
-            user_skip={"style": "smooth", "ts": 1.0, "directive": "echo it out"},
-        )
-        assert "style=smooth" in msg
-        assert "echo it out" in msg
-
-    def test_set_ending_rendered(self):
-        msg = build_dj_user_message(**self._base_kwargs(), set_ending=True)
-        assert "Signals:" in msg
-        assert "set_ending=True" in msg
-        assert "lowest-energy" in msg
-
-    def test_user_skip_priority_over_idle_needs_load(self):
-        """BUG-4 fix (Phase A2 dry run 2026-04-19): when user_skip is set,
-        only the user_skip instruction should render. idle_needs_load is
-        suppressed because the skip subsumes it (post-transition flow
-        will re-fire idle_needs_load if needed). Without this, DJ was
-        responding to idle_needs_load with load_track and ignoring the
-        skip entirely."""
-        msg = build_dj_user_message(
-            **self._base_kwargs(),
-            idle_needs_load=True,
-            user_skip={"style": "fast", "ts": 1.0, "directive": None},
-        )
-        assert "user_skip" in msg
-        # idle_needs_load must NOT render its load_track instruction.
-        assert "idle_needs_load=True" not in msg
-        # And the user_skip instruction must have COMPUTED at_position.
-        assert "at_position=102" in msg  # position=100 + 2
-
-    def test_set_ending_priority_over_idle_needs_load(self):
-        """set_ending > idle_needs_load (same priority reason)."""
-        msg = build_dj_user_message(
-            **self._base_kwargs(),
-            idle_needs_load=True,
-            set_ending=True,
-        )
-        assert "set_ending=True" in msg
-        assert "idle_needs_load=True" not in msg
-
-    def test_user_skip_priority_over_set_ending(self):
-        msg = build_dj_user_message(
-            **self._base_kwargs(),
-            user_skip={"style": "fast", "ts": 1.0, "directive": None},
-            set_ending=True,
-        )
-        assert "user_skip" in msg
-        assert "set_ending=True" not in msg
-
-    def test_user_skip_computes_exact_at_position(self):
-        """Timing math is Python's job — the prompt must include the
-        computed int, not literal text like 'now+2'."""
-        kwargs = self._base_kwargs()
-        kwargs["position"] = 123
-        msg = build_dj_user_message(
-            **kwargs,
-            user_skip={"style": "fast", "ts": 1.0, "directive": None},
-        )
-        assert "at_position=125" in msg  # 123 + 2
-        assert "now+" not in msg  # no ambiguous literal
-
-    def test_user_skip_short_duration_near_track_end(self):
-        """Skip near end of track uses short duration, not 15s overshoot."""
-        kwargs = self._base_kwargs()
-        kwargs["remaining"] = 5  # 5s left
-        msg = build_dj_user_message(
-            **kwargs,
-            user_skip={"style": "fast", "ts": 1.0, "directive": None},
-        )
-        # duration = min(15, remaining-1) = min(15, 4) = 4
-        assert "duration=4" in msg
+    def test_signal_kwargs_rejected(self):
+        """The signal kwargs were removed from the signature — passing
+        them must error, not silently get ignored."""
+        with pytest.raises(TypeError):
+            build_dj_user_message(
+                **self._base_kwargs(), idle_needs_load=True,
+            )
 
 
 class TestBuildDjUserMessagePlaylist:

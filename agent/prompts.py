@@ -35,9 +35,6 @@ def build_dj_user_message(
     dj_directive: str = "",
     playlist: dict | None = None,
     mood_profile: dict | None = None,
-    idle_needs_load: bool = False,
-    user_skip: dict | None = None,
-    set_ending: bool = False,
 ) -> str:
     """Build the user message for DJ agent heartbeat decisions.
 
@@ -46,6 +43,11 @@ def build_dj_user_message(
     the ranked candidates on the idle deck (if it's empty / almost done)
     or override with a fresh pick, then schedule a transition at the right
     musical moment.
+
+    Signals (idle_needs_load / user_skip / set_ending) are NOT passed to
+    DJ — Python executes those directly. Keeping the prompt lean restores
+    Flash's reliability on creative transition-timing decisions, which was
+    lost when Phase A2 loaded the prompt with conditional signal branches.
     """
     directive_info = ""
     if dj_directive:
@@ -87,59 +89,9 @@ def build_dj_user_message(
                 lines.append(f"       path: {path}")
         playlist_block = "\n".join(lines) + "\n\n"
 
-    # Phase A2: signals DJ consumes to drive load/skip/outro decisions.
-    # Signal priority: user_skip > set_ending > idle_needs_load.
-    # When user_skip is set, the user wants OUT of the current track NOW —
-    # any idle_needs_load is subsumed (post-transition flow will re-fire it).
-    signal_lines = []
-    if user_skip:
-        style = user_skip.get("style", "fast")
-        directive = user_skip.get("directive") or ""
-        dir_note = f" directive={directive!r}" if directive else ""
-        # Compute the exact at_position in Python (timing math is Python's
-        # job per Software 3.0). Skip 2s into future so DJ and executor
-        # have time to settle before the crossfade starts. Short duration
-        # if the active is near its end anyway.
-        skip_at = int(position + 2)
-        skip_duration = 15 if remaining > 15 else max(2, int(remaining - 1))
-        signal_lines.append(
-            f"  - user_skip set (style={style}{dir_note}) — call "
-            f"schedule_transition(technique='crossfade', to_deck={idle_deck}, "
-            f"at_position={skip_at}, duration={skip_duration}). Do NOT call "
-            f"load_track — idle deck is ready; the user wants the current "
-            f"track OUT, not a re-load."
-        )
-    elif set_ending:
-        signal_lines.append(
-            "  - set_ending=True — last 5 minutes of set. Pick lowest-energy "
-            "track from playlist; schedule echo_out with a volume fade."
-        )
-    elif idle_needs_load:
-        # Only render idle_needs_load when NO higher-priority signal is set.
-        has_playlist_tracks = bool(
-            playlist and playlist.get("tracks")
-        )
-        if has_playlist_tracks:
-            signal_lines.append(
-                f"  - idle_needs_load=True — idle deck empty or stale. "
-                f"Call load_track(deck={idle_deck}, <exact path from the "
-                f"Planner's ranked suggestions block above>) NOW. Use only "
-                f"a path that appears verbatim in that block."
-            )
-        else:
-            signal_lines.append(
-                "  - idle_needs_load=True BUT playlist is empty. Respond "
-                "'waiting' — do NOT invent a path. Library/producer peers "
-                "will populate the playlist shortly."
-            )
-    signals_block = ""
-    if signal_lines:
-        signals_block = "Signals:\n" + "\n".join(signal_lines) + "\n\n"
-
     return (
         f"{directive_info}"
         f"{profile_line}"
-        f"{signals_block}"
         f"ACTIVE: '{active_track[:40]}' at {position:.0f}s/{duration:.0f}s "
         f"({remaining:.0f}s left, BPM:{active_bpm:.0f} file:{active_file_bpm:.0f}, Key:{active_key})\n"
         f"  NOW IN: {active_section}\n"
