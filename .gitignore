@@ -9,3 +9,6 @@ djtreta.db
 djtreta.db-shm
 djtreta.db-wal
 djclaw.egg-info/
+scripts/knowledge/.job_id
+scripts/knowledge/.job_ids
+scripts/knowledge/__pycache__/

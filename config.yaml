@@ -67,11 +67,13 @@ sources:
   treta_originals: false
 
 knowledge:
-  enabled: false  # 18M-track dataset 18M-track dataset recommendations into planner
-  data_dir: "~/workspace/music-intelligence/data/unified"
+  enabled: true  # v9 NaturNestAI/electronic-music-knowledge v3 — 3.5M tracks
+  data_dir: "~/Music/DJTreta/knowledge"
+  embedding_model: "text-embedding-005"  # used for online query embedding (similar_to_text)
+  embedding_dim: 384                     # Matryoshka-truncated from 768
 
 set:
-  default_mood: "techno-deep"
+  default_mood: "melodic techno"
   energy_max_jump: 2
   peak_max_consecutive: 3
 
