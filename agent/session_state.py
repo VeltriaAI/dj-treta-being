@@ -140,6 +140,13 @@ _FIELD_DEFAULTS: dict[str, Any] = {
     "user_skip": None,          # {style: "fast"|"smooth", ts: float, directive: str|None}
     "set_ending": False,        # set when elapsed > target_minutes - 5
 
+    # Co-being deck ownership (Phase 7).
+    # Map deck number (int) → being_id (str). "treta" or absent means DJ Treta owns.
+    # Anything else means that being_id has claimed the deck via MCP and DJ Treta
+    # must not auto-load or auto-transition it. Synced from
+    # /tmp/dj-treta-deck-ownership.json at the top of every heartbeat tick.
+    "deck_ownership": dict,
+
     # Planner output (Phase 3)
     "playlist": None,
     "playlist_updated_at": 0.0,

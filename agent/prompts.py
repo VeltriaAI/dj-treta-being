@@ -35,6 +35,7 @@ def build_dj_user_message(
     dj_directive: str = "",
     playlist: dict | None = None,
     mood_profile: dict | None = None,
+    external_decks: list[int] | None = None,
 ) -> str:
     """Build the user message for DJ agent heartbeat decisions.
 
@@ -69,6 +70,16 @@ def build_dj_user_message(
         vibe = ", ".join(mood_profile.get("vibe_keywords", [])[:4])
         profile_line = f"Mood profile: {slug} | vibe: {vibe}\n"
 
+    # Phase 7 co-being mode: external Beings may have claimed one or more decks
+    # via MCP. DJ Treta must not schedule transitions onto those decks.
+    ownership_line = ""
+    if external_decks:
+        ownership_line = (
+            f"EXTERNAL DECK OWNERSHIP: deck(s) {external_decks} claimed by "
+            f"co-being(s); do NOT schedule transitions targeting these decks "
+            f"and do NOT load tracks onto them.\n"
+        )
+
     # Compact playlist render — top 5 ranks, one-liner each.  Path is
     # included explicitly so DJ can pass it verbatim to load_track.
     playlist_block = ""
@@ -92,6 +103,7 @@ def build_dj_user_message(
     return (
         f"{directive_info}"
         f"{profile_line}"
+        f"{ownership_line}"
         f"ACTIVE: '{active_track[:40]}' at {position:.0f}s/{duration:.0f}s "
         f"({remaining:.0f}s left, BPM:{active_bpm:.0f} file:{active_file_bpm:.0f}, Key:{active_key})\n"
         f"  NOW IN: {active_section}\n"
@@ -128,6 +140,7 @@ def build_planner_v8_message(
     planner_directive: str = "",
     user_intent: str = "",
     feedback_line: str = "",
+    external_decks: list[int] | None = None,
 ) -> str:
     """Build the v8 planner prompt — asks for STRICT JSON output.
 
@@ -178,6 +191,16 @@ def build_planner_v8_message(
             f"Prioritize this above BPM/key matching."
         )
 
+    # Phase 7 co-being mode: one or more decks claimed by external Beings.
+    # Planner stays advisory for treta-owned decks only.
+    ownership_line = ""
+    if external_decks:
+        ownership_line = (
+            f"\nCO-BEING MODE: deck(s) {external_decks} currently claimed by "
+            f"external being(s). Plan only for treta-owned decks; treta will "
+            f"only transition into her own decks."
+        )
+
     # Compact library snapshot — JSON array of key fields, one line each.
     # LLM picks tracks BY PATH from this list; do not invent paths.
     library_json = _json.dumps(
@@ -217,6 +240,7 @@ def build_planner_v8_message(
         + profile_line
         + directive_line
         + intent_line
+        + ownership_line
         + feedback_line
         + "\n\nAvailable library (pick paths ONLY from this list):\n"
         + library_json
@@ -246,6 +270,7 @@ def build_planner_v9_message(
     planner_directive: str = "",
     user_intent: str = "",
     feedback_line: str = "",
+    external_decks: list[int] | None = None,
 ) -> str:
     """v9 planner prompt: dataset-driven candidates, current track full timeline.
 
@@ -296,6 +321,14 @@ def build_planner_v9_message(
     timeline_line = ""
     if current_timeline:
         timeline_line = f"\nCurrent track timeline: {current_timeline}"
+
+    # Phase 7 co-being mode: one or more decks claimed by external Beings.
+    ownership_line = ""
+    if external_decks:
+        ownership_line = (
+            f"\nCO-BEING MODE: deck(s) {external_decks} currently claimed by "
+            f"external being(s). Plan only for treta-owned decks."
+        )
 
     # Compact candidate render — include `downloaded` flag + mbid/video_id
     # so the LLM can point at dataset tracks the library will fetch on demand.
@@ -357,6 +390,7 @@ def build_planner_v9_message(
         + profile_line
         + directive_line
         + intent_line
+        + ownership_line
         + feedback_line
         + "\n\nCandidate universe (pick by #rank; use path for LOCAL, "
         "mbid+video_id for DATASET):\n"

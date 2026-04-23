@@ -202,6 +202,13 @@ class PlannerMixin:
             except Exception as exc:
                 log.warning(f"v9 candidate surface failed, falling back to v8: {exc}")
 
+        # Phase 7: surface externally-owned decks to the planner so it stays
+        # advisory for treta-owned decks only.
+        external_decks = [
+            int(d) for d, o in (getattr(self.session, "deck_ownership", {}) or {}).items()
+            if o != "treta"
+        ]
+
         if v9_merged and len(v9_merged) >= 5:
             v9_mode = True
             current_timeline = _format_current_timeline(current_meta)
@@ -220,6 +227,7 @@ class PlannerMixin:
                 planner_directive=directive,
                 user_intent=intent,
                 feedback_line=feedback_line,
+                external_decks=external_decks,
             )
         else:
             log.info(
@@ -235,6 +243,7 @@ class PlannerMixin:
                 planner_directive=directive,
                 user_intent=intent,
                 feedback_line=feedback_line,
+                external_decks=external_decks,
             )
         result = self._invoke_planner(planner_msg)
 

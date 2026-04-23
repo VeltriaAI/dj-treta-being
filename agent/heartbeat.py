@@ -48,9 +48,64 @@ def _filter_playlist_for_decks(
 
 class HeartbeatMixin:
 
+    def _deck_owned_by_external(self, deck_num: int) -> bool:
+        """True if a non-treta being has claimed this deck via MCP.
+
+        Phase 7 co-being gate. Used to skip auto-load / auto-transition for
+        decks that an external Being (Himani, Serra, Manish) has reserved.
+        """
+        try:
+            owner = (self.session.deck_ownership or {}).get(int(deck_num))
+        except Exception:
+            owner = None
+        return owner is not None and owner != "treta"
+
+    def _sync_deck_ownership(self):
+        """Sync co-being ownership from /tmp/dj-treta-deck-ownership.json.
+
+        The MCP server (dj_take_deck / dj_release_deck tools) writes to this
+        file. Daemon syncs it into session.deck_ownership on every heartbeat
+        tick so the in-process guards see fresh state.
+
+        File format: {"1": {"being_id": "himani", "taken_at": 12345.6}, ...}
+        In-memory shape: {1: "himani", 2: "treta"} — just deck→owner_id.
+        """
+        import os
+        ownership_file = "/tmp/dj-treta-deck-ownership.json"
+        if not os.path.exists(ownership_file):
+            if self.session.deck_ownership:
+                # File removed externally — clear in-memory ownership.
+                self.session.deck_ownership = {}
+            return
+        try:
+            with open(ownership_file) as f:
+                raw = json.load(f) or {}
+            # Normalize: keys → int, values → being_id string. Accept both
+            # the record shape ({"being_id": "x", "taken_at": ...}) and a
+            # raw string value for flexibility.
+            normalized = {}
+            for k, v in raw.items():
+                if not str(k).isdigit():
+                    continue
+                if isinstance(v, dict):
+                    bid = v.get("being_id")
+                elif isinstance(v, str):
+                    bid = v
+                else:
+                    bid = None
+                if bid:
+                    normalized[int(k)] = bid
+            if normalized != self.session.deck_ownership:
+                self.session.deck_ownership = normalized
+        except Exception as exc:
+            log.warning(f"deck_ownership sync failed: {exc}")
+
     def _heartbeat(self):
         """Pure Python heartbeat. Reads mix_out from DB. No flags, no timers."""
         from .main import _get_status, _active_idle_decks, _ensure_mixxx
+
+        # Sync co-being deck ownership (Phase 7) before any decisions.
+        self._sync_deck_ownership()
 
         status = _get_status(self.config.mixxx.url)
         if not status:
@@ -87,7 +142,17 @@ class HeartbeatMixin:
         # didn't schedule anything in time. Signals (user_skip, set_ending,
         # idle_needs_load) are now executed directly in P3.5 below, NOT via
         # this watchdog.
-        if (idle_ready and remaining < 30 and remaining > 0 and playing
+        # Phase 7: if either deck is claimed by an external Being, skip —
+        # co-being owns that deck and DJ must not auto-transition into it.
+        if (self._deck_owned_by_external(idle_deck)
+                or self._deck_owned_by_external(active_deck)):
+            owner_i = self.session.deck_ownership.get(int(idle_deck))
+            owner_a = self.session.deck_ownership.get(int(active_deck))
+            log.debug(
+                f"P2 auto-transition skipped — deck {active_deck} owner={owner_a}, "
+                f"deck {idle_deck} owner={owner_i}"
+            )
+        elif (idle_ready and remaining < 30 and remaining > 0 and playing
                 and not self._agent_busy and not self._transition_pending):
             log.info(f"Auto-transition (track ending): {remaining:.0f}s left, crossfading to deck {idle_deck}")
             if hasattr(self, '_ws_broadcast'):
@@ -115,17 +180,28 @@ class HeartbeatMixin:
             return
 
         # === PRIORITY 3: Execute scheduled transition (Python handles timing) ===
+        # Phase 7: skip if the scheduled transition targets an externally-owned
+        # deck. Treta shouldn't push music onto a co-being's deck.
         if not self._transition_pending:
             sched_file = Path("/tmp/dj-treta-scheduled-transition.json")
             if sched_file.exists():
                 try:
                     sched = json.loads(sched_file.read_text())
-                    sched_file.unlink(missing_ok=True)  # delete BEFORE starting executor (#67)
-                    self._transition_pending = True
-                    threading.Thread(
-                        target=self._execute_scheduled_transition,
-                        args=(sched,), daemon=True
-                    ).start()
+                    sched_to_deck = sched.get("toDeck") or sched.get("to_deck") or idle_deck
+                    if self._deck_owned_by_external(sched_to_deck):
+                        owner = self.session.deck_ownership.get(int(sched_to_deck))
+                        log.debug(
+                            f"P3 scheduled transition skipped — deck "
+                            f"{sched_to_deck} owned by {owner}"
+                        )
+                        sched_file.unlink(missing_ok=True)
+                    else:
+                        sched_file.unlink(missing_ok=True)  # delete BEFORE starting executor (#67)
+                        self._transition_pending = True
+                        threading.Thread(
+                            target=self._execute_scheduled_transition,
+                            args=(sched,), daemon=True
+                        ).start()
                 except Exception as e:
                     log.warning(f"Bad scheduled transition file: {e}")
                     sched_file.unlink(missing_ok=True)
@@ -145,9 +221,17 @@ class HeartbeatMixin:
         # Fires only when active is past-half-played and idle is ready.
         # DJ picks technique (crossfade / bass_swap / echo_out / hard_cut)
         # based on BPM/key/energy gap between active and next-loaded.
+        # Phase 7: if the idle deck is externally owned, DJ has nothing to
+        # schedule into — skip the agent call entirely. Active-only DJing
+        # (just let the current track finish) is the right behaviour.
         sched_file_exists = Path("/tmp/dj-treta-scheduled-transition.json").exists()
         past_half = idle_ready and duration > 0 and position > (duration * 0.5)
-        if (past_half
+        if self._deck_owned_by_external(idle_deck):
+            owner = self.session.deck_ownership.get(int(idle_deck))
+            log.debug(
+                f"P4 DJ invoke skipped — idle deck {idle_deck} owned by {owner}"
+            )
+        elif (past_half
                 and not self._agent_busy and not self._transition_pending
                 and not sched_file_exists):
             from .db import get_track_by_path
@@ -200,6 +284,13 @@ class HeartbeatMixin:
                 idle_file,
             )
 
+            # Phase 7: list decks claimed by external Beings so DJ doesn't try
+            # to schedule transitions onto them.
+            external_decks = [
+                int(d) for d, o in (self.session.deck_ownership or {}).items()
+                if o != "treta"
+            ]
+
             instruction = build_dj_user_message(
                 active_track=active_track,
                 position=position,
@@ -220,6 +311,7 @@ class HeartbeatMixin:
                 dj_directive=self.dj_directive,
                 playlist=filtered_playlist,
                 mood_profile=getattr(self.session, "mood_profile", None),
+                external_decks=external_decks,
             )
 
             self._agent_busy = True
@@ -314,9 +406,20 @@ class HeartbeatMixin:
         sched_file = Path("/tmp/dj-treta-scheduled-transition.json")
         lock_file = Path("/tmp/dj-treta-transition-pending.lock")
 
+        # Phase 7: if idle deck is externally owned, Python signals MUST NOT
+        # write into it. DJ still manages treta-owned decks normally, but
+        # skip/idle-load routed through idle_deck is pure co-being territory.
+        idle_owned_external = self._deck_owned_by_external(idle_deck)
+
         # ── user_skip → immediate crossfade via scheduled-transition file ──
         user_skip = getattr(self.session, "user_skip", None)
-        if user_skip and not self._transition_pending \
+        if user_skip and idle_owned_external:
+            owner = self.session.deck_ownership.get(int(idle_deck))
+            log.debug(
+                f"[SIGNAL] user_skip dropped — idle deck {idle_deck} owned by {owner}"
+            )
+            self.session.user_skip = None
+        elif user_skip and not self._transition_pending \
                 and not sched_file.exists() and not lock_file.exists():
             if idle_loaded and idle_remaining > 10:
                 at_position = int(position + 2)
@@ -356,7 +459,13 @@ class HeartbeatMixin:
 
         # ── idle_needs_load → load rank-1 via existing helper (BUG-17 dedup) ──
         idle_needs_load = getattr(self.session, "idle_needs_load", False)
-        if idle_needs_load and not self._transition_pending:
+        if idle_needs_load and idle_owned_external:
+            owner = self.session.deck_ownership.get(int(idle_deck))
+            log.debug(
+                f"[SIGNAL] idle_needs_load dropped — deck {idle_deck} owned by {owner}"
+            )
+            self.session.idle_needs_load = False
+        elif idle_needs_load and not self._transition_pending:
             # Only act if idle really is stale (not already freshly loaded).
             idle_stale = (not idle_loaded) or idle_remaining < 60
             if idle_stale:
