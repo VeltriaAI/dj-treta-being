@@ -470,6 +470,17 @@ class DJTretaBeing(
 
         self.session.register_callback("mood", _on_mood_change)
 
+        # Default mood fallback — apply config.set.default_mood only after the
+        # mood callback is registered so mood_profile resolution fires.
+        # Without this, post-hard_reset session.mood='' leaves the planner
+        # flying blind and DJ picks incompatible tracks from the library.
+        if not self.session.mood and self.config.set.default_mood:
+            self.session.mood = self.config.set.default_mood
+        # If mood is set but profile hasn't resolved (e.g., mood was applied
+        # before callback was registered on a prior run), kick resolver now.
+        elif self.session.mood and not (self.session.mood_profile or {}).get("canonical_slug"):
+            _on_mood_change("mood", "", self.session.mood)
+
         # Phase A2: track when idle_needs_load flips True so the watchdog
         # can tell if DJ has hung on the signal for longer than N seconds.
         def _on_idle_needs_load(name, old, new):
