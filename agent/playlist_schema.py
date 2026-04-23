@@ -94,12 +94,36 @@ def _validate_track(t: dict, idx: int, seen_ranks: set, seen_paths: set) -> dict
         raise PlaylistValidationError(f"track #{idx}: duplicate rank {rank}")
     seen_ranks.add(rank)
 
-    path = t.get("path")
-    if not isinstance(path, str) or not path.strip():
-        raise PlaylistValidationError(f"track #{idx}: path must be a non-empty string")
-    if path in seen_paths:
-        raise PlaylistValidationError(f"track #{idx}: duplicate path {path!r}")
-    seen_paths.add(path)
+    # v9: tracks may be undownloaded (knowledge-dataset picks). downloaded
+    # defaults to True for backward-compat with v8 playlists.
+    downloaded = bool(t.get("downloaded", True))
+    video_id = str(t.get("video_id", "") or "")
+    mbid = str(t.get("mbid", "") or "")
+
+    path = t.get("path", "")
+    if not isinstance(path, str):
+        raise PlaylistValidationError(f"track #{idx}: path must be a string, got {type(path).__name__}")
+    path = path.strip()
+
+    if downloaded:
+        if not path:
+            raise PlaylistValidationError(
+                f"track #{idx}: path must be non-empty when downloaded=true"
+            )
+        if path in seen_paths:
+            raise PlaylistValidationError(f"track #{idx}: duplicate path {path!r}")
+        seen_paths.add(path)
+    else:
+        # v9 undownloaded: need at least one of video_id or mbid to resolve later.
+        if not video_id and not mbid:
+            raise PlaylistValidationError(
+                f"track #{idx}: downloaded=false requires video_id or mbid"
+            )
+        # Paths are optional for undownloaded — but still dedup if present.
+        if path:
+            if path in seen_paths:
+                raise PlaylistValidationError(f"track #{idx}: duplicate path {path!r}")
+            seen_paths.add(path)
 
     # Optional numeric fields — coerce if present, default if missing.
     bpm = t.get("bpm")
@@ -124,13 +148,17 @@ def _validate_track(t: dict, idx: int, seen_ranks: set, seen_paths: set) -> dict
 
     return {
         "rank": rank,
-        "path": path.strip(),
+        "path": path,
         "title": str(t.get("title", "") or ""),
         "bpm": bpm,
         "key_camelot": str(t.get("key_camelot", "") or ""),
         "energy": energy,
         "reason": str(t.get("reason", "") or ""),
         "transition_hint": transition,
+        # v9 fields
+        "downloaded": downloaded,
+        "video_id": video_id,
+        "mbid": mbid,
     }
 
 
@@ -162,9 +190,13 @@ def pick_next_candidate(
     playlist: dict | None,
     exclude_paths: set,
     played_titles: list,
+    *,
+    downloaded_only: bool = True,
 ) -> dict | None:
     """Return the highest-rank track from `playlist` not already played or on deck.
 
+    `downloaded_only=True` (default) skips knowledge-dataset candidates that
+    haven't been fetched yet — DJ can't load_track(path="").
     Returns None if the playlist is empty / all candidates excluded.
     """
     if not playlist or not isinstance(playlist.get("tracks"), list):
@@ -172,10 +204,26 @@ def pick_next_candidate(
     played_titles_set = set(played_titles or [])
     ranked = sorted(playlist["tracks"], key=lambda t: t.get("rank", 999))
     for track in ranked:
+        if downloaded_only and not track.get("downloaded", True):
+            continue
         if track.get("path") in exclude_paths:
             continue
         title = track.get("title", "")
         if title and title in played_titles_set:
             continue
         return track
+    return None
+
+
+def first_undownloaded_candidate(playlist: dict | None) -> dict | None:
+    """Return the highest-rank undownloaded track — surfaces `library_need`.
+
+    v9 planner uses this to tell the library agent what to fetch next.
+    """
+    if not playlist or not isinstance(playlist.get("tracks"), list):
+        return None
+    ranked = sorted(playlist["tracks"], key=lambda t: t.get("rank", 999))
+    for track in ranked:
+        if not track.get("downloaded", True):
+            return track
     return None

@@ -6,6 +6,7 @@ reads that playlist instead of running SQL filters. See REFACTOR_PLAN.md
 §6 Phase 3.
 """
 
+import json
 import logging
 import threading
 import time
@@ -14,6 +15,33 @@ from pathlib import Path
 import httpx
 
 log = logging.getLogger("dj-treta")
+
+
+def _format_current_timeline(current_meta: dict | None) -> str:
+    """Render the current track's section timeline for the v9 planner prompt.
+
+    v9 Tier-1 enrichment: the planner needs to see the current track's
+    structure (intro/build/drop/breakdown/outro) so rank-1 picks can match
+    outro energy character. Data comes from track.timeline JSON — already
+    extracted by the audio analyzer.
+    """
+    if not current_meta:
+        return ""
+    raw = current_meta.get("timeline") or ""
+    if not raw:
+        return ""
+    try:
+        sections = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return ""
+    if not isinstance(sections, list):
+        return ""
+    parts = []
+    for s in sections:
+        name = s.get("section") or "?"
+        energy = s.get("energy") or "?"
+        parts.append(f"{name}(e{energy})")
+    return " → ".join(parts) if parts else ""
 
 
 class PlannerMixin:
@@ -107,7 +135,7 @@ class PlannerMixin:
         import json as _json
         from .db import get_track_by_path, get_library_with_metadata
         from .playlist_schema import validate_playlist, PlaylistValidationError
-        from .prompts import build_planner_v8_message
+        from .prompts import build_planner_v8_message, build_planner_v9_message
 
         played_list = [t.get("title", "?") for t in self.tracks_played]
 
@@ -158,20 +186,56 @@ class PlannerMixin:
         except Exception:
             pass
 
-        log.info(
-            f"Planner running — current: {current_track or 'nothing'}, "
-            f"{len(library)} analyzed library tracks"
-        )
-        planner_msg = build_planner_v8_message(
-            current_info=current_info,
-            played_list=played_list,
-            library=library,
-            mood_profile=getattr(self.session, "mood_profile", None),
-            mood=self.mood or "",
-            planner_directive=directive,
-            user_intent=intent,
-            feedback_line=feedback_line,
-        )
+        # v9: if knowledge is enabled, surface candidates from the 3.5M-track
+        # dataset and use the v9 prompt. Fallback to v8 (full-library dump) if
+        # knowledge is off or surfacing produces too few candidates.
+        v9_merged = None
+        v9_mode = False
+        if getattr(self.config, "knowledge", None) and getattr(
+            self.config.knowledge, "enabled", False
+        ):
+            try:
+                v9_merged = self._surface_v9_candidates(
+                    current_meta=current_meta,
+                    played_list=played_list,
+                )
+            except Exception as exc:
+                log.warning(f"v9 candidate surface failed, falling back to v8: {exc}")
+
+        if v9_merged and len(v9_merged) >= 5:
+            v9_mode = True
+            current_timeline = _format_current_timeline(current_meta)
+            log.info(
+                f"Planner running (v9) — current: {current_track or 'nothing'}, "
+                f"{len(v9_merged)} merged candidates "
+                f"({sum(1 for c in v9_merged if c.get('downloaded'))} local)"
+            )
+            planner_msg = build_planner_v9_message(
+                current_info=current_info,
+                current_timeline=current_timeline,
+                played_list=played_list,
+                merged_candidates=v9_merged,
+                mood_profile=getattr(self.session, "mood_profile", None),
+                mood=self.mood or "",
+                planner_directive=directive,
+                user_intent=intent,
+                feedback_line=feedback_line,
+            )
+        else:
+            log.info(
+                f"Planner running (v8) — current: {current_track or 'nothing'}, "
+                f"{len(library)} analyzed library tracks"
+            )
+            planner_msg = build_planner_v8_message(
+                current_info=current_info,
+                played_list=played_list,
+                library=library,
+                mood_profile=getattr(self.session, "mood_profile", None),
+                mood=self.mood or "",
+                planner_directive=directive,
+                user_intent=intent,
+                feedback_line=feedback_line,
+            )
         result = self._invoke_planner(planner_msg)
 
         # Parse + validate LLM output. On any failure, keep the previous
@@ -191,22 +255,56 @@ class PlannerMixin:
             # load_track, idle deck stays empty, oscillates retrying.
             # Cross-validate every playlist path against the library DB;
             # drop candidates whose path is not a known library file.
-            library_paths = {t.get("path", "") for t in library}
-            library_paths.discard("")
-            if library_paths and validated.get("tracks"):
-                before = len(validated["tracks"])
-                validated["tracks"] = [
-                    t for t in validated["tracks"]
-                    if t.get("path") in library_paths
-                ]
-                invalid = before - len(validated["tracks"])
-                if invalid:
-                    log.info(
-                        f"Planner path-validation filter: dropped {invalid} "
-                        f"invalid-path candidate(s) from playlist"
-                    )
-                    for i, t in enumerate(validated["tracks"]):
-                        t["rank"] = i + 1
+            if v9_mode:
+                # v9: validate downloaded tracks against local library paths;
+                # undownloaded tracks against the dataset refs we surfaced.
+                # Catches Flash hallucinations of either kind.
+                local_paths = {
+                    c.get("path", "") for c in v9_merged if c.get("downloaded")
+                }
+                local_paths.discard("")
+                dataset_refs = {
+                    (c.get("mbid") or "", c.get("video_id") or "")
+                    for c in v9_merged if not c.get("downloaded")
+                }
+                dataset_refs.discard(("", ""))
+                if validated.get("tracks"):
+                    before = len(validated["tracks"])
+                    kept = []
+                    for t in validated["tracks"]:
+                        if t.get("downloaded", True):
+                            if t.get("path") in local_paths:
+                                kept.append(t)
+                        else:
+                            ref = (t.get("mbid", ""), t.get("video_id", ""))
+                            if ref in dataset_refs:
+                                kept.append(t)
+                    validated["tracks"] = kept
+                    invalid = before - len(kept)
+                    if invalid:
+                        log.info(
+                            f"Planner v9 ref-validation: dropped {invalid} "
+                            f"unknown-ref candidate(s) from playlist"
+                        )
+                        for i, t in enumerate(validated["tracks"]):
+                            t["rank"] = i + 1
+            else:
+                library_paths = {t.get("path", "") for t in library}
+                library_paths.discard("")
+                if library_paths and validated.get("tracks"):
+                    before = len(validated["tracks"])
+                    validated["tracks"] = [
+                        t for t in validated["tracks"]
+                        if t.get("path") in library_paths
+                    ]
+                    invalid = before - len(validated["tracks"])
+                    if invalid:
+                        log.info(
+                            f"Planner path-validation filter: dropped {invalid} "
+                            f"invalid-path candidate(s) from playlist"
+                        )
+                        for i, t in enumerate(validated["tracks"]):
+                            t["rank"] = i + 1
             # BUG-6 fix (Phase A2 dry run #2 2026-04-19): planner's
             # played-title exclusion uses the YouTube display title
             # while the library uses a canonical title — Flash can't
@@ -284,6 +382,11 @@ class PlannerMixin:
                     # Re-rank remaining so rank numbers stay 1..N
                     for i, t in enumerate(validated["tracks"]):
                         t["rank"] = i + 1
+            # Override LLM-hallucinated planned_at with real wall-clock time.
+            # Flash occasionally emits 2024-era timestamps from its training
+            # corpus; downstream logic (TUI age display, stale-playlist check)
+            # relies on this being reality.
+            validated["planned_at"] = time.time()
             self.session.playlist = validated
             self.session.playlist_updated_at = validated["planned_at"]
             self.session.last_planner_error = ""
@@ -295,6 +398,59 @@ class PlannerMixin:
                 self._ws_broadcast("log", {
                     "text": f"Planner: {len(validated['tracks'])} candidates planned"
                 })
+
+            # v9: if rank-1 (or any track) is undownloaded, signal library to
+            # fetch. K5 library loop consumes session.library_need with the
+            # targeted-fetch shape {video_id, title, mbid, ...}.
+            if v9_mode and validated.get("tracks"):
+                for t in sorted(
+                    validated["tracks"], key=lambda x: x.get("rank", 99)
+                ):
+                    if t.get("downloaded", True):
+                        continue
+                    # Try to enrich from the candidate list, but fall back to
+                    # the track's own fields — library agent only needs
+                    # video_id to download. Don't block on a perfect match.
+                    vid = t.get("video_id") or ""
+                    mbid = t.get("mbid") or ""
+                    match = next(
+                        (
+                            c for c in v9_merged
+                            if (c.get("video_id") or "") == vid and vid
+                            or ((c.get("mbid") or "") == mbid and mbid)
+                        ),
+                        {},
+                    )
+                    if not vid and not mbid:
+                        continue  # library can't do anything without either
+                    existing = getattr(self.session, "library_need", None) or {}
+                    if existing.get("video_id") == vid and vid:
+                        break
+                    canonical = match.get("canonical") if isinstance(match, dict) else None
+                    if isinstance(canonical, dict):
+                        canon_artist = canonical.get("artist", "")
+                        canon_song = canonical.get("song", "")
+                    else:
+                        canon_artist = match.get("artist", "") if match else ""
+                        canon_song = (match.get("title", "") if match else "") or t.get("title", "")
+                    self.session.library_need = {
+                        "video_id": vid,
+                        "mbid": mbid,
+                        "title": t.get("title") or (match.get("title", "") if match else ""),
+                        "youtube_music_url": (
+                            (match.get("youtube_music_url", "") if match else "")
+                            or (f"https://music.youtube.com/watch?v={vid}" if vid else "")
+                        ),
+                        "canonical_artist": canon_artist,
+                        "canonical_song": canon_song,
+                        "reason": f"planner rank-{t.get('rank')} pick not downloaded",
+                        "ts": time.time(),
+                    }
+                    log.info(
+                        f"Planner emitted library_need for rank {t.get('rank')}: "
+                        f"{t.get('title') or vid}"
+                    )
+                    break
             # v8 bridge: emit library_need whenever the usable playlist is
             # empty, regardless of library size. BUG-10 fix: previously the
             # guard only fired on `not library` (empty library). With BUG-6
@@ -321,6 +477,104 @@ class PlannerMixin:
             msg = f"{type(exc).__name__}: {exc}"
             log.warning(f"Planner output invalid — keeping last good playlist. {msg}")
             self.session.last_planner_error = msg
+
+    def _surface_v9_candidates(self, current_meta, played_list) -> list[dict]:
+        """Build merged candidate list for v9 planner prompt.
+
+        Unions knowledge.discover_candidates (mood-filtered) with
+        knowledge.similar_to (current-track seeded; skipped if vectors aren't
+        ingested yet), dedups by mbid/canonical, merges with local library
+        to mark downloaded tracks, filters out played, and sorts by
+        (downloaded DESC, similarity DESC, year DESC). Returns top 30 as
+        plain dicts matching build_planner_v9_message's `merged_candidates`.
+        """
+        from dataclasses import asdict
+        from .knowledge import queries as kb
+        from .knowledge.merge import merge_candidates_against_local
+        from .knowledge.models import CanonicalRef
+
+        mood_profile = getattr(self.session, "mood_profile", None) or {}
+        raw_range = mood_profile.get("bpm_range") or []
+        bpm_range = None
+        if isinstance(raw_range, (list, tuple)) and len(raw_range) == 2:
+            bpm_range = (int(raw_range[0]), int(raw_range[1]))
+
+        discover = kb.discover_candidates(
+            mood_profile=mood_profile,
+            bpm_range=bpm_range,
+            limit=40,
+        )
+
+        similar = []
+        if current_meta and kb._client().has_vectors():
+            artist = (
+                current_meta.get("canonical_artist")
+                or current_meta.get("artist")
+                or ""
+            )
+            song = (
+                current_meta.get("canonical_song")
+                or current_meta.get("title")
+                or ""
+            )
+            if artist and song:
+                seed = CanonicalRef(artist=artist, song=song)
+                try:
+                    similar = kb.similar_to(seed, limit=20)
+                except Exception as exc:
+                    log.warning(f"v9 similar_to seed failed: {exc}")
+
+        # Union + dedup (similar first to preserve similarity rank).
+        seen = set()
+        ktracks = []
+        for t in similar + discover:
+            key = t.mbid or f"{t.artist_name.lower()}|{t.title.lower()}"
+            if key in seen:
+                continue
+            seen.add(key)
+            ktracks.append(t)
+
+        if not ktracks:
+            return []
+
+        merged = merge_candidates_against_local(ktracks)
+
+        # Played dedup: by canonical-title normalization.
+        played_lower = {(p or "").lower() for p in played_list}
+        played_lower.discard("")
+        merged = [
+            m for m in merged
+            if m.title.lower() not in played_lower
+        ]
+
+        # Filter out continuous-mix compilations (K7 data-quality finding).
+        _MIX_MARKERS = (
+            "continuous mix", "dj mix", "mix 01", "mix 02", "mix 03",
+            "mix 1 - continuous", "mix 2 - continuous", "mix 3 - continuous",
+        )
+        merged = [
+            m for m in merged
+            if not any(marker in (m.title or "").lower() for marker in _MIX_MARKERS)
+        ]
+
+        # Rank: downloaded wins, then similarity DESC, then year DESC.
+        def sort_key(m):
+            return (
+                0 if m.downloaded else 1,
+                -(m.similarity_score or 0.0),
+                -(m.year or 0),
+            )
+        merged.sort(key=sort_key)
+
+        # Top 30, rank, flatten to dicts for the prompt.
+        result = []
+        for i, m in enumerate(merged[:30], start=1):
+            d = asdict(m)
+            d["rank"] = i
+            # Flatten canonical for the prompt renderer.
+            d["artist"] = m.canonical.artist
+            result.append(d)
+        return result
 
     def _playlist_contains_played(self, playlist) -> bool:
         """BUG-9 fix: True if the current playlist contains any track that

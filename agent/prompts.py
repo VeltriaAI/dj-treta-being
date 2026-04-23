@@ -235,6 +235,150 @@ def build_planner_v8_message(
     )
 
 
+def build_planner_v9_message(
+    *,
+    current_info: str,
+    current_timeline: str = "",
+    played_list: list,
+    merged_candidates: list,
+    mood_profile: dict | None,
+    mood: str = "",
+    planner_directive: str = "",
+    user_intent: str = "",
+    feedback_line: str = "",
+) -> str:
+    """v9 planner prompt: dataset-driven candidates, current track full timeline.
+
+    `merged_candidates` is a list of MergedCandidate-shaped dicts:
+        {rank, mbid, video_id, title, artist, bpm, key_camelot, energy,
+         year, genre, subgenre, downloaded, path, similarity_score, reason}
+
+    Python has already surfaced the relevant universe (mood filter + similarity
+    seed + local merge). LLM picks the top 5 ranked by DJ-arc fit.
+    """
+    import json as _json
+    import time as _time
+
+    mood_slug = (mood_profile or {}).get("canonical_slug") or mood or "melodic-techno"
+
+    profile_line = ""
+    if mood_profile:
+        bpm = mood_profile.get("bpm_range") or []
+        energy = mood_profile.get("energy_range") or []
+        vibe = mood_profile.get("vibe_keywords") or []
+        conf = mood_profile.get("confidence", 0.0)
+        bits = [f"canonical={mood_slug}"]
+        if bpm:
+            bits.append(f"BPM {bpm[0]}-{bpm[1]}")
+        if energy:
+            bits.append(f"energy {energy[0]}-{energy[1]}/10")
+        if vibe:
+            bits.append("vibe: " + ", ".join(vibe[:5]))
+        profile_line = (
+            f"\nResolved mood profile: {' | '.join(bits)} "
+            f"(confidence {conf:.2f})."
+        )
+
+    directive_line = ""
+    if planner_directive:
+        directive_line = (
+            f"\nDIRECTIVE FROM TRETA: {planner_directive}\n"
+            f"Prioritize this above BPM/key matching."
+        )
+
+    intent_line = ""
+    if user_intent:
+        intent_line = (
+            f'\nLISTENER REQUEST: "{user_intent}"\n'
+            f"Prioritize this above BPM/key matching."
+        )
+
+    timeline_line = ""
+    if current_timeline:
+        timeline_line = f"\nCurrent track timeline: {current_timeline}"
+
+    # Compact candidate render — include `downloaded` flag + mbid/video_id
+    # so the LLM can point at dataset tracks the library will fetch on demand.
+    def _strip_artist_prefix(artist: str, title: str) -> str:
+        # Local titles often include the artist ("Emilie Nana - Wild Sensations")
+        # while dataset titles are clean ("Wild Sensations"). Normalize so the
+        # render doesn't double the artist.
+        if not artist or not title:
+            return title
+        prefix = f"{artist.lower().strip()} - "
+        if title.lower().lstrip().startswith(prefix):
+            return title[len(prefix):].lstrip()
+        return title
+
+    candidate_lines = []
+    for c in merged_candidates:
+        rank = c.get("rank", "?")
+        raw_title = (c.get("title") or "")
+        artist = (c.get("artist") or c.get("artist_name") or "")[:30]
+        title = _strip_artist_prefix(artist, raw_title)[:60]
+        bpm = c.get("bpm") or c.get("bpm_hint") or ""
+        key = c.get("key_camelot") or ""
+        energy = c.get("energy") or ""
+        year = c.get("year") or ""
+        sub = c.get("subgenre") or ""
+        dl = "LOCAL" if c.get("downloaded") else "DATASET"
+        sim = c.get("similarity_score")
+        sim_str = f" sim={sim:.2f}" if sim is not None else ""
+        ident = c.get("path") or f"mbid:{c.get('mbid','')[:8]}|vid:{c.get('video_id','')}"
+        candidate_lines.append(
+            f"#{rank} [{dl}]{sim_str} {artist} - {title} "
+            f"| {bpm}bpm {key} e{energy} {year} {sub}"
+        )
+        candidate_lines.append(f"    ref: {ident}")
+
+    candidates_block = "\n".join(candidate_lines) if candidate_lines else "  (empty)"
+
+    schema = (
+        '{"planned_at":<float>, "mood_snapshot":"<canonical_slug>", '
+        '"reasoning_summary":"<paragraph>", '
+        '"tracks":[{"rank":<int>, "downloaded":<bool>, '
+        '"path":"<local path if downloaded>", '
+        '"mbid":"<from candidates>", "video_id":"<from candidates>", '
+        '"title":"...", "bpm":<float>, "key_camelot":"<e.g. 8A>", '
+        '"energy":<1-10>, "reason":"<why this fits>", '
+        '"transition_hint":{"technique":"crossfade|bass_swap|filter_sweep|echo_out|hard_cut", '
+        '"duration":<10-90>, "at_section":"breakdown|outro|build|drop|intro"}}]}'
+    )
+
+    return (
+        "You are DJ Treta's planning brain. The library below is a merged "
+        "universe of LOCAL (downloaded, analyzed) and DATASET (known but "
+        "not yet on disk) tracks. Return a ranked playlist of the next 5 "
+        "candidates as STRICT JSON.\n\n"
+        f"Currently playing: {current_info}"
+        + timeline_line
+        + f"\nAlready played (DO NOT repeat): {played_list}\n"
+        f"Current mood: {mood_slug}."
+        + profile_line
+        + directive_line
+        + intent_line
+        + feedback_line
+        + "\n\nCandidate universe (pick by #rank; use path for LOCAL, "
+        "mbid+video_id for DATASET):\n"
+        + candidates_block
+        + "\n\nReturn JSON matching this schema (no markdown fences):\n"
+        + schema
+        + "\n\nRules:\n"
+        "- Exactly 5 candidates, ranks 1..5.\n"
+        "- `downloaded` must match the candidate's LOCAL/DATASET flag.\n"
+        "- For LOCAL: copy `path` from the ref line verbatim.\n"
+        "- For DATASET: copy `mbid` and `video_id` from the ref line; "
+        "leave `path` as empty string.\n"
+        "- Prefer LOCAL for rank 1 unless a DATASET track is clearly a "
+        "better musical fit (similarity, BPM, key, energy arc).\n"
+        "- Never repeat a title from the played list.\n"
+        "- transition_hint.technique should respect BPM gap rules: "
+        "≤3 BPM → crossfade, 4-6 → echo_out, ≥8 or genre change → hard_cut.\n"
+        "- reasoning_summary: one paragraph on arc strategy.\n"
+        "Return JSON ONLY."
+    )
+
+
 def build_planner_user_message(
     *,
     current_info: str,
