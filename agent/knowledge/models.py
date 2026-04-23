@@ -51,6 +51,19 @@ class KnowledgeTrack:
     bpm_hint: Optional[int] = None
     search_query: str = ""  # recommended YouTube query
 
+    # v9 dataset fields — populated when backend is the NaturNestAI parquet.
+    mbid: str = ""
+    artist_name: str = ""
+    title: str = ""
+    video_id: str = ""
+    youtube_music_url: str = ""
+    tempo: Optional[float] = None
+    key: Optional[int] = None
+    danceability: Optional[float] = None
+    energy_feat: Optional[float] = None    # Spotify audio-features energy
+    valence: Optional[float] = None
+    similarity_score: Optional[float] = None  # set when returned by similar_to()
+
 
 @dataclass
 class GenreInfo:
@@ -97,6 +110,12 @@ class MergedCandidate:
     downloaded: bool = False
     path: str = ""             # only meaningful when downloaded=True
     search_query: str = ""     # for library manager when not downloaded
+
+    # v9 dataset carry-through
+    mbid: str = ""
+    video_id: str = ""
+    youtube_music_url: str = ""
+    similarity_score: Optional[float] = None
 
 
 @dataclass
