@@ -129,6 +129,8 @@ _FIELD_DEFAULTS: dict[str, Any] = {
     # Signals (event bus for Phase 3-6)
     "replan_requested": False,
     "library_need": None,
+    "library_ready": None,          # K5: library agent emits on successful download
+    "library_need_failed": None,    # K5: library agent emits after 3 download failures
     "producer_need": None,
 
     # Deck-ownership signals (Phase A1 of deck-ownership sub-plan).
