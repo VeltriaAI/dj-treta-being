@@ -1,107 +1,6569 @@
 {
-  "mood": "psytrance",
+  "mood": "melodic-techno",
+  "mood_profile": {
+    "raw": "melodic techno",
+    "canonical_slug": "melodic-techno",
+    "bpm_range": [
+      120,
+      125
+    ],
+    "energy_range": [
+      6,
+      9
+    ],
+    "vibe_keywords": [
+      "atmospheric",
+      "driving",
+      "emotive",
+      "hypnotic"
+    ],
+    "confidence": 0.97,
+    "resolved_at": 1776965073.6688268,
+    "resolver_version": "v2",
+    "discogs_primary_genre": "Electronic",
+    "discogs_subgenres": [
+      "Melodic Techno",
+      "Techno"
+    ]
+  },
+  "user_intent": "",
+  "planner_directive": "",
+  "dj_directive": "",
   "tracks_played": [
     {
-      "title": "Afterlife - AL037 - Ae\uff1ather - He Does It",
-      "time": 1775061907.562175
+      "title": "Artbat-Tabu (Original mix)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Artbat - Tabu (Original Mix).mp3",
+      "time": 1776965107.675015
     },
     {
-      "title": "th\u03c9_t\u03c3\u03b575 - Colyn, Read the News - See The Light (Original Mix)",
-      "time": 1775061959.673375
+      "title": "Monolink - Return To Oz (ARTBAT Remix)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Monolink - Return To Oz (ARTBAT Remix).mp3",
+      "time": 1776965392.562604
     },
     {
-      "title": "Everything Will Be OK - CamelPhat - Constellations (Original Mix)",
-      "time": 1775062244.8618891
+      "title": "Moon (Original Mix)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Anima Ft. Sheera - Moon (Original Mix).mp3",
+      "time": 1776965780.5867279
     },
     {
-      "title": "Anyma - Anyma - Pictures Of You [Live from Afterlife Tulum]",
-      "time": 1775062509.7745621
+      "title": "Kevin de Vries & Mau P - Metro (Extended Mix)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Kevin de Vries, Mau P - Metro (Extended Mix).mp3",
+      "time": 1776966031.475918
     },
     {
-      "title": "Anyma - Anyma & Sevdaliza - Samsara [Live From Afterlife Tomorrowland]",
-      "time": 1775062702.255046
+      "title": "Horizon Pulse (Original Mix) | Melodic Techno \u2022 Uplifting Driving Groove",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Horizon - Pulse (Original Mix).mp3",
+      "time": 1776966288.3203971
     },
     {
-      "title": "Afterlife - Kevin de Vries & Mau P - Metro (Extended Mix)",
-      "time": 1775062937.2499719
+      "title": "Alone \u2014 Hypnotic Emotional Melodic Techno",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Cinematic Pulse - Alone (Original Mix).mp3",
+      "time": 1776966460.020983
     },
     {
-      "title": "Lunar Pulse",
-      "time": 1775063206.290011
+      "title": "ODENN - Obsessive (Original Mix)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/ODENN - Obsessive (Original Mix).mp3",
+      "time": 1776966672.276729
     },
     {
-      "title": "Massano - Massano - The Lights (Extended Mix)",
-      "time": 1775063311.403737
+      "title": "Drive - Original Deep House/Melodic Techno",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/KANELL - Drive (Original Mix).mp3",
+      "time": 1776966922.637608
     },
     {
-      "title": "Reb\u016bke - Reb\u016bke & deadmau5 - Endless feat. Ed Graves [Official Visualizer]",
-      "time": 1775063616.888572
+      "title": "ZALVYN TORRES - EMOTION (Melodic Techno)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Zalvyn Torres - EMOTION (Original Mix).mp3",
+      "time": 1776967099.469146
     },
     {
-      "title": "YOTTO & Odd One Out - YOTTO - 'Aero' (Official Audio) [Odd One Out]",
-      "time": 1775063775.059063
+      "title": "Toh Phir Aao - Melodic Techno | Emraan Hashmi | Awarapan | Remix Muzik India |",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Emraan Hashmi - Toh Phir Aao - Awarapan (Remix Muzik India Remix).mp3",
+      "time": 1776967332.416613
     },
     {
-      "title": "Massano - Massano, Stephan Bodzin & Jem Cooke - Healing",
-      "time": 1775064064.463974
+      "title": "Kinky Sound - Lemon Haze (Original Mix) [Ritual]",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Kinky Sound - Lemon Haze (Original Mix).mp3",
+      "time": 1776967581.857951
     },
     {
-      "title": "Dj Auzzie - Cristoph - Apollo [Melodic House & Techno]",
-      "time": 1775064232.268988
+      "title": "Massano - The Feeling (Original Mix)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Massano - The Feeling (Original Mix).mp3",
+      "time": 1776967823.980064
     },
     {
-      "title": "Afterlife - AL024 - Mathame - Skywalking",
-      "time": 1775064575.416075
+      "title": "ZXCO - AURA (Original mix | Melodic Techno | Dark Techno | CYBER)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/ZXCO - AURA (Original Mix).mp3",
+      "time": 1776968105.0868921
     },
     {
-      "title": "Afterlife - Argy & Omnya - Aria (Extended Mix)",
-      "time": 1775064901.775488
+      "title": "Krishna Vasudevaya (Original Mix)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Raul Music - Krishna Vasudevaya (Original Mix).mp3",
+      "time": 1776968245.083115
     },
     {
-      "title": "Afterlife - AL001 -  Mind Against - Gravity",
-      "time": 1775065164.773695
+      "title": "Eden Shalev - Papi (Bhabi)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Eden Shalev - Papi (Bhabi) (Original Mix).mp3",
+      "time": 1776968380.2638981
     },
     {
-      "title": "Nicolas Tsakos Musique ll - Patrice B\u00e4umel - Glutes \u2022 (Original Mix)[Afterlife]",
-      "time": 1775065561.547793
+      "title": "Seadreams - Echoes of the North (Original Mix) | Melodic Techno",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Seadreams - Echoes of the North (Original Mix).mp3",
+      "time": 1776968585.230815
     },
     {
-      "title": "ANNA DEEP - ANNA DEEP - Soft Love",
-      "time": 1775065824.024077
+      "title": "Anyma & Reb\u016bke - Syren [Live from Afterlife Tomorrowland]",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Anyma, Reb\u016bke - Syren (Live).mp3",
+      "time": 1776968757.107451
     },
     {
-      "title": "STEPHAN BODZIN - Stephan Bodzin - Singularity (Original) - Life and Death",
-      "time": 1775066037.406455
+      "title": "IN TRUTH - BURN (Original Mix) | Emotional Melodic Techno / Trance",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/In Truth - Burn (Original Mix).mp3",
+      "time": 1776968890.657728
     },
     {
-      "title": "Afterlife - Innellea - Reflected Wisdom - Five Phases Project (4\u29f85)",
-      "time": 1775066174.966012
+      "title": "Massano, Stephan Bodzin & Jem Cooke - Healing",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Massano, Stephan Bodzin, Jem Cooke - Healing (Original Mix).mp3",
+      "time": 1776969095.330972
     },
     {
-      "title": "Argy - Argy, MEDUZA - Melodia feat PollyAnna (Extended Mix)",
-      "time": 1775066440.529789
+      "title": "Anyma & Sevdaliza - Samsara [Live From Afterlife Tomorrowland]",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Anyma, Sevdaliza - Samsara (Live).mp3",
+      "time": 1776969316.5155709
     },
     {
-      "title": "Matthew Vertino - Mathame - There Is A Light (Matthew Vertino Edit) \uff5c Official Visualizer",
-      "time": 1775066725.393376
+      "title": "Massano - Shut Down",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Massano - Shut Down (Original Mix).mp3",
+      "time": 1776969542.1802812
     },
     {
-      "title": "Ethereal Resonance",
-      "time": 1775067018.13668
+      "title": "Kevin de Vries - Dance With Me",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Kevin de Vries - Dance With Me (Original Mix).mp3",
+      "time": 1776969706.972467
     },
     {
-      "title": "MELODIC TECHNO 2026 - Franky Wah - Should Have Seen It Coming (Yotto Extended Mix) \uff5c MELODIC TECHNO",
-      "time": 1775067133.023104
+      "title": "SYSTEM ONLINE - Melodic Techno (Original Mix)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/SYSTEM ONLINE - Melodic Techno (Original Mix).mp3",
+      "time": 1776969977.263971
     },
     {
-      "title": "Monolink - Monolink - Under Dark - Innellea Remix - Live Version",
-      "time": 1775067628.558472
+      "title": "Emre Arslan - Afterlife Spirit  (Original Mix) | Melodic Techno 2026",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Emre Arslan - Afterlife Spirit (Original Mix).mp3",
+      "time": 1776970068.570936
     },
     {
-      "title": "Samaadhaanam (Official) \uff5c Mystical Journey Psytrance Malayalam \u2022 Psychedelic Trance Music",
-      "time": 1775067879.157196
+      "title": "Argy & Omnya - Aria (Extended Mix)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Argy, Omnya - Aria (Extended Mix).mp3",
+      "time": 1776970159.4947689
+    },
+    {
+      "title": "ZELYONIC \u2013 Feel Something Real | Melodic Techno to Break Reality",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/ZELYONIC - Feel Something Real (Original Mix).mp3",
+      "time": 1776970341.919261
+    },
+    {
+      "title": "Anyma, LISA - Bad Angel (Official Music Video)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Anyma, LISA - Bad Angel (Original Mix).mp3",
+      "time": 1776970476.639442
+    },
+    {
+      "title": "MbM - Rhythm | Melodic Techno & Progressive Trance (Original Mix)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/MbM - Rhythm (Original Mix).mp3",
+      "time": 1776970602.300276
+    },
+    {
+      "title": "PROGRESSIVE HOUSE 2026 |MELODIC TECHNO |EMOTIONAL EUPHORIC VIBE |In Another Light  -   VELVYBE",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/VELVYBE - In Another Light (Original Mix).mp3",
+      "time": 1776970844.609619
+    },
+    {
+      "title": "Closer \u2728 Melodic Techno & Progressive House (Official Video)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Uplift Music Lab - Closer (Original Mix).mp3",
+      "time": 1776970973.760105
+    },
+    {
+      "title": "ILan Raz \u2014 DIGITAL LIFE (Official 4K Visualizer) | Melodic Techno 2026",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/ILan Raz - DIGITAL LIFE (Original Mix).mp3",
+      "time": 1776971160.363905
+    },
+    {
+      "title": "Cut Off \u2013 I\u2019ll Be Ok",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Cut Off - I\u2019ll Be Ok (Original Mix).mp3",
+      "time": 1776971279.632494
+    },
+    {
+      "title": "VE:RSE - Let It Go (Original Mix) | Melodic Techno | Techno | Ethnic Techno",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/VE_RSE - Let It Go (Original Mix).mp3",
+      "time": 1776971528.91423
+    },
+    {
+      "title": "EN\u00d8S - Odyssey (Original Mix) [sequence Music] | MELODIC TECHNO 2024",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/EN\u00d8S - Odyssey (Original Mix).mp3",
+      "time": 1776971677.829731
+    },
+    {
+      "title": "Innellea, Rafael Cerato - Unleashed",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Innellea, Rafael Cerato - Unleashed (Original Mix).mp3",
+      "time": 1776971877.035448
+    },
+    {
+      "title": "Arcvort - Hypnotized Echo (Original Mix)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Arcvort - Hypnotized Echo (Original Mix).mp3",
+      "time": 1776972118.080735
+    },
+    {
+      "title": "Urvasi Urvasi ( Melodic Techno Remix ) | Premikudu | Raavana Music | Prabhu Deva, Nagma | A R Rahman",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/A R Rahman - Urvasi Urvasi (Raavana Music Remix).mp3",
+      "time": 1776972259.143772
+    },
+    {
+      "title": "Audiofly feat. Fiora - 6 Degrees (Tale Of Us Remix)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Audiofly feat. Fiora - 6 Degrees (Tale Of Us Remix).mp3",
+      "time": 1776972432.589537
+    },
+    {
+      "title": "Innellea - Anamorfose (Original Mix)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Innellea - Anamorfose (Original Mix).mp3",
+      "time": 1776972552.906352
+    },
+    {
+      "title": "Kevin de Vries - Sciamachy",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Kevin de Vries - Sciamachy (Original Mix).mp3",
+      "time": 1776972695.691442
+    },
+    {
+      "title": "Liquid Star Dawn (Original Mix) \u2014 Melodic / Hypnotic Techno | 123 BPM | Official Visualizer",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Liquid Star - Dawn (Original Mix).mp3",
+      "time": 1776973079.6842492
+    },
+    {
+      "title": "V E L V Y X \u2013 Where We Fell Apart (Original Mix) l emotional melodic techno 2026 ll",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/V E L V Y X - Where We Fell Apart (Original Mix).mp3",
+      "time": 1776973245.06002
+    },
+    {
+      "title": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Emilie Nana - Wild Sensations (Crowdpleaser Hothaus Remix).mp3",
+      "time": 1776973361.104929
+    },
+    {
+      "title": "Clau",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Gabriel Ananda - Clau (Original Mix).mp3",
+      "time": 1776973674.8617759
+    },
+    {
+      "title": "Massano - System",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Massano - System (Original Mix).mp3",
+      "time": 1776973701.059222
+    },
+    {
+      "title": "Massano - The Feeling (2022 Remaster)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Massano - The Feeling (Remaster).mp3",
+      "time": 1776973882.590255
+    },
+    {
+      "title": "Atmospheric Melodic Techno (Original Mix)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Anyma (UK) - Atmospheric Melodic Techno (Original Mix).mp3",
+      "time": 1776974057.202734
+    },
+    {
+      "title": "Anyma - Hypnotized (feat. Ellie Goulding) [Official Video]",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Anyma, Ellie Goulding - Hypnotized (Original Mix).mp3",
+      "time": 1776974150.492312
+    },
+    {
+      "title": "Dropwave - Gravity in the Night (Original Mix)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Dropwave - Gravity in the Night (Original Mix).mp3",
+      "time": 1776974289.16016
+    },
+    {
+      "title": "Mind Against ft Jos & Eli - Elysium",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Mind Against, Jos & Eli - Elysium (Original Mix).mp3",
+      "time": 1776974423.850292
+    },
+    {
+      "title": "KAS:ST & Losless - In & Out (Official Audio)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/KAS_ST, Losless - In & Out (Original Mix).mp3",
+      "time": 1776974594.912492
+    },
+    {
+      "title": "SonixUniverse - The Blossom  (Original Mix) | Hypnotic Melodic Techno 2026",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/SonixUniverse - The Blossom (Original Mix).mp3",
+      "time": 1776974745.096885
+    },
+    {
+      "title": "Phyze \u2013 Move Forward (Original Mix) | Melodic Techno",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Phyze - Move Forward (Original Mix).mp3",
+      "time": 1776974947.307374
+    },
+    {
+      "title": "Andrea Martini - Vento [Oddity Records]",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Andrea Martini - Vento (Original Mix).mp3",
+      "time": 1776975063.1382148
+    },
+    {
+      "title": "V E L V Y X \u2013 After You (Original Mix) l Emotional melodic techno ll",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/V E L V Y X - After You (Original Mix).mp3",
+      "time": 1776975252.622965
+    },
+    {
+      "title": "Who Else - Hypnotic (Original Mix) [PREMIERE] [Progressive House] [Area Verde]",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Who Else - Hypnotic (Original Mix).mp3",
+      "time": 1776975389.04406
+    },
+    {
+      "title": "NTO & Monolink - Beyond Control (KAS:ST Remix)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/NTO, Monolink - Beyond Control (KAS_ST Remix).mp3",
+      "time": 1776975599.341163
+    },
+    {
+      "title": "ZXCO - Drive (Original mix | Melodic Techno | Dark Techno | CYBER)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/ZXCO - Drive (Original Mix).mp3",
+      "time": 1776975872.896136
+    },
+    {
+      "title": "Innellea, Colyn - Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Innellea, Colyn - Obnoxious Desire (Original Mix).mp3",
+      "time": 1776975972.133337
+    },
+    {
+      "title": "KAS:ST - Are We Truly Free? [Interstellar Recordings]",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/KAS_ST - Are We Truly Free_ (Original Mix).mp3",
+      "time": 1776976281.759419
+    },
+    {
+      "title": "AL022 - Innellea - Vigilans",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Innellea - Vigilans (Original Mix).mp3",
+      "time": 1776976535.294275
+    },
+    {
+      "title": "Evan Hatfield - Confused Ravi (Live in the Desert) | Electronic Sitar Deep House Indian Performance",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Evan Hatfield - Confused Ravi (Live in the Desert) (Live).mp3",
+      "time": 1776976741.46694
+    },
+    {
+      "title": "Losless - Away [Oddity Records] / Melodic House & Techno",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Losless - Away (Original Mix).mp3",
+      "time": 1776977027.595521
+    },
+    {
+      "title": "Tale Of Us, Pete Tong - Time (Afterlife Tulum 2022)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Tale Of Us, Pete Tong - Time (Live).mp3",
+      "time": 1776977213.537257
+    },
+    {
+      "title": "Wait For You",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Colyn - Wait For You (Original Mix).mp3",
+      "time": 1776977399.1448152
+    },
+    {
+      "title": "AL045 - Agents Of Time - Midnight Drive",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Agents Of Time - Midnight Drive (Original Mix).mp3",
+      "time": 1776977633.13637
+    },
+    {
+      "title": "MOTION \u2014 Dark Melodic Techno | Driving Bass & Hypnotic Groove",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/MOTION - Dark Melodic Techno _ Driving Bass & Hypnotic Groove (Original Mix).mp3",
+      "time": 1776977787.816978
+    },
+    {
+      "title": "V E L V Y X \u2013 Fading Lights (Original Mix) l emotional melodic techno ll",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/V E L V Y X - Fading Lights (Original Mix).mp3",
+      "time": 1776977902.159265
+    },
+    {
+      "title": "Zmeex - Midnight (Original Mix)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Zmeex - Midnight (Original Mix).mp3",
+      "time": 1776978016.806697
+    },
+    {
+      "title": "Oguzh4n - Ride Slow (Original Mix)",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Oguzh4n - Ride Slow (Original Mix).mp3",
+      "time": 1776978199.779222
+    },
+    {
+      "title": "Electric Horizon [ Original Mix ]",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Asay - Electric Horizon (Original Mix).mp3",
+      "time": 1776978326.5955572
+    },
+    {
+      "title": "Paraleven - Align (Extended Mix) [Rose Avenue] | BEST PROGRESSIVE HOUSE 2022",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Paraleven - Align (Extended Mix).mp3",
+      "time": 1776978468.392233
+    },
+    {
+      "title": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic Techno)  ORIGINAL MIX",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Giorgos Xarisos - Mia Spitha Sta Matia Sou (Original Mix).mp3",
+      "time": 1776978680.327585
+    },
+    {
+      "title": "Deep Bass Melodic Techno \u26a1 Night Drive 125 BPM | Car Music 2026",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/VoltLab - Deep Bass Melodic Techno Night Drive 125 BPM _ Car Music 2026 (Original Mix).mp3",
+      "time": 1776978940.5610251
+    },
+    {
+      "title": "Saajan (Original Mix) - Official Audio | Firaaq #techno #indiedance #indowarehouse",
+      "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Firaaq - Saajan (Original Mix).mp3",
+      "time": 1776979141.3851671
     }
   ],
-  "chat_history": [],
-  "saved_at": 1775068303.624057
+  "current_deck": 0,
+  "current_track_path": "",
+  "current_position_s": 0.0,
+  "current_set": {
+    "id": "set-20260424-010127",
+    "set_number": 5,
+    "title": "Astral Echoes",
+    "started_at": 1776972691.110718,
+    "mood": "melodic-techno",
+    "genre": "melodic-techno",
+    "target_duration": 120,
+    "tracks": [],
+    "energy_arc": [
+      {
+        "t": 0,
+        "energy": 0.0,
+        "direction": "steady",
+        "mood": "silent",
+        "track": "Unknown",
+        "section": "",
+        "bpm": 0
+      },
+      {
+        "t": 10,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "intro",
+        "bpm": 126
+      },
+      {
+        "t": 20,
+        "energy": 9.8,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "intro",
+        "bpm": 126
+      },
+      {
+        "t": 30,
+        "energy": 9.7,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "intro",
+        "bpm": 126
+      },
+      {
+        "t": 40,
+        "energy": 9.7,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "intro",
+        "bpm": 126
+      },
+      {
+        "t": 50,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "intro",
+        "bpm": 126
+      },
+      {
+        "t": 60,
+        "energy": 9.3,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "intro",
+        "bpm": 126
+      },
+      {
+        "t": 70,
+        "energy": 9.9,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "intro",
+        "bpm": 126
+      },
+      {
+        "t": 80,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "intro",
+        "bpm": 126
+      },
+      {
+        "t": 91,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "intro",
+        "bpm": 126
+      },
+      {
+        "t": 101,
+        "energy": 10,
+        "direction": "rising",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "intro",
+        "bpm": 126
+      },
+      {
+        "t": 111,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "intro",
+        "bpm": 126
+      },
+      {
+        "t": 121,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "intro",
+        "bpm": 126
+      },
+      {
+        "t": 131,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "intro",
+        "bpm": 126
+      },
+      {
+        "t": 141,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 151,
+        "energy": 7.3,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 161,
+        "energy": 6.8,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Sciamachy",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 171,
+        "energy": 6.1,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Sciamachy",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 181,
+        "energy": 6.5,
+        "direction": "rising",
+        "mood": "hypnotic",
+        "track": "Sciamachy",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 191,
+        "energy": 4.5,
+        "direction": "steady",
+        "mood": "groovy",
+        "track": "Sciamachy",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 201,
+        "energy": 1.1,
+        "direction": "dropping",
+        "mood": "dark",
+        "track": "Sciamachy",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 211,
+        "energy": 9.5,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 221,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 231,
+        "energy": 5.2,
+        "direction": "dropping",
+        "mood": "hypnotic",
+        "track": "Sciamachy",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 241,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 251,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 261,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 271,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 281,
+        "energy": 7.1,
+        "direction": "dropping",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 291,
+        "energy": 8.0,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 301,
+        "energy": 7.1,
+        "direction": "rising",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 311,
+        "energy": 6.7,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "Sciamachy",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 321,
+        "energy": 3.5,
+        "direction": "falling",
+        "mood": "groovy",
+        "track": "Sciamachy",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 331,
+        "energy": 10.0,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 341,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 351,
+        "energy": 9.2,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 361,
+        "energy": 9.1,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 371,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 381,
+        "energy": 7.1,
+        "direction": "dropping",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 391,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "outro",
+        "bpm": 126
+      },
+      {
+        "t": 401,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Sciamachy",
+        "section": "outro",
+        "bpm": 126
+      },
+      {
+        "t": 412,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Liquid Star Dawn (Original Mix) \u2014 Melodic / Hypnot",
+        "section": "intro",
+        "bpm": 126
+      },
+      {
+        "t": 424,
+        "energy": 8.0,
+        "direction": "falling",
+        "mood": "driving",
+        "track": "Liquid Star Dawn (Original Mix) \u2014 Melodic / Hypnot",
+        "section": "buildup",
+        "bpm": 126
+      },
+      {
+        "t": 434,
+        "energy": 7.8,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Liquid Star Dawn (Original Mix) \u2014 Melodic / Hypnot",
+        "section": "buildup",
+        "bpm": 126
+      },
+      {
+        "t": 435,
+        "event": "transition",
+        "technique": "crossfade",
+        "to_deck": 2
+      },
+      {
+        "t": 444,
+        "energy": 7.9,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Liquid Star Dawn (Original Mix) \u2014 Melodic / Hypnot",
+        "section": "buildup",
+        "bpm": 126
+      },
+      {
+        "t": 454,
+        "energy": 9.4,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Liquid Star Dawn (Original Mix) \u2014 Melodic / Hypnot",
+        "section": "buildup",
+        "bpm": 126
+      },
+      {
+        "t": 465,
+        "energy": 8.8,
+        "direction": "falling",
+        "mood": "driving",
+        "track": "Liquid Star Dawn (Original Mix) \u2014 Melodic / Hypnot",
+        "section": "buildup",
+        "bpm": 126
+      },
+      {
+        "t": 475,
+        "energy": 9.1,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Liquid Star Dawn (Original Mix) \u2014 Melodic / Hypnot",
+        "section": "buildup",
+        "bpm": 126
+      },
+      {
+        "t": 485,
+        "energy": 9.0,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Liquid Star Dawn (Original Mix) \u2014 Melodic / Hypnot",
+        "section": "buildup",
+        "bpm": 126
+      },
+      {
+        "t": 495,
+        "energy": 9.0,
+        "direction": "falling",
+        "mood": "driving",
+        "track": "Liquid Star Dawn (Original Mix) \u2014 Melodic / Hypnot",
+        "section": "buildup",
+        "bpm": 126
+      },
+      {
+        "t": 505,
+        "energy": 8.4,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Liquid Star Dawn (Original Mix) \u2014 Melodic / Hypnot",
+        "section": "buildup",
+        "bpm": 126
+      },
+      {
+        "t": 515,
+        "energy": 8.4,
+        "direction": "rising",
+        "mood": "driving",
+        "track": "Liquid Star Dawn (Original Mix) \u2014 Melodic / Hypnot",
+        "section": "buildup",
+        "bpm": 126
+      },
+      {
+        "t": 525,
+        "energy": 7.1,
+        "direction": "falling",
+        "mood": "driving",
+        "track": "Liquid Star Dawn (Original Mix) \u2014 Melodic / Hypnot",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 535,
+        "energy": 6.8,
+        "direction": "building",
+        "mood": "hypnotic",
+        "track": "Liquid Star Dawn (Original Mix) \u2014 Melodic / Hypnot",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 545,
+        "energy": 4.4,
+        "direction": "falling",
+        "mood": "groovy",
+        "track": "Liquid Star Dawn (Original Mix) \u2014 Melodic / Hypnot",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 555,
+        "energy": 5.3,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "Liquid Star Dawn (Original Mix) \u2014 Melodic / Hypnot",
+        "section": "breakdown",
+        "bpm": 126
+      },
+      {
+        "t": 565,
+        "energy": 8.1,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Liquid Star Dawn (Original Mix) \u2014 Melodic / Hypnot",
+        "section": "buildup",
+        "bpm": 126
+      },
+      {
+        "t": 575,
+        "energy": 8.6,
+        "direction": "rising",
+        "mood": "driving",
+        "track": "V E L V Y X \u2013 Where We Fell Apart (Original Mix) l",
+        "section": "intro",
+        "bpm": 126.0
+      },
+      {
+        "t": 585,
+        "energy": 7.7,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "V E L V Y X \u2013 Where We Fell Apart (Original Mix) l",
+        "section": "intro",
+        "bpm": 126.0
+      },
+      {
+        "t": 595,
+        "energy": 7.5,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "V E L V Y X \u2013 Where We Fell Apart (Original Mix) l",
+        "section": "intro",
+        "bpm": 126.0
+      },
+      {
+        "t": 596,
+        "event": "transition",
+        "technique": "crossfade",
+        "to_deck": 1
+      },
+      {
+        "t": 605,
+        "energy": 8.4,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "V E L V Y X \u2013 Where We Fell Apart (Original Mix) l",
+        "section": "breakdown",
+        "bpm": 126.0
+      },
+      {
+        "t": 615,
+        "energy": 8.5,
+        "direction": "rising",
+        "mood": "driving",
+        "track": "V E L V Y X \u2013 Where We Fell Apart (Original Mix) l",
+        "section": "buildup",
+        "bpm": 126.0
+      },
+      {
+        "t": 625,
+        "energy": 8.9,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "V E L V Y X \u2013 Where We Fell Apart (Original Mix) l",
+        "section": "buildup",
+        "bpm": 126.0
+      },
+      {
+        "t": 635,
+        "energy": 9.0,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "V E L V Y X \u2013 Where We Fell Apart (Original Mix) l",
+        "section": "buildup",
+        "bpm": 126.0
+      },
+      {
+        "t": 645,
+        "energy": 3.5,
+        "direction": "dropping",
+        "mood": "groovy",
+        "track": "V E L V Y X \u2013 Where We Fell Apart (Original Mix) l",
+        "section": "breakdown",
+        "bpm": 126.0
+      },
+      {
+        "t": 655,
+        "energy": 9.2,
+        "direction": "building",
+        "mood": "driving",
+        "track": "V E L V Y X \u2013 Where We Fell Apart (Original Mix) l",
+        "section": "buildup",
+        "bpm": 126.0
+      },
+      {
+        "t": 665,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "V E L V Y X \u2013 Where We Fell Apart (Original Mix) l",
+        "section": "drop",
+        "bpm": 126.0
+      },
+      {
+        "t": 676,
+        "energy": 10,
+        "direction": "rising",
+        "mood": "driving",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "intro",
+        "bpm": 126.0
+      },
+      {
+        "t": 683,
+        "event": "transition",
+        "technique": "auto_crossfade",
+        "to_deck": 2
+      },
+      {
+        "t": 686,
+        "energy": 8.2,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "intro",
+        "bpm": 126.0
+      },
+      {
+        "t": 696,
+        "energy": 9.3,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "intro",
+        "bpm": 126.0
+      },
+      {
+        "t": 706,
+        "energy": 7.3,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "intro",
+        "bpm": 126.0
+      },
+      {
+        "t": 716,
+        "energy": 7.3,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "intro",
+        "bpm": 126.0
+      },
+      {
+        "t": 726,
+        "energy": 5.7,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "intro",
+        "bpm": 126.0
+      },
+      {
+        "t": 736,
+        "energy": 7.6,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "intro",
+        "bpm": 126.0
+      },
+      {
+        "t": 746,
+        "energy": 7.6,
+        "direction": "rising",
+        "mood": "driving",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "intro",
+        "bpm": 126.0
+      },
+      {
+        "t": 756,
+        "energy": 8.3,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "intro",
+        "bpm": 126.0
+      },
+      {
+        "t": 766,
+        "energy": 6.5,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "intro",
+        "bpm": 126.0
+      },
+      {
+        "t": 776,
+        "energy": 7.7,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "breakdown",
+        "bpm": 126.0
+      },
+      {
+        "t": 786,
+        "energy": 7.3,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "breakdown",
+        "bpm": 126.0
+      },
+      {
+        "t": 796,
+        "energy": 5.9,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "breakdown",
+        "bpm": 126.0
+      },
+      {
+        "t": 806,
+        "energy": 9.3,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "breakdown",
+        "bpm": 126.0
+      },
+      {
+        "t": 816,
+        "energy": 9.4,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "breakdown",
+        "bpm": 126.0
+      },
+      {
+        "t": 826,
+        "energy": 9.3,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "breakdown",
+        "bpm": 126.0
+      },
+      {
+        "t": 836,
+        "energy": 8.8,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "breakdown",
+        "bpm": 126.0
+      },
+      {
+        "t": 846,
+        "energy": 5.6,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "breakdown",
+        "bpm": 126.0
+      },
+      {
+        "t": 856,
+        "energy": 8.4,
+        "direction": "rising",
+        "mood": "driving",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "breakdown",
+        "bpm": 126.0
+      },
+      {
+        "t": 866,
+        "energy": 7.2,
+        "direction": "falling",
+        "mood": "driving",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "breakdown",
+        "bpm": 126.0
+      },
+      {
+        "t": 876,
+        "energy": 6.6,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "breakdown",
+        "bpm": 126.0
+      },
+      {
+        "t": 886,
+        "energy": 7.4,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "breakdown",
+        "bpm": 126.0
+      },
+      {
+        "t": 896,
+        "energy": 6.4,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "breakdown",
+        "bpm": 126.0
+      },
+      {
+        "t": 906,
+        "energy": 7.6,
+        "direction": "rising",
+        "mood": "driving",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "breakdown",
+        "bpm": 126.0
+      },
+      {
+        "t": 916,
+        "energy": 7.9,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "breakdown",
+        "bpm": 126.0
+      },
+      {
+        "t": 926,
+        "energy": 6.8,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "breakdown",
+        "bpm": 126.0
+      },
+      {
+        "t": 936,
+        "energy": 8.1,
+        "direction": "rising",
+        "mood": "driving",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "breakdown",
+        "bpm": 126.0
+      },
+      {
+        "t": 946,
+        "energy": 7.9,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "breakdown",
+        "bpm": 126.0
+      },
+      {
+        "t": 956,
+        "energy": 9.7,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "breakdown",
+        "bpm": 126.0
+      },
+      {
+        "t": 966,
+        "energy": 9.1,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "breakdown",
+        "bpm": 126.0
+      },
+      {
+        "t": 976,
+        "energy": 9.1,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Wild Sensations (Crowdpleaser Hothaus Remix)",
+        "section": "breakdown",
+        "bpm": 126.0
+      },
+      {
+        "t": 984,
+        "event": "transition",
+        "technique": "hard_cut",
+        "to_deck": 1
+      },
+      {
+        "t": 987,
+        "energy": 5.7,
+        "direction": "dropping",
+        "mood": "hypnotic",
+        "track": "Clau",
+        "section": "intro",
+        "bpm": 145.2
+      },
+      {
+        "t": 997,
+        "energy": 8.6,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Clau",
+        "section": "intro",
+        "bpm": 145.2
+      },
+      {
+        "t": 1007,
+        "energy": 8.6,
+        "direction": "building",
+        "mood": "euphoric",
+        "track": "Clau",
+        "section": "breakdown",
+        "bpm": 145.2
+      },
+      {
+        "t": 1017,
+        "energy": 4.8,
+        "direction": "falling",
+        "mood": "intense",
+        "track": "System",
+        "section": "intro",
+        "bpm": 145.2
+      },
+      {
+        "t": 1022,
+        "event": "transition",
+        "technique": "crossfade",
+        "to_deck": 2
+      },
+      {
+        "t": 1027,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "System",
+        "section": "intro",
+        "bpm": 145.2
+      },
+      {
+        "t": 1037,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "System",
+        "section": "intro",
+        "bpm": 145.2
+      },
+      {
+        "t": 1047,
+        "energy": 9.2,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "System",
+        "section": "buildup",
+        "bpm": 145.2
+      },
+      {
+        "t": 1057,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "System",
+        "section": "buildup",
+        "bpm": 145.2
+      },
+      {
+        "t": 1067,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "System",
+        "section": "buildup",
+        "bpm": 145.2
+      },
+      {
+        "t": 1077,
+        "energy": 4.2,
+        "direction": "falling",
+        "mood": "intense",
+        "track": "System",
+        "section": "breakdown",
+        "bpm": 145.2
+      },
+      {
+        "t": 1087,
+        "energy": 10,
+        "direction": "building",
+        "mood": "euphoric",
+        "track": "System",
+        "section": "buildup",
+        "bpm": 145.2
+      },
+      {
+        "t": 1097,
+        "energy": 4.2,
+        "direction": "dropping",
+        "mood": "intense",
+        "track": "System",
+        "section": "buildup",
+        "bpm": 145.2
+      },
+      {
+        "t": 1107,
+        "energy": 9.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "System",
+        "section": "buildup",
+        "bpm": 145.2
+      },
+      {
+        "t": 1117,
+        "energy": 9.7,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "System",
+        "section": "buildup",
+        "bpm": 145.2
+      },
+      {
+        "t": 1127,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "System",
+        "section": "buildup",
+        "bpm": 145.2
+      },
+      {
+        "t": 1137,
+        "energy": 6.2,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "System",
+        "section": "breakdown",
+        "bpm": 145.2
+      },
+      {
+        "t": 1147,
+        "energy": 5.2,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "System",
+        "section": "breakdown",
+        "bpm": 145.2
+      },
+      {
+        "t": 1157,
+        "energy": 7.5,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "System",
+        "section": "breakdown",
+        "bpm": 145.2
+      },
+      {
+        "t": 1167,
+        "energy": 0.4,
+        "direction": "dropping",
+        "mood": "dark",
+        "track": "System",
+        "section": "breakdown",
+        "bpm": 145.2
+      },
+      {
+        "t": 1177,
+        "energy": 4.4,
+        "direction": "building",
+        "mood": "intense",
+        "track": "System",
+        "section": "breakdown",
+        "bpm": 145.2
+      },
+      {
+        "t": 1187,
+        "energy": 7.4,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "System",
+        "section": "breakdown",
+        "bpm": 145.2
+      },
+      {
+        "t": 1197,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "System",
+        "section": "buildup",
+        "bpm": 145.2
+      },
+      {
+        "t": 1207,
+        "energy": 10,
+        "direction": "building",
+        "mood": "euphoric",
+        "track": "The Feeling (2022 Remaster)",
+        "section": "intro",
+        "bpm": 145.2
+      },
+      {
+        "t": 1217,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "The Feeling (2022 Remaster)",
+        "section": "buildup",
+        "bpm": 145.2
+      },
+      {
+        "t": 1224,
+        "event": "transition",
+        "technique": "crossfade",
+        "to_deck": 1
+      },
+      {
+        "t": 1227,
+        "energy": 4.4,
+        "direction": "dropping",
+        "mood": "intense",
+        "track": "The Feeling (2022 Remaster)",
+        "section": "buildup",
+        "bpm": 145.2
+      },
+      {
+        "t": 1237,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "The Feeling (2022 Remaster)",
+        "section": "buildup",
+        "bpm": 145.2
+      },
+      {
+        "t": 1247,
+        "energy": 9.8,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "The Feeling (2022 Remaster)",
+        "section": "buildup",
+        "bpm": 145.2
+      },
+      {
+        "t": 1258,
+        "energy": 9.7,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "The Feeling (2022 Remaster)",
+        "section": "buildup",
+        "bpm": 145.2
+      },
+      {
+        "t": 1268,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "The Feeling (2022 Remaster)",
+        "section": "buildup",
+        "bpm": 145.2
+      },
+      {
+        "t": 1278,
+        "energy": 6.4,
+        "direction": "dropping",
+        "mood": "hypnotic",
+        "track": "The Feeling (2022 Remaster)",
+        "section": "breakdown",
+        "bpm": 145.2
+      },
+      {
+        "t": 1288,
+        "energy": 0.2,
+        "direction": "dropping",
+        "mood": "dark",
+        "track": "The Feeling (2022 Remaster)",
+        "section": "breakdown",
+        "bpm": 145.2
+      },
+      {
+        "t": 1298,
+        "energy": 3.7,
+        "direction": "steady",
+        "mood": "intense",
+        "track": "The Feeling (2022 Remaster)",
+        "section": "breakdown",
+        "bpm": 145.2
+      },
+      {
+        "t": 1308,
+        "energy": 3.5,
+        "direction": "rising",
+        "mood": "intense",
+        "track": "The Feeling (2022 Remaster)",
+        "section": "breakdown",
+        "bpm": 145.2
+      },
+      {
+        "t": 1318,
+        "energy": 4.0,
+        "direction": "steady",
+        "mood": "intense",
+        "track": "The Feeling (2022 Remaster)",
+        "section": "breakdown",
+        "bpm": 145.2
+      },
+      {
+        "t": 1328,
+        "energy": 4.9,
+        "direction": "rising",
+        "mood": "intense",
+        "track": "The Feeling (2022 Remaster)",
+        "section": "breakdown",
+        "bpm": 145.2
+      },
+      {
+        "t": 1338,
+        "energy": 1.1,
+        "direction": "dropping",
+        "mood": "dark",
+        "track": "The Feeling (2022 Remaster)",
+        "section": "breakdown",
+        "bpm": 145.2
+      },
+      {
+        "t": 1348,
+        "energy": 10,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "The Feeling (2022 Remaster)",
+        "section": "buildup",
+        "bpm": 145.2
+      },
+      {
+        "t": 1358,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "The Feeling (2022 Remaster)",
+        "section": "buildup",
+        "bpm": 145.2
+      },
+      {
+        "t": 1368,
+        "energy": 7.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "The Feeling (2022 Remaster)",
+        "section": "buildup",
+        "bpm": 145.2
+      },
+      {
+        "t": 1378,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Atmospheric Melodic Techno (Original Mix)",
+        "section": "buildup",
+        "bpm": 145.2
+      },
+      {
+        "t": 1388,
+        "energy": 8.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Atmospheric Melodic Techno (Original Mix)",
+        "section": "buildup",
+        "bpm": 145.2
+      },
+      {
+        "t": 1398,
+        "energy": 9.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Atmospheric Melodic Techno (Original Mix)",
+        "section": "buildup",
+        "bpm": 145.2
+      },
+      {
+        "t": 1399,
+        "event": "transition",
+        "technique": "crossfade",
+        "to_deck": 2
+      },
+      {
+        "t": 1408,
+        "energy": 9.4,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Atmospheric Melodic Techno (Original Mix)",
+        "section": "buildup",
+        "bpm": 145.2
+      },
+      {
+        "t": 1418,
+        "energy": 8.3,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Atmospheric Melodic Techno (Original Mix)",
+        "section": "buildup",
+        "bpm": 145.2
+      },
+      {
+        "t": 1428,
+        "energy": 9.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Atmospheric Melodic Techno (Original Mix)",
+        "section": "buildup",
+        "bpm": 145.2
+      },
+      {
+        "t": 1438,
+        "energy": 2.9,
+        "direction": "steady",
+        "mood": "dark",
+        "track": "Atmospheric Melodic Techno (Original Mix)",
+        "section": "breakdown",
+        "bpm": 145.2
+      },
+      {
+        "t": 1448,
+        "energy": 3.2,
+        "direction": "steady",
+        "mood": "intense",
+        "track": "Atmospheric Melodic Techno (Original Mix)",
+        "section": "breakdown",
+        "bpm": 145.2
+      },
+      {
+        "t": 1458,
+        "energy": 9.7,
+        "direction": "building",
+        "mood": "euphoric",
+        "track": "Hypnotized (feat. Ellie Goulding) [Official Video]",
+        "section": "intro",
+        "bpm": 145.2
+      },
+      {
+        "t": 1468,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Hypnotized (feat. Ellie Goulding) [Official Video]",
+        "section": "intro",
+        "bpm": 145.2
+      },
+      {
+        "t": 1478,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Hypnotized (feat. Ellie Goulding) [Official Video]",
+        "section": "intro",
+        "bpm": 145.2
+      },
+      {
+        "t": 1489,
+        "energy": 9.6,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Hypnotized (feat. Ellie Goulding) [Official Video]",
+        "section": "buildup",
+        "bpm": 145.2
+      },
+      {
+        "t": 1499,
+        "energy": 9.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Hypnotized (feat. Ellie Goulding) [Official Video]",
+        "section": "buildup",
+        "bpm": 145.2
+      },
+      {
+        "t": 1509,
+        "energy": 8.3,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "Hypnotized (feat. Ellie Goulding) [Official Video]",
+        "section": "buildup",
+        "bpm": 132.3
+      },
+      {
+        "t": 1510,
+        "event": "transition",
+        "technique": "echo_out",
+        "to_deck": 1
+      },
+      {
+        "t": 1519,
+        "energy": 9.2,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Hypnotized (feat. Ellie Goulding) [Official Video]",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 1529,
+        "energy": 7.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Hypnotized (feat. Ellie Goulding) [Official Video]",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 1539,
+        "energy": 6.6,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Hypnotized (feat. Ellie Goulding) [Official Video]",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 1549,
+        "energy": 8.1,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Hypnotized (feat. Ellie Goulding) [Official Video]",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 1559,
+        "energy": 9.2,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Hypnotized (feat. Ellie Goulding) [Official Video]",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 1569,
+        "energy": 5.8,
+        "direction": "dropping",
+        "mood": "hypnotic",
+        "track": "Hypnotized (feat. Ellie Goulding) [Official Video]",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 1579,
+        "energy": 7.5,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Hypnotized (feat. Ellie Goulding) [Official Video]",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 1589,
+        "energy": 6.1,
+        "direction": "rising",
+        "mood": "hypnotic",
+        "track": "Hypnotized (feat. Ellie Goulding) [Official Video]",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 1599,
+        "energy": 8.2,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Hypnotized (feat. Ellie Goulding) [Official Video]",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 1609,
+        "energy": 4.7,
+        "direction": "falling",
+        "mood": "driving",
+        "track": "Gravity in the Night (Original Mix)",
+        "section": "intro",
+        "bpm": 128.3
+      },
+      {
+        "t": 1611,
+        "event": "transition",
+        "technique": "auto_crossfade",
+        "to_deck": 2
+      },
+      {
+        "t": 1619,
+        "energy": 5.2,
+        "direction": "rising",
+        "mood": "hypnotic",
+        "track": "Gravity in the Night (Original Mix)",
+        "section": "intro",
+        "bpm": 128.3
+      },
+      {
+        "t": 1629,
+        "energy": 9.2,
+        "direction": "building",
+        "mood": "euphoric",
+        "track": "Gravity in the Night (Original Mix)",
+        "section": "intro",
+        "bpm": 128.3
+      },
+      {
+        "t": 1639,
+        "energy": 7.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Gravity in the Night (Original Mix)",
+        "section": "intro",
+        "bpm": 128.3
+      },
+      {
+        "t": 1649,
+        "energy": 9.6,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Gravity in the Night (Original Mix)",
+        "section": "intro",
+        "bpm": 128.3
+      },
+      {
+        "t": 1659,
+        "energy": 5.7,
+        "direction": "dropping",
+        "mood": "hypnotic",
+        "track": "Gravity in the Night (Original Mix)",
+        "section": "intro",
+        "bpm": 128.3
+      },
+      {
+        "t": 1669,
+        "energy": 6.1,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Gravity in the Night (Original Mix)",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 1679,
+        "energy": 8.5,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Gravity in the Night (Original Mix)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 1689,
+        "energy": 7.5,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Gravity in the Night (Original Mix)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 1699,
+        "energy": 8.7,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Gravity in the Night (Original Mix)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 1709,
+        "energy": 7.3,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Gravity in the Night (Original Mix)",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 1720,
+        "energy": 9.2,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Gravity in the Night (Original Mix)",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 1730,
+        "energy": 5.7,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "Gravity in the Night (Original Mix)",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 1740,
+        "energy": 9.6,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Gravity in the Night (Original Mix)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 1750,
+        "energy": 9.4,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Elysium",
+        "section": "intro",
+        "bpm": 128.3
+      },
+      {
+        "t": 1760,
+        "energy": 6.7,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "Elysium",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 1770,
+        "energy": 5.7,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Elysium",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 1775,
+        "event": "transition",
+        "technique": "crossfade",
+        "to_deck": 1
+      },
+      {
+        "t": 1780,
+        "energy": 5.1,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Elysium",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 1790,
+        "energy": 5.7,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Elysium",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 1800,
+        "energy": 7.1,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Elysium",
+        "section": "intro",
+        "bpm": 128.3
+      },
+      {
+        "t": 1810,
+        "energy": 8.0,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Elysium",
+        "section": "intro",
+        "bpm": 128.3
+      },
+      {
+        "t": 1820,
+        "energy": 8.3,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Elysium",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 1830,
+        "energy": 9.1,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Elysium",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 1840,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Elysium",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 1850,
+        "energy": 6.3,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "Elysium",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 1860,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Elysium",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 1871,
+        "energy": 6.4,
+        "direction": "dropping",
+        "mood": "hypnotic",
+        "track": "Elysium",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 1881,
+        "energy": 5.7,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "Elysium",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 1891,
+        "energy": 9.8,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Elysium",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 1901,
+        "energy": 6.1,
+        "direction": "dropping",
+        "mood": "hypnotic",
+        "track": "Elysium",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 1911,
+        "energy": 7.3,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Elysium",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 1921,
+        "energy": 8.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "In & Out (Official Audio)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 1931,
+        "energy": 9.5,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "In & Out (Official Audio)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 1938,
+        "event": "transition",
+        "technique": "crossfade",
+        "to_deck": 2
+      },
+      {
+        "t": 1941,
+        "energy": 6.9,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "In & Out (Official Audio)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 1951,
+        "energy": 9.8,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "In & Out (Official Audio)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 1961,
+        "energy": 8.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "In & Out (Official Audio)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 1971,
+        "energy": 8.1,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "In & Out (Official Audio)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 1981,
+        "energy": 4.0,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "In & Out (Official Audio)",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 1991,
+        "energy": 5.5,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "In & Out (Official Audio)",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 2001,
+        "energy": 4.2,
+        "direction": "falling",
+        "mood": "driving",
+        "track": "In & Out (Official Audio)",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 2011,
+        "energy": 7.2,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "In & Out (Official Audio)",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 2021,
+        "energy": 7.6,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "In & Out (Official Audio)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 2031,
+        "energy": 7.4,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "In & Out (Official Audio)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 2041,
+        "energy": 5.8,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "In & Out (Official Audio)",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 2051,
+        "energy": 8.6,
+        "direction": "building",
+        "mood": "euphoric",
+        "track": "In & Out (Official Audio)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 2054,
+        "event": "transition",
+        "technique": "hard_cut",
+        "to_deck": 1
+      },
+      {
+        "t": 2061,
+        "energy": 5.4,
+        "direction": "steady",
+        "mood": "energetic",
+        "track": "The Blossom  (Original Mix) | Hypnotic Melodic Tec",
+        "section": "intro",
+        "bpm": 136.4
+      },
+      {
+        "t": 2071,
+        "energy": 8.9,
+        "direction": "building",
+        "mood": "euphoric",
+        "track": "The Blossom  (Original Mix) | Hypnotic Melodic Tec",
+        "section": "intro",
+        "bpm": 136.4
+      },
+      {
+        "t": 2082,
+        "energy": 8.3,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "The Blossom  (Original Mix) | Hypnotic Melodic Tec",
+        "section": "intro",
+        "bpm": 136.4
+      },
+      {
+        "t": 2092,
+        "energy": 8.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "The Blossom  (Original Mix) | Hypnotic Melodic Tec",
+        "section": "intro",
+        "bpm": 136.4
+      },
+      {
+        "t": 2102,
+        "energy": 9.4,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "The Blossom  (Original Mix) | Hypnotic Melodic Tec",
+        "section": "drop",
+        "bpm": 136.4
+      },
+      {
+        "t": 2112,
+        "energy": 5.4,
+        "direction": "dropping",
+        "mood": "hypnotic",
+        "track": "The Blossom  (Original Mix) | Hypnotic Melodic Tec",
+        "section": "drop",
+        "bpm": 136.4
+      },
+      {
+        "t": 2122,
+        "energy": 5.9,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "The Blossom  (Original Mix) | Hypnotic Melodic Tec",
+        "section": "breakdown",
+        "bpm": 136.4
+      },
+      {
+        "t": 2132,
+        "energy": 9.6,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "The Blossom  (Original Mix) | Hypnotic Melodic Tec",
+        "section": "drop",
+        "bpm": 136.4
+      },
+      {
+        "t": 2142,
+        "energy": 9.2,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "The Blossom  (Original Mix) | Hypnotic Melodic Tec",
+        "section": "drop",
+        "bpm": 136.4
+      },
+      {
+        "t": 2152,
+        "energy": 8.6,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "The Blossom  (Original Mix) | Hypnotic Melodic Tec",
+        "section": "drop",
+        "bpm": 136.4
+      },
+      {
+        "t": 2162,
+        "energy": 5.6,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "The Blossom  (Original Mix) | Hypnotic Melodic Tec",
+        "section": "intro",
+        "bpm": 136.4
+      },
+      {
+        "t": 2173,
+        "energy": 8.2,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "The Blossom  (Original Mix) | Hypnotic Melodic Tec",
+        "section": "buildup",
+        "bpm": 136.4
+      },
+      {
+        "t": 2183,
+        "energy": 8.9,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "The Blossom  (Original Mix) | Hypnotic Melodic Tec",
+        "section": "buildup",
+        "bpm": 136.4
+      },
+      {
+        "t": 2193,
+        "energy": 9.3,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "The Blossom  (Original Mix) | Hypnotic Melodic Tec",
+        "section": "buildup",
+        "bpm": 136.4
+      },
+      {
+        "t": 2203,
+        "energy": 5.7,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "The Blossom  (Original Mix) | Hypnotic Melodic Tec",
+        "section": "breakdown",
+        "bpm": 136.4
+      },
+      {
+        "t": 2213,
+        "energy": 2.5,
+        "direction": "dropping",
+        "mood": "dark",
+        "track": "The Blossom  (Original Mix) | Hypnotic Melodic Tec",
+        "section": "breakdown",
+        "bpm": 136.4
+      },
+      {
+        "t": 2223,
+        "energy": 5.6,
+        "direction": "building",
+        "mood": "energetic",
+        "track": "The Blossom  (Original Mix) | Hypnotic Melodic Tec",
+        "section": "breakdown",
+        "bpm": 136.4
+      },
+      {
+        "t": 2233,
+        "energy": 6.1,
+        "direction": "steady",
+        "mood": "energetic",
+        "track": "The Blossom  (Original Mix) | Hypnotic Melodic Tec",
+        "section": "breakdown",
+        "bpm": 136.4
+      },
+      {
+        "t": 2243,
+        "energy": 6.3,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "The Blossom  (Original Mix) | Hypnotic Melodic Tec",
+        "section": "breakdown",
+        "bpm": 136.4
+      },
+      {
+        "t": 2253,
+        "energy": 5.6,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "The Blossom  (Original Mix) | Hypnotic Melodic Tec",
+        "section": "breakdown",
+        "bpm": 136.4
+      },
+      {
+        "t": 2256,
+        "event": "transition",
+        "technique": "hard_cut",
+        "to_deck": 2
+      },
+      {
+        "t": 2263,
+        "energy": 6.6,
+        "direction": "rising",
+        "mood": "hypnotic",
+        "track": "Phyze \u2013 Move Forward (Original Mix) | Melodic Tech",
+        "section": "intro",
+        "bpm": 141.6
+      },
+      {
+        "t": 2273,
+        "energy": 8.6,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Phyze \u2013 Move Forward (Original Mix) | Melodic Tech",
+        "section": "intro",
+        "bpm": 141.6
+      },
+      {
+        "t": 2283,
+        "energy": 6.6,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "Phyze \u2013 Move Forward (Original Mix) | Melodic Tech",
+        "section": "intro",
+        "bpm": 141.6
+      },
+      {
+        "t": 2293,
+        "energy": 5.6,
+        "direction": "rising",
+        "mood": "hypnotic",
+        "track": "Phyze \u2013 Move Forward (Original Mix) | Melodic Tech",
+        "section": "intro",
+        "bpm": 141.6
+      },
+      {
+        "t": 2303,
+        "energy": 7.9,
+        "direction": "building",
+        "mood": "euphoric",
+        "track": "Phyze \u2013 Move Forward (Original Mix) | Melodic Tech",
+        "section": "intro",
+        "bpm": 141.6
+      },
+      {
+        "t": 2313,
+        "energy": 8.5,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "Phyze \u2013 Move Forward (Original Mix) | Melodic Tech",
+        "section": "intro",
+        "bpm": 141.6
+      },
+      {
+        "t": 2323,
+        "energy": 4.6,
+        "direction": "dropping",
+        "mood": "energetic",
+        "track": "Phyze \u2013 Move Forward (Original Mix) | Melodic Tech",
+        "section": "breakdown",
+        "bpm": 141.6
+      },
+      {
+        "t": 2333,
+        "energy": 8.2,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Phyze \u2013 Move Forward (Original Mix) | Melodic Tech",
+        "section": "buildup",
+        "bpm": 141.6
+      },
+      {
+        "t": 2343,
+        "energy": 8.2,
+        "direction": "building",
+        "mood": "euphoric",
+        "track": "Phyze \u2013 Move Forward (Original Mix) | Melodic Tech",
+        "section": "buildup",
+        "bpm": 141.6
+      },
+      {
+        "t": 2353,
+        "energy": 7.2,
+        "direction": "dropping",
+        "mood": "euphoric",
+        "track": "Phyze \u2013 Move Forward (Original Mix) | Melodic Tech",
+        "section": "breakdown",
+        "bpm": 141.6
+      },
+      {
+        "t": 2363,
+        "energy": 7.8,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Phyze \u2013 Move Forward (Original Mix) | Melodic Tech",
+        "section": "breakdown",
+        "bpm": 141.6
+      },
+      {
+        "t": 2373,
+        "energy": 10,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "Vento [Oddity Records]",
+        "section": "intro",
+        "bpm": 141.6
+      },
+      {
+        "t": 2383,
+        "energy": 9.1,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "Vento [Oddity Records]",
+        "section": "intro",
+        "bpm": 141.6
+      },
+      {
+        "t": 2393,
+        "event": "transition",
+        "technique": "echo_out",
+        "to_deck": 1
+      },
+      {
+        "t": 2393,
+        "energy": 8.7,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Vento [Oddity Records]",
+        "section": "intro",
+        "bpm": 141.6
+      },
+      {
+        "t": 2403,
+        "energy": 9.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Vento [Oddity Records]",
+        "section": "intro",
+        "bpm": 141.6
+      },
+      {
+        "t": 2413,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Vento [Oddity Records]",
+        "section": "buildup",
+        "bpm": 141.6
+      },
+      {
+        "t": 2424,
+        "energy": 8.4,
+        "direction": "building",
+        "mood": "euphoric",
+        "track": "Vento [Oddity Records]",
+        "section": "buildup",
+        "bpm": 141.6
+      },
+      {
+        "t": 2434,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Vento [Oddity Records]",
+        "section": "buildup",
+        "bpm": 141.6
+      },
+      {
+        "t": 2444,
+        "energy": 8.3,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Vento [Oddity Records]",
+        "section": "buildup",
+        "bpm": 141.6
+      },
+      {
+        "t": 2454,
+        "energy": 8.9,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Vento [Oddity Records]",
+        "section": "buildup",
+        "bpm": 141.6
+      },
+      {
+        "t": 2464,
+        "energy": 9.8,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "Vento [Oddity Records]",
+        "section": "buildup",
+        "bpm": 141.6
+      },
+      {
+        "t": 2474,
+        "energy": 8.2,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Vento [Oddity Records]",
+        "section": "buildup",
+        "bpm": 141.6
+      },
+      {
+        "t": 2484,
+        "energy": 8.8,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Vento [Oddity Records]",
+        "section": "buildup",
+        "bpm": 141.6
+      },
+      {
+        "t": 2494,
+        "energy": 9.6,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Vento [Oddity Records]",
+        "section": "buildup",
+        "bpm": 141.6
+      },
+      {
+        "t": 2504,
+        "energy": 6.9,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "Vento [Oddity Records]",
+        "section": "breakdown",
+        "bpm": 141.6
+      },
+      {
+        "t": 2514,
+        "energy": 6.1,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Vento [Oddity Records]",
+        "section": "breakdown",
+        "bpm": 141.6
+      },
+      {
+        "t": 2524,
+        "energy": 6.5,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Vento [Oddity Records]",
+        "section": "breakdown",
+        "bpm": 141.6
+      },
+      {
+        "t": 2534,
+        "energy": 5.0,
+        "direction": "falling",
+        "mood": "energetic",
+        "track": "Vento [Oddity Records]",
+        "section": "breakdown",
+        "bpm": 141.6
+      },
+      {
+        "t": 2545,
+        "energy": 5.6,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Vento [Oddity Records]",
+        "section": "breakdown",
+        "bpm": 141.6
+      },
+      {
+        "t": 2555,
+        "energy": 7.7,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Vento [Oddity Records]",
+        "section": "breakdown",
+        "bpm": 141.6
+      },
+      {
+        "t": 2561,
+        "event": "transition",
+        "technique": "hard_cut",
+        "to_deck": 2
+      },
+      {
+        "t": 2565,
+        "energy": 2.0,
+        "direction": "dropping",
+        "mood": "melancholic",
+        "track": "V E L V Y X \u2013 After You (Original Mix) l Emotional",
+        "section": "intro",
+        "bpm": 118.4
+      },
+      {
+        "t": 2575,
+        "energy": 5.6,
+        "direction": "steady",
+        "mood": "dreamy",
+        "track": "V E L V Y X \u2013 After You (Original Mix) l Emotional",
+        "section": "intro",
+        "bpm": 118.4
+      },
+      {
+        "t": 2585,
+        "energy": 7.0,
+        "direction": "rising",
+        "mood": "hypnotic",
+        "track": "V E L V Y X \u2013 After You (Original Mix) l Emotional",
+        "section": "intro",
+        "bpm": 118.4
+      },
+      {
+        "t": 2595,
+        "energy": 6.2,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "V E L V Y X \u2013 After You (Original Mix) l Emotional",
+        "section": "intro",
+        "bpm": 118.4
+      },
+      {
+        "t": 2605,
+        "energy": 8.3,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "V E L V Y X \u2013 After You (Original Mix) l Emotional",
+        "section": "buildup",
+        "bpm": 118.4
+      },
+      {
+        "t": 2615,
+        "energy": 8.8,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "V E L V Y X \u2013 After You (Original Mix) l Emotional",
+        "section": "buildup",
+        "bpm": 118.4
+      },
+      {
+        "t": 2625,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "V E L V Y X \u2013 After You (Original Mix) l Emotional",
+        "section": "buildup",
+        "bpm": 118.4
+      },
+      {
+        "t": 2635,
+        "energy": 10,
+        "direction": "building",
+        "mood": "driving",
+        "track": "V E L V Y X \u2013 After You (Original Mix) l Emotional",
+        "section": "buildup",
+        "bpm": 118.4
+      },
+      {
+        "t": 2645,
+        "energy": 8.5,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "V E L V Y X \u2013 After You (Original Mix) l Emotional",
+        "section": "buildup",
+        "bpm": 118.4
+      },
+      {
+        "t": 2655,
+        "energy": 8.8,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "V E L V Y X \u2013 After You (Original Mix) l Emotional",
+        "section": "buildup",
+        "bpm": 118.4
+      },
+      {
+        "t": 2665,
+        "energy": 5.5,
+        "direction": "dropping",
+        "mood": "hypnotic",
+        "track": "V E L V Y X \u2013 After You (Original Mix) l Emotional",
+        "section": "breakdown",
+        "bpm": 118.4
+      },
+      {
+        "t": 2675,
+        "energy": 6.1,
+        "direction": "dropping",
+        "mood": "hypnotic",
+        "track": "V E L V Y X \u2013 After You (Original Mix) l Emotional",
+        "section": "breakdown",
+        "bpm": 118.4
+      },
+      {
+        "t": 2685,
+        "energy": 7.3,
+        "direction": "rising",
+        "mood": "driving",
+        "track": "V E L V Y X \u2013 After You (Original Mix) l Emotional",
+        "section": "breakdown",
+        "bpm": 118.4
+      },
+      {
+        "t": 2695,
+        "energy": 6.9,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "V E L V Y X \u2013 After You (Original Mix) l Emotional",
+        "section": "breakdown",
+        "bpm": 118.4
+      },
+      {
+        "t": 2698,
+        "event": "transition",
+        "technique": "hard_cut",
+        "to_deck": 1
+      },
+      {
+        "t": 2705,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Hypnotic (Original Mix) [PREMIERE] [Progressive Ho",
+        "section": "intro",
+        "bpm": 141.6
+      },
+      {
+        "t": 2715,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Hypnotic (Original Mix) [PREMIERE] [Progressive Ho",
+        "section": "intro",
+        "bpm": 141.6
+      },
+      {
+        "t": 2725,
+        "energy": 9.4,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Hypnotic (Original Mix) [PREMIERE] [Progressive Ho",
+        "section": "intro",
+        "bpm": 141.6
+      },
+      {
+        "t": 2736,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Hypnotic (Original Mix) [PREMIERE] [Progressive Ho",
+        "section": "intro",
+        "bpm": 141.6
+      },
+      {
+        "t": 2746,
+        "energy": 8.0,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Hypnotic (Original Mix) [PREMIERE] [Progressive Ho",
+        "section": "intro",
+        "bpm": 141.6
+      },
+      {
+        "t": 2756,
+        "energy": 6.4,
+        "direction": "dropping",
+        "mood": "hypnotic",
+        "track": "Hypnotic (Original Mix) [PREMIERE] [Progressive Ho",
+        "section": "breakdown",
+        "bpm": 141.6
+      },
+      {
+        "t": 2766,
+        "energy": 5.9,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Hypnotic (Original Mix) [PREMIERE] [Progressive Ho",
+        "section": "breakdown",
+        "bpm": 141.6
+      },
+      {
+        "t": 2776,
+        "energy": 7.0,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Hypnotic (Original Mix) [PREMIERE] [Progressive Ho",
+        "section": "intro",
+        "bpm": 141.6
+      },
+      {
+        "t": 2786,
+        "energy": 6.8,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "Hypnotic (Original Mix) [PREMIERE] [Progressive Ho",
+        "section": "intro",
+        "bpm": 141.6
+      },
+      {
+        "t": 2796,
+        "energy": 7.0,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Hypnotic (Original Mix) [PREMIERE] [Progressive Ho",
+        "section": "intro",
+        "bpm": 141.6
+      },
+      {
+        "t": 2806,
+        "energy": 5.1,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "Hypnotic (Original Mix) [PREMIERE] [Progressive Ho",
+        "section": "intro",
+        "bpm": 141.6
+      },
+      {
+        "t": 2816,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Hypnotic (Original Mix) [PREMIERE] [Progressive Ho",
+        "section": "buildup",
+        "bpm": 141.6
+      },
+      {
+        "t": 2826,
+        "energy": 8.6,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Hypnotic (Original Mix) [PREMIERE] [Progressive Ho",
+        "section": "buildup",
+        "bpm": 141.6
+      },
+      {
+        "t": 2836,
+        "energy": 9.2,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Hypnotic (Original Mix) [PREMIERE] [Progressive Ho",
+        "section": "buildup",
+        "bpm": 141.6
+      },
+      {
+        "t": 2846,
+        "energy": 9.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Hypnotic (Original Mix) [PREMIERE] [Progressive Ho",
+        "section": "buildup",
+        "bpm": 141.6
+      },
+      {
+        "t": 2856,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Hypnotic (Original Mix) [PREMIERE] [Progressive Ho",
+        "section": "buildup",
+        "bpm": 141.6
+      },
+      {
+        "t": 2866,
+        "energy": 9.2,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Hypnotic (Original Mix) [PREMIERE] [Progressive Ho",
+        "section": "buildup",
+        "bpm": 141.6
+      },
+      {
+        "t": 2876,
+        "energy": 9.2,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Hypnotic (Original Mix) [PREMIERE] [Progressive Ho",
+        "section": "buildup",
+        "bpm": 141.6
+      },
+      {
+        "t": 2886,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Hypnotic (Original Mix) [PREMIERE] [Progressive Ho",
+        "section": "buildup",
+        "bpm": 141.6
+      },
+      {
+        "t": 2896,
+        "energy": 5.6,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Hypnotic (Original Mix) [PREMIERE] [Progressive Ho",
+        "section": "breakdown",
+        "bpm": 141.6
+      },
+      {
+        "t": 2906,
+        "energy": 5.0,
+        "direction": "steady",
+        "mood": "energetic",
+        "track": "Hypnotic (Original Mix) [PREMIERE] [Progressive Ho",
+        "section": "breakdown",
+        "bpm": 141.6
+      },
+      {
+        "t": 2908,
+        "event": "transition",
+        "technique": "hard_cut",
+        "to_deck": 2
+      },
+      {
+        "t": 2916,
+        "energy": 7.6,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "intro",
+        "bpm": 128.3
+      },
+      {
+        "t": 2927,
+        "energy": 8.1,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "intro",
+        "bpm": 128.3
+      },
+      {
+        "t": 2937,
+        "energy": 7.6,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "intro",
+        "bpm": 128.3
+      },
+      {
+        "t": 2947,
+        "energy": 7.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "intro",
+        "bpm": 128.3
+      },
+      {
+        "t": 2957,
+        "energy": 8.0,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 2967,
+        "energy": 7.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 2977,
+        "energy": 5.6,
+        "direction": "rising",
+        "mood": "hypnotic",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 2987,
+        "energy": 7.0,
+        "direction": "dropping",
+        "mood": "hypnotic",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 2997,
+        "energy": 9.4,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 3007,
+        "energy": 8.6,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 3017,
+        "energy": 8.8,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 3027,
+        "energy": 9.3,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 3037,
+        "energy": 7.8,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 3047,
+        "energy": 7.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 3057,
+        "energy": 7.3,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 3068,
+        "energy": 3.2,
+        "direction": "dropping",
+        "mood": "driving",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 3078,
+        "energy": 6.3,
+        "direction": "falling",
+        "mood": "driving",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 3088,
+        "energy": 6.5,
+        "direction": "rising",
+        "mood": "hypnotic",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 3098,
+        "energy": 5.0,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 3108,
+        "energy": 7.3,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 3118,
+        "energy": 7.6,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 3128,
+        "energy": 7.2,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 3138,
+        "energy": 7.7,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 3148,
+        "energy": 7.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 3158,
+        "energy": 7.6,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "buildup",
+        "bpm": 128.3
+      },
+      {
+        "t": 3168,
+        "energy": 1.8,
+        "direction": "falling",
+        "mood": "dark",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 3178,
+        "energy": 5.5,
+        "direction": "rising",
+        "mood": "driving",
+        "track": "Beyond Control (KAS:ST Remix)",
+        "section": "breakdown",
+        "bpm": 128.3
+      },
+      {
+        "t": 3182,
+        "event": "transition",
+        "technique": "hard_cut",
+        "to_deck": 1
+      },
+      {
+        "t": 3189,
+        "energy": 7.1,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Drive (Original mix | Melodic Techno | Dark Techno",
+        "section": "intro",
+        "bpm": 113.9
+      },
+      {
+        "t": 3199,
+        "energy": 9.5,
+        "direction": "falling",
+        "mood": "driving",
+        "track": "Drive (Original mix | Melodic Techno | Dark Techno",
+        "section": "intro",
+        "bpm": 113.9
+      },
+      {
+        "t": 3209,
+        "energy": 9.2,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Drive (Original mix | Melodic Techno | Dark Techno",
+        "section": "buildup",
+        "bpm": 113.9
+      },
+      {
+        "t": 3219,
+        "energy": 9.5,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Drive (Original mix | Melodic Techno | Dark Techno",
+        "section": "buildup",
+        "bpm": 113.9
+      },
+      {
+        "t": 3229,
+        "energy": 8.2,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Drive (Original mix | Melodic Techno | Dark Techno",
+        "section": "buildup",
+        "bpm": 113.9
+      },
+      {
+        "t": 3239,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Drive (Original mix | Melodic Techno | Dark Techno",
+        "section": "buildup",
+        "bpm": 113.9
+      },
+      {
+        "t": 3249,
+        "energy": 7.7,
+        "direction": "falling",
+        "mood": "driving",
+        "track": "Drive (Original mix | Melodic Techno | Dark Techno",
+        "section": "buildup",
+        "bpm": 113.9
+      },
+      {
+        "t": 3259,
+        "energy": 7.7,
+        "direction": "falling",
+        "mood": "driving",
+        "track": "Drive (Original mix | Melodic Techno | Dark Techno",
+        "section": "breakdown",
+        "bpm": 113.9
+      },
+      {
+        "t": 3269,
+        "energy": 8.7,
+        "direction": "building",
+        "mood": "driving",
+        "track": "Drive (Original mix | Melodic Techno | Dark Techno",
+        "section": "breakdown",
+        "bpm": 113.9
+      },
+      {
+        "t": 3279,
+        "energy": 8.8,
+        "direction": "rising",
+        "mood": "driving",
+        "track": "Drive (Original mix | Melodic Techno | Dark Techno",
+        "section": "breakdown",
+        "bpm": 113.9
+      },
+      {
+        "t": 3281,
+        "event": "transition",
+        "technique": "hard_cut",
+        "to_deck": 2
+      },
+      {
+        "t": 3289,
+        "energy": 7.4,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "intro",
+        "bpm": 127.3
+      },
+      {
+        "t": 3299,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "intro",
+        "bpm": 127.3
+      },
+      {
+        "t": 3309,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "intro",
+        "bpm": 127.3
+      },
+      {
+        "t": 3319,
+        "energy": 9.1,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "intro",
+        "bpm": 127.3
+      },
+      {
+        "t": 3329,
+        "energy": 6.7,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "intro",
+        "bpm": 127.3
+      },
+      {
+        "t": 3339,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "buildup",
+        "bpm": 127.3
+      },
+      {
+        "t": 3349,
+        "energy": 10.0,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "buildup",
+        "bpm": 127.3
+      },
+      {
+        "t": 3359,
+        "energy": 8.0,
+        "direction": "building",
+        "mood": "driving",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "buildup",
+        "bpm": 127.3
+      },
+      {
+        "t": 3369,
+        "energy": 9.0,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "buildup",
+        "bpm": 127.3
+      },
+      {
+        "t": 3379,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "buildup",
+        "bpm": 127.3
+      },
+      {
+        "t": 3389,
+        "energy": 4.5,
+        "direction": "dropping",
+        "mood": "groovy",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "breakdown",
+        "bpm": 127.3
+      },
+      {
+        "t": 3399,
+        "energy": 4.3,
+        "direction": "steady",
+        "mood": "groovy",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "breakdown",
+        "bpm": 127.3
+      },
+      {
+        "t": 3409,
+        "energy": 6.7,
+        "direction": "rising",
+        "mood": "hypnotic",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "breakdown",
+        "bpm": 127.3
+      },
+      {
+        "t": 3419,
+        "energy": 6.4,
+        "direction": "rising",
+        "mood": "hypnotic",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "breakdown",
+        "bpm": 127.3
+      },
+      {
+        "t": 3429,
+        "energy": 5.7,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "breakdown",
+        "bpm": 127.3
+      },
+      {
+        "t": 3439,
+        "energy": 7.6,
+        "direction": "rising",
+        "mood": "driving",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "breakdown",
+        "bpm": 127.3
+      },
+      {
+        "t": 3449,
+        "energy": 7.1,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "breakdown",
+        "bpm": 127.3
+      },
+      {
+        "t": 3460,
+        "energy": 10,
+        "direction": "rising",
+        "mood": "driving",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "buildup",
+        "bpm": 127.3
+      },
+      {
+        "t": 3470,
+        "energy": 4.0,
+        "direction": "dropping",
+        "mood": "groovy",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "buildup",
+        "bpm": 127.3
+      },
+      {
+        "t": 3480,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "breakdown",
+        "bpm": 127.3
+      },
+      {
+        "t": 3490,
+        "energy": 10,
+        "direction": "rising",
+        "mood": "driving",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "buildup",
+        "bpm": 127.3
+      },
+      {
+        "t": 3500,
+        "energy": 8.9,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "buildup",
+        "bpm": 127.3
+      },
+      {
+        "t": 3510,
+        "energy": 8.2,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "buildup",
+        "bpm": 127.3
+      },
+      {
+        "t": 3520,
+        "energy": 1.8,
+        "direction": "dropping",
+        "mood": "dark",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "breakdown",
+        "bpm": 127.3
+      },
+      {
+        "t": 3530,
+        "energy": 1.8,
+        "direction": "steady",
+        "mood": "dark",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "breakdown",
+        "bpm": 127.3
+      },
+      {
+        "t": 3540,
+        "energy": 6.5,
+        "direction": "steady",
+        "mood": "groovy",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "breakdown",
+        "bpm": 127.3
+      },
+      {
+        "t": 3550,
+        "energy": 6.4,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "breakdown",
+        "bpm": 127.3
+      },
+      {
+        "t": 3560,
+        "energy": 7.2,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "breakdown",
+        "bpm": 127.3
+      },
+      {
+        "t": 3570,
+        "energy": 7.6,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "breakdown",
+        "bpm": 127.3
+      },
+      {
+        "t": 3580,
+        "energy": 7.5,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "breakdown",
+        "bpm": 127.3
+      },
+      {
+        "t": 3590,
+        "energy": 8.3,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Obnoxious Desire (Original Mix) | MELODIC TECHNO",
+        "section": "breakdown",
+        "bpm": 127.3
+      },
+      {
+        "t": 3591,
+        "event": "transition",
+        "technique": "hard_cut",
+        "to_deck": 1
+      },
+      {
+        "t": 3600,
+        "energy": 6.4,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Are We Truly Free? [Interstellar Recordings]",
+        "section": "intro",
+        "bpm": 146.2
+      },
+      {
+        "t": 3610,
+        "energy": 7.2,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Are We Truly Free? [Interstellar Recordings]",
+        "section": "intro",
+        "bpm": 146.2
+      },
+      {
+        "t": 3620,
+        "energy": 9.4,
+        "direction": "building",
+        "mood": "euphoric",
+        "track": "Are We Truly Free? [Interstellar Recordings]",
+        "section": "intro",
+        "bpm": 146.2
+      },
+      {
+        "t": 3630,
+        "energy": 8.8,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Are We Truly Free? [Interstellar Recordings]",
+        "section": "buildup",
+        "bpm": 146.2
+      },
+      {
+        "t": 3640,
+        "energy": 10.0,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Are We Truly Free? [Interstellar Recordings]",
+        "section": "buildup",
+        "bpm": 146.2
+      },
+      {
+        "t": 3650,
+        "energy": 8.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Are We Truly Free? [Interstellar Recordings]",
+        "section": "buildup",
+        "bpm": 146.2
+      },
+      {
+        "t": 3660,
+        "energy": 10.0,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Are We Truly Free? [Interstellar Recordings]",
+        "section": "buildup",
+        "bpm": 146.2
+      },
+      {
+        "t": 3670,
+        "energy": 4.9,
+        "direction": "falling",
+        "mood": "intense",
+        "track": "Are We Truly Free? [Interstellar Recordings]",
+        "section": "buildup",
+        "bpm": 146.2
+      },
+      {
+        "t": 3680,
+        "energy": 2.8,
+        "direction": "steady",
+        "mood": "dark",
+        "track": "Are We Truly Free? [Interstellar Recordings]",
+        "section": "breakdown",
+        "bpm": 146.2
+      },
+      {
+        "t": 3690,
+        "energy": 5.3,
+        "direction": "falling",
+        "mood": "intense",
+        "track": "Are We Truly Free? [Interstellar Recordings]",
+        "section": "breakdown",
+        "bpm": 146.2
+      },
+      {
+        "t": 3700,
+        "energy": 4.8,
+        "direction": "rising",
+        "mood": "intense",
+        "track": "Are We Truly Free? [Interstellar Recordings]",
+        "section": "breakdown",
+        "bpm": 146.2
+      },
+      {
+        "t": 3710,
+        "energy": 6.6,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Are We Truly Free? [Interstellar Recordings]",
+        "section": "breakdown",
+        "bpm": 146.2
+      },
+      {
+        "t": 3720,
+        "energy": 6.0,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Are We Truly Free? [Interstellar Recordings]",
+        "section": "breakdown",
+        "bpm": 146.2
+      },
+      {
+        "t": 3731,
+        "energy": 6.9,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Are We Truly Free? [Interstellar Recordings]",
+        "section": "breakdown",
+        "bpm": 146.2
+      },
+      {
+        "t": 3741,
+        "energy": 5.4,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "Are We Truly Free? [Interstellar Recordings]",
+        "section": "breakdown",
+        "bpm": 146.2
+      },
+      {
+        "t": 3751,
+        "energy": 6.8,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Are We Truly Free? [Interstellar Recordings]",
+        "section": "breakdown",
+        "bpm": 146.2
+      },
+      {
+        "t": 3761,
+        "energy": 8.8,
+        "direction": "building",
+        "mood": "euphoric",
+        "track": "Are We Truly Free? [Interstellar Recordings]",
+        "section": "buildup",
+        "bpm": 146.2
+      },
+      {
+        "t": 3771,
+        "energy": 8.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Are We Truly Free? [Interstellar Recordings]",
+        "section": "buildup",
+        "bpm": 146.2
+      },
+      {
+        "t": 3781,
+        "energy": 9.1,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Are We Truly Free? [Interstellar Recordings]",
+        "section": "buildup",
+        "bpm": 146.2
+      },
+      {
+        "t": 3791,
+        "energy": 8.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Are We Truly Free? [Interstellar Recordings]",
+        "section": "buildup",
+        "bpm": 146.2
+      },
+      {
+        "t": 3801,
+        "energy": 9.4,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Are We Truly Free? [Interstellar Recordings]",
+        "section": "buildup",
+        "bpm": 146.2
+      },
+      {
+        "t": 3811,
+        "energy": 5.5,
+        "direction": "dropping",
+        "mood": "hypnotic",
+        "track": "Are We Truly Free? [Interstellar Recordings]",
+        "section": "breakdown",
+        "bpm": 146.2
+      },
+      {
+        "t": 3821,
+        "energy": 6.0,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Are We Truly Free? [Interstellar Recordings]",
+        "section": "breakdown",
+        "bpm": 146.2
+      },
+      {
+        "t": 3831,
+        "energy": 7.4,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Are We Truly Free? [Interstellar Recordings]",
+        "section": "breakdown",
+        "bpm": 146.2
+      },
+      {
+        "t": 3841,
+        "energy": 6.7,
+        "direction": "building",
+        "mood": "intense",
+        "track": "Vigilans",
+        "section": "intro",
+        "bpm": 146.2
+      },
+      {
+        "t": 3851,
+        "energy": 9.1,
+        "direction": "building",
+        "mood": "euphoric",
+        "track": "Vigilans",
+        "section": "intro",
+        "bpm": 146.2
+      },
+      {
+        "t": 3862,
+        "energy": 8.8,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Vigilans",
+        "section": "intro",
+        "bpm": 146.2
+      },
+      {
+        "t": 3872,
+        "energy": 9.8,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Vigilans",
+        "section": "intro",
+        "bpm": 146.2
+      },
+      {
+        "t": 3882,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Vigilans",
+        "section": "intro",
+        "bpm": 146.2
+      },
+      {
+        "t": 3892,
+        "energy": 9.1,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "Vigilans",
+        "section": "intro",
+        "bpm": 146.2
+      },
+      {
+        "t": 3895,
+        "event": "transition",
+        "technique": "echo_out",
+        "to_deck": 2
+      },
+      {
+        "t": 3902,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Vigilans",
+        "section": "buildup",
+        "bpm": 144.4
+      },
+      {
+        "t": 3912,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Vigilans",
+        "section": "buildup",
+        "bpm": 140.8
+      },
+      {
+        "t": 3922,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Vigilans",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 3932,
+        "energy": 7.1,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "Vigilans",
+        "section": "breakdown",
+        "bpm": 138.4
+      },
+      {
+        "t": 3942,
+        "energy": 5.5,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "Vigilans",
+        "section": "breakdown",
+        "bpm": 138.4
+      },
+      {
+        "t": 3952,
+        "energy": 2.2,
+        "direction": "falling",
+        "mood": "dark",
+        "track": "Vigilans",
+        "section": "breakdown",
+        "bpm": 138.4
+      },
+      {
+        "t": 3962,
+        "energy": 10,
+        "direction": "building",
+        "mood": "euphoric",
+        "track": "Vigilans",
+        "section": "breakdown",
+        "bpm": 138.4
+      },
+      {
+        "t": 3972,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Vigilans",
+        "section": "breakdown",
+        "bpm": 138.4
+      },
+      {
+        "t": 3982,
+        "energy": 9.9,
+        "direction": "building",
+        "mood": "euphoric",
+        "track": "Vigilans",
+        "section": "breakdown",
+        "bpm": 138.4
+      },
+      {
+        "t": 3992,
+        "energy": 9.5,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Vigilans",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 4002,
+        "energy": 9.0,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "Vigilans",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 4012,
+        "energy": 8.6,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Vigilans",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 4022,
+        "energy": 3.4,
+        "direction": "falling",
+        "mood": "energetic",
+        "track": "Vigilans",
+        "section": "breakdown",
+        "bpm": 138.4
+      },
+      {
+        "t": 4032,
+        "energy": 5.8,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Vigilans",
+        "section": "breakdown",
+        "bpm": 138.4
+      },
+      {
+        "t": 4042,
+        "energy": 5.4,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Vigilans",
+        "section": "breakdown",
+        "bpm": 138.4
+      },
+      {
+        "t": 4052,
+        "energy": 8.9,
+        "direction": "building",
+        "mood": "euphoric",
+        "track": "Vigilans",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 4062,
+        "energy": 8.6,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "intro",
+        "bpm": 138.4
+      },
+      {
+        "t": 4073,
+        "energy": 7.7,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 4083,
+        "energy": 7.5,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 4085,
+        "event": "transition",
+        "technique": "crossfade",
+        "to_deck": 1
+      },
+      {
+        "t": 4093,
+        "energy": 7.6,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 4103,
+        "energy": 9.0,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 4113,
+        "energy": 8.6,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 4123,
+        "energy": 8.7,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 4133,
+        "energy": 8.1,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 4143,
+        "energy": 7.7,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 4153,
+        "energy": 7.7,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "breakdown",
+        "bpm": 138.4
+      },
+      {
+        "t": 4163,
+        "energy": 8.2,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "breakdown",
+        "bpm": 138.4
+      },
+      {
+        "t": 4173,
+        "energy": 6.7,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "breakdown",
+        "bpm": 138.4
+      },
+      {
+        "t": 4183,
+        "energy": 8.8,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 4193,
+        "energy": 8.5,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 4203,
+        "energy": 8.0,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 4213,
+        "energy": 8.1,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 4223,
+        "energy": 7.7,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 4233,
+        "energy": 7.8,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 4243,
+        "energy": 7.5,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 4253,
+        "energy": 9.2,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 4263,
+        "energy": 8.7,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 4273,
+        "energy": 8.7,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 4284,
+        "energy": 8.0,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 4294,
+        "energy": 8.0,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 4304,
+        "energy": 7.8,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 4314,
+        "energy": 8.3,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "buildup",
+        "bpm": 138.4
+      },
+      {
+        "t": 4324,
+        "energy": 9.3,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "outro",
+        "bpm": 138.4
+      },
+      {
+        "t": 4334,
+        "energy": 8.3,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Confused Ravi (Live in the Desert) | Electronic Si",
+        "section": "outro",
+        "bpm": 138.4
+      },
+      {
+        "t": 4336,
+        "event": "transition",
+        "technique": "hard_cut",
+        "to_deck": 2
+      },
+      {
+        "t": 4344,
+        "energy": 6.7,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Away [Oddity Records] / Melodic House & Techno",
+        "section": "intro",
+        "bpm": 141.9
+      },
+      {
+        "t": 4354,
+        "energy": 9.4,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Away [Oddity Records] / Melodic House & Techno",
+        "section": "intro",
+        "bpm": 141.9
+      },
+      {
+        "t": 4364,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Away [Oddity Records] / Melodic House & Techno",
+        "section": "intro",
+        "bpm": 141.9
+      },
+      {
+        "t": 4374,
+        "energy": 9.8,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Away [Oddity Records] / Melodic House & Techno",
+        "section": "buildup",
+        "bpm": 141.9
+      },
+      {
+        "t": 4384,
+        "energy": 9.2,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Away [Oddity Records] / Melodic House & Techno",
+        "section": "buildup",
+        "bpm": 141.9
+      },
+      {
+        "t": 4394,
+        "energy": 9.7,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Away [Oddity Records] / Melodic House & Techno",
+        "section": "buildup",
+        "bpm": 141.9
+      },
+      {
+        "t": 4404,
+        "energy": 10,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Away [Oddity Records] / Melodic House & Techno",
+        "section": "buildup",
+        "bpm": 141.9
+      },
+      {
+        "t": 4414,
+        "energy": 8.7,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Away [Oddity Records] / Melodic House & Techno",
+        "section": "buildup",
+        "bpm": 141.9
+      },
+      {
+        "t": 4424,
+        "energy": 6.3,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Away [Oddity Records] / Melodic House & Techno",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4434,
+        "energy": 0.5,
+        "direction": "dropping",
+        "mood": "dark",
+        "track": "Away [Oddity Records] / Melodic House & Techno",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4444,
+        "energy": 3.4,
+        "direction": "rising",
+        "mood": "energetic",
+        "track": "Away [Oddity Records] / Melodic House & Techno",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4454,
+        "energy": 5.5,
+        "direction": "rising",
+        "mood": "energetic",
+        "track": "Away [Oddity Records] / Melodic House & Techno",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4464,
+        "energy": 7.9,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Away [Oddity Records] / Melodic House & Techno",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4474,
+        "energy": 6.0,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Away [Oddity Records] / Melodic House & Techno",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4484,
+        "energy": 6.2,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Away [Oddity Records] / Melodic House & Techno",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4494,
+        "energy": 4.3,
+        "direction": "falling",
+        "mood": "energetic",
+        "track": "Away [Oddity Records] / Melodic House & Techno",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4504,
+        "energy": 6.4,
+        "direction": "building",
+        "mood": "energetic",
+        "track": "Away [Oddity Records] / Melodic House & Techno",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4514,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Away [Oddity Records] / Melodic House & Techno",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4524,
+        "energy": 8.7,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Away [Oddity Records] / Melodic House & Techno",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4534,
+        "energy": 9.3,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Away [Oddity Records] / Melodic House & Techno",
+        "section": "buildup",
+        "bpm": 141.9
+      },
+      {
+        "t": 4545,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Time (Afterlife Tulum 2022)",
+        "section": "intro",
+        "bpm": 141.9
+      },
+      {
+        "t": 4555,
+        "energy": 7.3,
+        "direction": "dropping",
+        "mood": "euphoric",
+        "track": "Time (Afterlife Tulum 2022)",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4565,
+        "event": "transition",
+        "technique": "crossfade",
+        "to_deck": 1
+      },
+      {
+        "t": 4565,
+        "energy": 8.3,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Time (Afterlife Tulum 2022)",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4575,
+        "energy": 9.3,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Time (Afterlife Tulum 2022)",
+        "section": "intro",
+        "bpm": 141.9
+      },
+      {
+        "t": 4585,
+        "energy": 8.7,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Time (Afterlife Tulum 2022)",
+        "section": "intro",
+        "bpm": 141.9
+      },
+      {
+        "t": 4595,
+        "energy": 6.3,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "Time (Afterlife Tulum 2022)",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4606,
+        "energy": 8.3,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "Time (Afterlife Tulum 2022)",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4616,
+        "energy": 8.4,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Time (Afterlife Tulum 2022)",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4626,
+        "energy": 8.8,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "Time (Afterlife Tulum 2022)",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4636,
+        "energy": 8.3,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Time (Afterlife Tulum 2022)",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4646,
+        "energy": 4.3,
+        "direction": "dropping",
+        "mood": "energetic",
+        "track": "Time (Afterlife Tulum 2022)",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4656,
+        "energy": 2.2,
+        "direction": "falling",
+        "mood": "dark",
+        "track": "Time (Afterlife Tulum 2022)",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4666,
+        "energy": 6.1,
+        "direction": "rising",
+        "mood": "energetic",
+        "track": "Time (Afterlife Tulum 2022)",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4676,
+        "energy": 7.2,
+        "direction": "building",
+        "mood": "euphoric",
+        "track": "Time (Afterlife Tulum 2022)",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4686,
+        "energy": 8.8,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Time (Afterlife Tulum 2022)",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4696,
+        "energy": 9.5,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Time (Afterlife Tulum 2022)",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4706,
+        "energy": 9.7,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Time (Afterlife Tulum 2022)",
+        "section": "buildup",
+        "bpm": 141.9
+      },
+      {
+        "t": 4716,
+        "energy": 8.7,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Time (Afterlife Tulum 2022)",
+        "section": "buildup",
+        "bpm": 141.9
+      },
+      {
+        "t": 4726,
+        "energy": 7.4,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "Wait For You",
+        "section": "intro",
+        "bpm": 141.9
+      },
+      {
+        "t": 4736,
+        "energy": 8.2,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Wait For You",
+        "section": "intro",
+        "bpm": 141.9
+      },
+      {
+        "t": 4746,
+        "energy": 8.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Wait For You",
+        "section": "buildup",
+        "bpm": 141.9
+      },
+      {
+        "t": 4751,
+        "event": "transition",
+        "technique": "crossfade",
+        "to_deck": 2
+      },
+      {
+        "t": 4756,
+        "energy": 10.0,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Wait For You",
+        "section": "buildup",
+        "bpm": 141.9
+      },
+      {
+        "t": 4766,
+        "energy": 9.9,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "Wait For You",
+        "section": "buildup",
+        "bpm": 141.9
+      },
+      {
+        "t": 4776,
+        "energy": 9.1,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Wait For You",
+        "section": "buildup",
+        "bpm": 141.9
+      },
+      {
+        "t": 4786,
+        "energy": 7.2,
+        "direction": "dropping",
+        "mood": "euphoric",
+        "track": "Wait For You",
+        "section": "intro",
+        "bpm": 141.9
+      },
+      {
+        "t": 4796,
+        "energy": 7.4,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Wait For You",
+        "section": "intro",
+        "bpm": 141.9
+      },
+      {
+        "t": 4806,
+        "energy": 8.2,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Wait For You",
+        "section": "buildup",
+        "bpm": 141.9
+      },
+      {
+        "t": 4816,
+        "energy": 5.8,
+        "direction": "dropping",
+        "mood": "hypnotic",
+        "track": "Wait For You",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4826,
+        "energy": 9.4,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Wait For You",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4837,
+        "energy": 9.3,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Wait For You",
+        "section": "buildup",
+        "bpm": 141.9
+      },
+      {
+        "t": 4847,
+        "energy": 8.7,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Wait For You",
+        "section": "buildup",
+        "bpm": 141.9
+      },
+      {
+        "t": 4857,
+        "energy": 7.7,
+        "direction": "dropping",
+        "mood": "euphoric",
+        "track": "Wait For You",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4867,
+        "energy": 9.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Wait For You",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4877,
+        "energy": 9.8,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Wait For You",
+        "section": "buildup",
+        "bpm": 141.9
+      },
+      {
+        "t": 4887,
+        "energy": 8.7,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Wait For You",
+        "section": "buildup",
+        "bpm": 141.9
+      },
+      {
+        "t": 4897,
+        "energy": 5.1,
+        "direction": "dropping",
+        "mood": "hypnotic",
+        "track": "Wait For You",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4907,
+        "energy": 3.5,
+        "direction": "falling",
+        "mood": "energetic",
+        "track": "Wait For You",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4917,
+        "energy": 6.5,
+        "direction": "steady",
+        "mood": "energetic",
+        "track": "Wait For You",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4927,
+        "energy": 7.8,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Wait For You",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4937,
+        "energy": 6.6,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Wait For You",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4948,
+        "energy": 8.4,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Wait For You",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 4958,
+        "energy": 10,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Midnight Drive",
+        "section": "intro",
+        "bpm": 141.9
+      },
+      {
+        "t": 4968,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Midnight Drive",
+        "section": "buildup",
+        "bpm": 141.9
+      },
+      {
+        "t": 4975,
+        "event": "transition",
+        "technique": "crossfade",
+        "to_deck": 1
+      },
+      {
+        "t": 4978,
+        "energy": 8.3,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Midnight Drive",
+        "section": "buildup",
+        "bpm": 141.9
+      },
+      {
+        "t": 4988,
+        "energy": 9.4,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Midnight Drive",
+        "section": "intro",
+        "bpm": 141.9
+      },
+      {
+        "t": 4998,
+        "energy": 8.3,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "Midnight Drive",
+        "section": "intro",
+        "bpm": 141.9
+      },
+      {
+        "t": 5008,
+        "energy": 7.6,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Midnight Drive",
+        "section": "intro",
+        "bpm": 141.9
+      },
+      {
+        "t": 5018,
+        "energy": 8.4,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "Midnight Drive",
+        "section": "intro",
+        "bpm": 141.9
+      },
+      {
+        "t": 5028,
+        "energy": 9.3,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Midnight Drive",
+        "section": "buildup",
+        "bpm": 141.9
+      },
+      {
+        "t": 5038,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Midnight Drive",
+        "section": "buildup",
+        "bpm": 141.9
+      },
+      {
+        "t": 5048,
+        "energy": 8.6,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Midnight Drive",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 5058,
+        "energy": 7.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Midnight Drive",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 5068,
+        "energy": 6.1,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "Midnight Drive",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 5078,
+        "energy": 5.9,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Midnight Drive",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 5088,
+        "energy": 5.1,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Midnight Drive",
+        "section": "breakdown",
+        "bpm": 141.9
+      },
+      {
+        "t": 5097,
+        "event": "transition",
+        "technique": "hard_cut",
+        "to_deck": 2
+      },
+      {
+        "t": 5098,
+        "energy": 5.7,
+        "direction": "dropping",
+        "mood": "intense",
+        "track": "MOTION \u2014 Dark Melodic Techno | Driving Bass & Hypn",
+        "section": "intro",
+        "bpm": 152.2
+      },
+      {
+        "t": 5108,
+        "energy": 5.7,
+        "direction": "steady",
+        "mood": "intense",
+        "track": "MOTION \u2014 Dark Melodic Techno | Driving Bass & Hypn",
+        "section": "intro",
+        "bpm": 152.2
+      },
+      {
+        "t": 5118,
+        "energy": 8.0,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "MOTION \u2014 Dark Melodic Techno | Driving Bass & Hypn",
+        "section": "intro",
+        "bpm": 152.2
+      },
+      {
+        "t": 5128,
+        "energy": 9.2,
+        "direction": "building",
+        "mood": "euphoric",
+        "track": "MOTION \u2014 Dark Melodic Techno | Driving Bass & Hypn",
+        "section": "buildup",
+        "bpm": 152.2
+      },
+      {
+        "t": 5138,
+        "energy": 6.7,
+        "direction": "dropping",
+        "mood": "hypnotic",
+        "track": "MOTION \u2014 Dark Melodic Techno | Driving Bass & Hypn",
+        "section": "buildup",
+        "bpm": 152.2
+      },
+      {
+        "t": 5148,
+        "energy": 5.7,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "MOTION \u2014 Dark Melodic Techno | Driving Bass & Hypn",
+        "section": "intro",
+        "bpm": 152.2
+      },
+      {
+        "t": 5158,
+        "energy": 9.7,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "MOTION \u2014 Dark Melodic Techno | Driving Bass & Hypn",
+        "section": "buildup",
+        "bpm": 152.2
+      },
+      {
+        "t": 5168,
+        "energy": 5.8,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "MOTION \u2014 Dark Melodic Techno | Driving Bass & Hypn",
+        "section": "breakdown",
+        "bpm": 152.2
+      },
+      {
+        "t": 5178,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "MOTION \u2014 Dark Melodic Techno | Driving Bass & Hypn",
+        "section": "buildup",
+        "bpm": 152.2
+      },
+      {
+        "t": 5188,
+        "energy": 9.0,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "MOTION \u2014 Dark Melodic Techno | Driving Bass & Hypn",
+        "section": "buildup",
+        "bpm": 152.2
+      },
+      {
+        "t": 5199,
+        "energy": 6.5,
+        "direction": "dropping",
+        "mood": "hypnotic",
+        "track": "MOTION \u2014 Dark Melodic Techno | Driving Bass & Hypn",
+        "section": "breakdown",
+        "bpm": 152.2
+      },
+      {
+        "t": 5209,
+        "energy": 9.3,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "MOTION \u2014 Dark Melodic Techno | Driving Bass & Hypn",
+        "section": "buildup",
+        "bpm": 152.2
+      },
+      {
+        "t": 5211,
+        "event": "transition",
+        "technique": "hard_cut",
+        "to_deck": 1
+      },
+      {
+        "t": 5219,
+        "energy": 5.7,
+        "direction": "building",
+        "mood": "groovy",
+        "track": "V E L V Y X \u2013 Fading Lights (Original Mix) l emoti",
+        "section": "intro",
+        "bpm": 121.9
+      },
+      {
+        "t": 5229,
+        "energy": 7.7,
+        "direction": "falling",
+        "mood": "driving",
+        "track": "V E L V Y X \u2013 Fading Lights (Original Mix) l emoti",
+        "section": "breakdown",
+        "bpm": 121.9
+      },
+      {
+        "t": 5239,
+        "energy": 4.7,
+        "direction": "steady",
+        "mood": "groovy",
+        "track": "V E L V Y X \u2013 Fading Lights (Original Mix) l emoti",
+        "section": "breakdown",
+        "bpm": 121.9
+      },
+      {
+        "t": 5249,
+        "energy": 7.7,
+        "direction": "building",
+        "mood": "driving",
+        "track": "V E L V Y X \u2013 Fading Lights (Original Mix) l emoti",
+        "section": "breakdown",
+        "bpm": 121.9
+      },
+      {
+        "t": 5259,
+        "energy": 7.4,
+        "direction": "falling",
+        "mood": "driving",
+        "track": "V E L V Y X \u2013 Fading Lights (Original Mix) l emoti",
+        "section": "breakdown",
+        "bpm": 121.9
+      },
+      {
+        "t": 5269,
+        "energy": 10,
+        "direction": "falling",
+        "mood": "driving",
+        "track": "V E L V Y X \u2013 Fading Lights (Original Mix) l emoti",
+        "section": "buildup",
+        "bpm": 121.9
+      },
+      {
+        "t": 5279,
+        "energy": 9.6,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "V E L V Y X \u2013 Fading Lights (Original Mix) l emoti",
+        "section": "buildup",
+        "bpm": 121.9
+      },
+      {
+        "t": 5289,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "V E L V Y X \u2013 Fading Lights (Original Mix) l emoti",
+        "section": "buildup",
+        "bpm": 121.9
+      },
+      {
+        "t": 5299,
+        "energy": 3.0,
+        "direction": "steady",
+        "mood": "groovy",
+        "track": "V E L V Y X \u2013 Fading Lights (Original Mix) l emoti",
+        "section": "breakdown",
+        "bpm": 121.9
+      },
+      {
+        "t": 5309,
+        "energy": 10,
+        "direction": "rising",
+        "mood": "driving",
+        "track": "V E L V Y X \u2013 Fading Lights (Original Mix) l emoti",
+        "section": "breakdown",
+        "bpm": 121.9
+      },
+      {
+        "t": 5319,
+        "energy": 9.8,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "V E L V Y X \u2013 Fading Lights (Original Mix) l emoti",
+        "section": "buildup",
+        "bpm": 121.9
+      },
+      {
+        "t": 5329,
+        "energy": 4.9,
+        "direction": "falling",
+        "mood": "groovy",
+        "track": "Midnight (Original Mix)",
+        "section": "intro",
+        "bpm": 121.9
+      },
+      {
+        "t": 5339,
+        "event": "transition",
+        "technique": "auto_crossfade",
+        "to_deck": 2
+      },
+      {
+        "t": 5339,
+        "energy": 8.5,
+        "direction": "building",
+        "mood": "driving",
+        "track": "Midnight (Original Mix)",
+        "section": "intro",
+        "bpm": 121.9
+      },
+      {
+        "t": 5349,
+        "energy": 9.4,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Midnight (Original Mix)",
+        "section": "intro",
+        "bpm": 121.9
+      },
+      {
+        "t": 5359,
+        "energy": 8.5,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Midnight (Original Mix)",
+        "section": "intro",
+        "bpm": 121.9
+      },
+      {
+        "t": 5369,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Midnight (Original Mix)",
+        "section": "buildup",
+        "bpm": 121.9
+      },
+      {
+        "t": 5380,
+        "energy": 9.2,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Midnight (Original Mix)",
+        "section": "buildup",
+        "bpm": 121.9
+      },
+      {
+        "t": 5390,
+        "energy": 8.3,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Midnight (Original Mix)",
+        "section": "buildup",
+        "bpm": 121.9
+      },
+      {
+        "t": 5400,
+        "energy": 9.9,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Midnight (Original Mix)",
+        "section": "buildup",
+        "bpm": 121.9
+      },
+      {
+        "t": 5410,
+        "energy": 8.4,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Midnight (Original Mix)",
+        "section": "buildup",
+        "bpm": 121.9
+      },
+      {
+        "t": 5420,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Midnight (Original Mix)",
+        "section": "buildup",
+        "bpm": 121.9
+      },
+      {
+        "t": 5430,
+        "energy": 8.7,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Midnight (Original Mix)",
+        "section": "buildup",
+        "bpm": 121.9
+      },
+      {
+        "t": 5440,
+        "energy": 8.8,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Midnight (Original Mix)",
+        "section": "buildup",
+        "bpm": 121.9
+      },
+      {
+        "t": 5450,
+        "energy": 9.9,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Midnight (Original Mix)",
+        "section": "buildup",
+        "bpm": 121.9
+      },
+      {
+        "t": 5460,
+        "energy": 8.4,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Midnight (Original Mix)",
+        "section": "buildup",
+        "bpm": 121.9
+      },
+      {
+        "t": 5470,
+        "energy": 5.3,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Midnight (Original Mix)",
+        "section": "breakdown",
+        "bpm": 121.9
+      },
+      {
+        "t": 5480,
+        "energy": 4.5,
+        "direction": "falling",
+        "mood": "groovy",
+        "track": "Midnight (Original Mix)",
+        "section": "breakdown",
+        "bpm": 121.9
+      },
+      {
+        "t": 5490,
+        "energy": 5.7,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Midnight (Original Mix)",
+        "section": "breakdown",
+        "bpm": 121.9
+      },
+      {
+        "t": 5500,
+        "energy": 9.8,
+        "direction": "rising",
+        "mood": "driving",
+        "track": "Midnight (Original Mix)",
+        "section": "breakdown",
+        "bpm": 121.9
+      },
+      {
+        "t": 5509,
+        "event": "transition",
+        "technique": "hard_cut",
+        "to_deck": 1
+      },
+      {
+        "t": 5510,
+        "energy": 0.9,
+        "direction": "dropping",
+        "mood": "dark",
+        "track": "Ride Slow (Original Mix)",
+        "section": "intro",
+        "bpm": 135.2
+      },
+      {
+        "t": 5520,
+        "energy": 6.8,
+        "direction": "rising",
+        "mood": "energetic",
+        "track": "Ride Slow (Original Mix)",
+        "section": "intro",
+        "bpm": 135.2
+      },
+      {
+        "t": 5530,
+        "energy": 6.7,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Ride Slow (Original Mix)",
+        "section": "breakdown",
+        "bpm": 135.2
+      },
+      {
+        "t": 5540,
+        "energy": 5.5,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Ride Slow (Original Mix)",
+        "section": "breakdown",
+        "bpm": 135.2
+      },
+      {
+        "t": 5550,
+        "energy": 8.2,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Ride Slow (Original Mix)",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5560,
+        "energy": 9.3,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Ride Slow (Original Mix)",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5570,
+        "energy": 6.5,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "Ride Slow (Original Mix)",
+        "section": "breakdown",
+        "bpm": 135.2
+      },
+      {
+        "t": 5580,
+        "energy": 5.1,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "Ride Slow (Original Mix)",
+        "section": "breakdown",
+        "bpm": 135.2
+      },
+      {
+        "t": 5591,
+        "energy": 8.5,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Ride Slow (Original Mix)",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5601,
+        "energy": 9.7,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Ride Slow (Original Mix)",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5611,
+        "energy": 8.2,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Ride Slow (Original Mix)",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5621,
+        "energy": 9.3,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Ride Slow (Original Mix)",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5631,
+        "energy": 5.1,
+        "direction": "dropping",
+        "mood": "hypnotic",
+        "track": "Ride Slow (Original Mix)",
+        "section": "breakdown",
+        "bpm": 135.2
+      },
+      {
+        "t": 5641,
+        "energy": 10,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "Ride Slow (Original Mix)",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5651,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Ride Slow (Original Mix)",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5661,
+        "energy": 8.5,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "Electric Horizon [ Original Mix ]",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5671,
+        "energy": 8.8,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Electric Horizon [ Original Mix ]",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5680,
+        "event": "transition",
+        "technique": "crossfade",
+        "to_deck": 2
+      },
+      {
+        "t": 5681,
+        "energy": 7.3,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "Electric Horizon [ Original Mix ]",
+        "section": "intro",
+        "bpm": 135.2
+      },
+      {
+        "t": 5691,
+        "energy": 8.5,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Electric Horizon [ Original Mix ]",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5701,
+        "energy": 9.5,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Electric Horizon [ Original Mix ]",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5711,
+        "energy": 8.4,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Electric Horizon [ Original Mix ]",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5721,
+        "energy": 9.3,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "Electric Horizon [ Original Mix ]",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5731,
+        "energy": 8.3,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Electric Horizon [ Original Mix ]",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5741,
+        "energy": 6.3,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Electric Horizon [ Original Mix ]",
+        "section": "breakdown",
+        "bpm": 135.2
+      },
+      {
+        "t": 5751,
+        "energy": 7.2,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Electric Horizon [ Original Mix ]",
+        "section": "breakdown",
+        "bpm": 135.2
+      },
+      {
+        "t": 5761,
+        "energy": 8.6,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Electric Horizon [ Original Mix ]",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5771,
+        "energy": 9.1,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Electric Horizon [ Original Mix ]",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5781,
+        "energy": 9.3,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Electric Horizon [ Original Mix ]",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5791,
+        "energy": 8.3,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Electric Horizon [ Original Mix ]",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5801,
+        "energy": 7.8,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "Align (Extended Mix) [Rose Avenue] | BEST PROGRESS",
+        "section": "intro",
+        "bpm": 135.2
+      },
+      {
+        "t": 5811,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Align (Extended Mix) [Rose Avenue] | BEST PROGRESS",
+        "section": "intro",
+        "bpm": 135.2
+      },
+      {
+        "t": 5821,
+        "energy": 8.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Align (Extended Mix) [Rose Avenue] | BEST PROGRESS",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5824,
+        "event": "transition",
+        "technique": "crossfade",
+        "to_deck": 1
+      },
+      {
+        "t": 5832,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Align (Extended Mix) [Rose Avenue] | BEST PROGRESS",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5842,
+        "energy": 6.6,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Align (Extended Mix) [Rose Avenue] | BEST PROGRESS",
+        "section": "breakdown",
+        "bpm": 135.2
+      },
+      {
+        "t": 5852,
+        "energy": 5.3,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Align (Extended Mix) [Rose Avenue] | BEST PROGRESS",
+        "section": "breakdown",
+        "bpm": 135.2
+      },
+      {
+        "t": 5862,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Align (Extended Mix) [Rose Avenue] | BEST PROGRESS",
+        "section": "breakdown",
+        "bpm": 135.2
+      },
+      {
+        "t": 5872,
+        "energy": 8.6,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "Align (Extended Mix) [Rose Avenue] | BEST PROGRESS",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5882,
+        "energy": 10,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Align (Extended Mix) [Rose Avenue] | BEST PROGRESS",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5892,
+        "energy": 6.8,
+        "direction": "dropping",
+        "mood": "hypnotic",
+        "track": "Align (Extended Mix) [Rose Avenue] | BEST PROGRESS",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5902,
+        "energy": 9.3,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Align (Extended Mix) [Rose Avenue] | BEST PROGRESS",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5912,
+        "energy": 9.6,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Align (Extended Mix) [Rose Avenue] | BEST PROGRESS",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5922,
+        "energy": 9.0,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Align (Extended Mix) [Rose Avenue] | BEST PROGRESS",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5932,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Align (Extended Mix) [Rose Avenue] | BEST PROGRESS",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5942,
+        "energy": 8.5,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Align (Extended Mix) [Rose Avenue] | BEST PROGRESS",
+        "section": "buildup",
+        "bpm": 135.2
+      },
+      {
+        "t": 5952,
+        "energy": 3.5,
+        "direction": "falling",
+        "mood": "energetic",
+        "track": "Align (Extended Mix) [Rose Avenue] | BEST PROGRESS",
+        "section": "breakdown",
+        "bpm": 135.2
+      },
+      {
+        "t": 5962,
+        "energy": 5.4,
+        "direction": "rising",
+        "mood": "hypnotic",
+        "track": "Align (Extended Mix) [Rose Avenue] | BEST PROGRESS",
+        "section": "breakdown",
+        "bpm": 135.2
+      },
+      {
+        "t": 5973,
+        "energy": 3.2,
+        "direction": "falling",
+        "mood": "energetic",
+        "track": "Align (Extended Mix) [Rose Avenue] | BEST PROGRESS",
+        "section": "breakdown",
+        "bpm": 135.2
+      },
+      {
+        "t": 5983,
+        "energy": 6.6,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Align (Extended Mix) [Rose Avenue] | BEST PROGRESS",
+        "section": "breakdown",
+        "bpm": 135.2
+      },
+      {
+        "t": 5989,
+        "event": "transition",
+        "technique": "hard_cut",
+        "to_deck": 2
+      },
+      {
+        "t": 5993,
+        "energy": 5.8,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "intro",
+        "bpm": 143.0
+      },
+      {
+        "t": 6003,
+        "energy": 4.9,
+        "direction": "steady",
+        "mood": "energetic",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "intro",
+        "bpm": 143.0
+      },
+      {
+        "t": 6013,
+        "energy": 6.6,
+        "direction": "building",
+        "mood": "hypnotic",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "intro",
+        "bpm": 143.0
+      },
+      {
+        "t": 6023,
+        "energy": 7.1,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "intro",
+        "bpm": 143.0
+      },
+      {
+        "t": 6033,
+        "energy": 6.1,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "intro",
+        "bpm": 143.0
+      },
+      {
+        "t": 6043,
+        "energy": 8.1,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "intro",
+        "bpm": 143.0
+      },
+      {
+        "t": 6053,
+        "energy": 7.4,
+        "direction": "building",
+        "mood": "euphoric",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "intro",
+        "bpm": 143.0
+      },
+      {
+        "t": 6063,
+        "energy": 7.2,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6073,
+        "energy": 8.1,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6083,
+        "energy": 7.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6093,
+        "energy": 7.6,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6104,
+        "energy": 7.2,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6114,
+        "energy": 7.2,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6124,
+        "energy": 7.4,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6134,
+        "energy": 7.2,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6144,
+        "energy": 4.2,
+        "direction": "dropping",
+        "mood": "energetic",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6154,
+        "energy": 7.6,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6164,
+        "energy": 7.5,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6174,
+        "energy": 7.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6184,
+        "energy": 7.8,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6194,
+        "energy": 5.4,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "breakdown",
+        "bpm": 143.0
+      },
+      {
+        "t": 6204,
+        "energy": 5.5,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "breakdown",
+        "bpm": 143.0
+      },
+      {
+        "t": 6214,
+        "energy": 8.2,
+        "direction": "building",
+        "mood": "euphoric",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "breakdown",
+        "bpm": 143.0
+      },
+      {
+        "t": 6224,
+        "energy": 5.9,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "breakdown",
+        "bpm": 143.0
+      },
+      {
+        "t": 6234,
+        "energy": 7.4,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "breakdown",
+        "bpm": 143.0
+      },
+      {
+        "t": 6244,
+        "energy": 7.5,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "breakdown",
+        "bpm": 143.0
+      },
+      {
+        "t": 6254,
+        "energy": 5.9,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "breakdown",
+        "bpm": 143.0
+      },
+      {
+        "t": 6264,
+        "energy": 5.2,
+        "direction": "rising",
+        "mood": "hypnotic",
+        "track": "MIA SPITHA STA MATIA SOU (Dark  Hypnotic Melodic T",
+        "section": "breakdown",
+        "bpm": 143.0
+      },
+      {
+        "t": 6274,
+        "energy": 9.8,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Deep Bass Melodic Techno \u26a1 Night Drive 125 BPM | C",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6285,
+        "energy": 10.0,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Deep Bass Melodic Techno \u26a1 Night Drive 125 BPM | C",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6292,
+        "event": "transition",
+        "technique": "crossfade",
+        "to_deck": 1
+      },
+      {
+        "t": 6295,
+        "energy": 9.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Deep Bass Melodic Techno \u26a1 Night Drive 125 BPM | C",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6305,
+        "energy": 8.2,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Deep Bass Melodic Techno \u26a1 Night Drive 125 BPM | C",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6315,
+        "energy": 8.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Deep Bass Melodic Techno \u26a1 Night Drive 125 BPM | C",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6325,
+        "energy": 9.0,
+        "direction": "building",
+        "mood": "euphoric",
+        "track": "Deep Bass Melodic Techno \u26a1 Night Drive 125 BPM | C",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6335,
+        "energy": 8.5,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Deep Bass Melodic Techno \u26a1 Night Drive 125 BPM | C",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6345,
+        "energy": 9.6,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Deep Bass Melodic Techno \u26a1 Night Drive 125 BPM | C",
+        "section": "breakdown",
+        "bpm": 143.0
+      },
+      {
+        "t": 6356,
+        "energy": 9.5,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Deep Bass Melodic Techno \u26a1 Night Drive 125 BPM | C",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6366,
+        "energy": 9.3,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Deep Bass Melodic Techno \u26a1 Night Drive 125 BPM | C",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6376,
+        "energy": 9.0,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "Deep Bass Melodic Techno \u26a1 Night Drive 125 BPM | C",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6386,
+        "energy": 8.8,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Deep Bass Melodic Techno \u26a1 Night Drive 125 BPM | C",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6396,
+        "energy": 8.8,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Deep Bass Melodic Techno \u26a1 Night Drive 125 BPM | C",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6406,
+        "energy": 7.4,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "Deep Bass Melodic Techno \u26a1 Night Drive 125 BPM | C",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6416,
+        "energy": 9.2,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Deep Bass Melodic Techno \u26a1 Night Drive 125 BPM | C",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6426,
+        "energy": 9.1,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Deep Bass Melodic Techno \u26a1 Night Drive 125 BPM | C",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6436,
+        "energy": 9.2,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "Deep Bass Melodic Techno \u26a1 Night Drive 125 BPM | C",
+        "section": "outro",
+        "bpm": 143.0
+      },
+      {
+        "t": 6446,
+        "energy": 8.0,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Deep Bass Melodic Techno \u26a1 Night Drive 125 BPM | C",
+        "section": "outro",
+        "bpm": 143.0
+      },
+      {
+        "t": 6456,
+        "energy": 8.9,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Official Audio | Firaaq #techno #indiedance #indow",
+        "section": "intro",
+        "bpm": 143.0
+      },
+      {
+        "t": 6463,
+        "event": "transition",
+        "technique": "auto_crossfade",
+        "to_deck": 2
+      },
+      {
+        "t": 6466,
+        "energy": 8.8,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Official Audio | Firaaq #techno #indiedance #indow",
+        "section": "intro",
+        "bpm": 143.0
+      },
+      {
+        "t": 6476,
+        "energy": 9.2,
+        "direction": "building",
+        "mood": "euphoric",
+        "track": "Official Audio | Firaaq #techno #indiedance #indow",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6486,
+        "energy": 9.2,
+        "direction": "dropping",
+        "mood": "euphoric",
+        "track": "Official Audio | Firaaq #techno #indiedance #indow",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6497,
+        "energy": 9.2,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Official Audio | Firaaq #techno #indiedance #indow",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6507,
+        "energy": 3.6,
+        "direction": "building",
+        "mood": "energetic",
+        "track": "Official Audio | Firaaq #techno #indiedance #indow",
+        "section": "breakdown",
+        "bpm": 143.0
+      },
+      {
+        "t": 6517,
+        "energy": 7.2,
+        "direction": "falling",
+        "mood": "euphoric",
+        "track": "Official Audio | Firaaq #techno #indiedance #indow",
+        "section": "breakdown",
+        "bpm": 143.0
+      },
+      {
+        "t": 6527,
+        "energy": 10,
+        "direction": "rising",
+        "mood": "euphoric",
+        "track": "Official Audio | Firaaq #techno #indiedance #indow",
+        "section": "breakdown",
+        "bpm": 143.0
+      },
+      {
+        "t": 6537,
+        "energy": 9.4,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Official Audio | Firaaq #techno #indiedance #indow",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6547,
+        "energy": 9.8,
+        "direction": "steady",
+        "mood": "euphoric",
+        "track": "Official Audio | Firaaq #techno #indiedance #indow",
+        "section": "buildup",
+        "bpm": 143.0
+      },
+      {
+        "t": 6557,
+        "energy": 5.4,
+        "direction": "falling",
+        "mood": "energetic",
+        "track": "Official Audio | Firaaq #techno #indiedance #indow",
+        "section": "breakdown",
+        "bpm": 143.0
+      },
+      {
+        "t": 6568,
+        "energy": 5.0,
+        "direction": "falling",
+        "mood": "energetic",
+        "track": "Official Audio | Firaaq #techno #indiedance #indow",
+        "section": "breakdown",
+        "bpm": 143.0
+      }
+    ],
+    "peak_energy": 10,
+    "status": "live"
+  },
+  "replan_requested": false,
+  "library_need": {
+    "mood": "melodic-techno",
+    "count": 5,
+    "reason": "all 200 library tracks already played this set"
+  },
+  "library_ready": {
+    "mbid": "",
+    "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Gabriel Ananda - Clau (Original Mix).mp3",
+    "title": "Gabriel Ananda - Clau",
+    "ts": 1776972448.789079
+  },
+  "library_need_failed": null,
+  "producer_need": null,
+  "idle_needs_load": false,
+  "user_skip": null,
+  "set_ending": false,
+  "playlist": {
+    "planned_at": 1718997325.427951,
+    "mood_snapshot": "melodic-techno",
+    "reasoning_summary": "Given the current track's energy and BPM, the playlist focuses on maintaining a similar vibe with a slight increase in energy. Several DATASET tracks fit well within the BPM range and melodic techno genre. The selected tracks aim to maintain the hypnotic and driving feel, while introducing subtle variations in energy and rhythm to keep the mix engaging.",
+    "tracks": []
+  },
+  "playlist_updated_at": 1718997325.427951,
+  "last_planner_error": "PlaylistValidationError: track #2: energy 0 out of 1-10 range",
+  "knowledge_health": null,
+  "chat_history": [
+    [
+      "replan right now, fresh melodic-techno set",
+      "Bilkul! A fresh melodic-techno set banate hain. \u2728\n"
+    ],
+    [
+      "replan melodic techno fresh set",
+      "Okay, naya melodic techno set shuru karte hain! \ud83c\udfb6\n"
+    ],
+    [
+      "play fresh melodic techno set, no repeats",
+      "Theek hai, aapko ek fresh melodic techno set sunate hain, bina repeats ke! \ud83c\udfb5\nset_planner_directive(\"Create a new melodic techno set from scratch, avoid all previously played tracks\")\n"
+    ],
+    [
+      "fresh melodic techno set, mix varied artists",
+      "Samajh gaya! Fresh melodic techno set, aur alag alag artists ka mix, done! \ud83d\udcbf\nset_planner_directive(\"Create a fresh melodic techno set with varied artists, avoiding all previously played tracks. Prioritize artists not yet featured in the set.\")\n"
+    ]
+  ],
+  "emergency_count": 9,
+  "last_reflect_count": 0,
+  "saved_at": 1776979261.717647
 }

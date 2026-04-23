@@ -1,0 +1,741 @@
+{
+  "mood": "",
+  "mood_profile": null,
+  "user_intent": "",
+  "planner_directive": "",
+  "dj_directive": "",
+  "tracks_played": [
+    {
+      "title": "Desolate (Original Mix)",
+      "time": 1776600708.437609
+    },
+    {
+      "title": "Nora En Pure - Zambia (Original Mix)",
+      "time": 1776601007.313591
+    },
+    {
+      "title": "Yotto - Azzurro (Original Mix)",
+      "time": 1776601277.778065
+    },
+    {
+      "title": "Fire Walk (Original Mix)",
+      "time": 1776601522.275102
+    },
+    {
+      "title": "Come With Me (Original Mix)",
+      "time": 1776602269.035103
+    }
+  ],
+  "current_deck": 0,
+  "current_track_path": "",
+  "current_position_s": 0.0,
+  "current_set": {
+    "id": "set-20260419-175725",
+    "set_number": 2,
+    "title": "Astral Echoes",
+    "started_at": 1776601647.451234,
+    "mood": "melodic-techno",
+    "genre": "melodic-techno",
+    "target_duration": 120,
+    "tracks": [],
+    "energy_arc": [
+      {
+        "t": 0,
+        "energy": 9.4,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 10,
+        "energy": 8.2,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 20,
+        "energy": 9.4,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 30,
+        "energy": 6.8,
+        "direction": "dropping",
+        "mood": "hypnotic",
+        "track": "Fire Walk (Original Mix)",
+        "section": "breakdown",
+        "bpm": 123
+      },
+      {
+        "t": 40,
+        "energy": 4.8,
+        "direction": "falling",
+        "mood": "groovy",
+        "track": "Fire Walk (Original Mix)",
+        "section": "breakdown",
+        "bpm": 123
+      },
+      {
+        "t": 50,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 60,
+        "energy": 8.5,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 70,
+        "energy": 7.4,
+        "direction": "falling",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 80,
+        "energy": 8.5,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 90,
+        "energy": 9.8,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 100,
+        "energy": 8.2,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 111,
+        "energy": 7.9,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "breakdown",
+        "bpm": 123
+      },
+      {
+        "t": 121,
+        "energy": 6.0,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Fire Walk (Original Mix)",
+        "section": "breakdown",
+        "bpm": 123
+      },
+      {
+        "t": 131,
+        "energy": 7.0,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Fire Walk (Original Mix)",
+        "section": "breakdown",
+        "bpm": 123
+      },
+      {
+        "t": 141,
+        "energy": 7.7,
+        "direction": "rising",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 151,
+        "energy": 7.5,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 161,
+        "energy": 6.7,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "Fire Walk (Original Mix)",
+        "section": "intro",
+        "bpm": 123
+      },
+      {
+        "t": 171,
+        "energy": 6.9,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Fire Walk (Original Mix)",
+        "section": "intro",
+        "bpm": 123
+      },
+      {
+        "t": 179,
+        "event": "transition",
+        "technique": "crossfade",
+        "to_deck": 1
+      },
+      {
+        "t": 181,
+        "energy": 9.3,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "intro",
+        "bpm": 123
+      },
+      {
+        "t": 191,
+        "energy": 6.4,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Fire Walk (Original Mix)",
+        "section": "intro",
+        "bpm": 123
+      },
+      {
+        "t": 201,
+        "energy": 9.0,
+        "direction": "rising",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 211,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 221,
+        "energy": 8.8,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 231,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 241,
+        "energy": 8.2,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 251,
+        "energy": 5.9,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "Fire Walk (Original Mix)",
+        "section": "intro",
+        "bpm": 123
+      },
+      {
+        "t": 261,
+        "energy": 7.4,
+        "direction": "building",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 271,
+        "energy": 9.4,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 281,
+        "energy": 8.8,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 291,
+        "energy": 7.6,
+        "direction": "dropping",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "breakdown",
+        "bpm": 123
+      },
+      {
+        "t": 301,
+        "energy": 5.7,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "Fire Walk (Original Mix)",
+        "section": "breakdown",
+        "bpm": 123
+      },
+      {
+        "t": 311,
+        "energy": 9.1,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 321,
+        "energy": 9.8,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 331,
+        "energy": 7.8,
+        "direction": "rising",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 341,
+        "energy": 9.5,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 351,
+        "energy": 8.3,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 361,
+        "energy": 8.8,
+        "direction": "rising",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 371,
+        "energy": 7.3,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "breakdown",
+        "bpm": 123
+      },
+      {
+        "t": 381,
+        "energy": 6.7,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Fire Walk (Original Mix)",
+        "section": "breakdown",
+        "bpm": 123
+      },
+      {
+        "t": 391,
+        "energy": 6.3,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Fire Walk (Original Mix)",
+        "section": "breakdown",
+        "bpm": 123
+      },
+      {
+        "t": 401,
+        "energy": 7.5,
+        "direction": "rising",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 411,
+        "energy": 7.6,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 421,
+        "energy": 7.6,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 432,
+        "energy": 7.1,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "breakdown",
+        "bpm": 123
+      },
+      {
+        "t": 442,
+        "energy": 6.4,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Fire Walk (Original Mix)",
+        "section": "breakdown",
+        "bpm": 123
+      },
+      {
+        "t": 452,
+        "energy": 6.2,
+        "direction": "steady",
+        "mood": "hypnotic",
+        "track": "Fire Walk (Original Mix)",
+        "section": "breakdown",
+        "bpm": 123
+      },
+      {
+        "t": 462,
+        "energy": 9.5,
+        "direction": "building",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 472,
+        "energy": 8.4,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 482,
+        "energy": 9.4,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 492,
+        "energy": 8.5,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 502,
+        "energy": 9.0,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 512,
+        "energy": 8.5,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 522,
+        "energy": 6.6,
+        "direction": "dropping",
+        "mood": "hypnotic",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 532,
+        "energy": 9.8,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 542,
+        "energy": 7.7,
+        "direction": "falling",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 552,
+        "energy": 9.7,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "buildup",
+        "bpm": 123
+      },
+      {
+        "t": 562,
+        "energy": 8.0,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "outro",
+        "bpm": 123
+      },
+      {
+        "t": 572,
+        "energy": 9.6,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "outro",
+        "bpm": 123
+      },
+      {
+        "t": 582,
+        "energy": 9.6,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "outro",
+        "bpm": 123
+      },
+      {
+        "t": 592,
+        "energy": 6.8,
+        "direction": "rising",
+        "mood": "hypnotic",
+        "track": "Fire Walk (Original Mix)",
+        "section": "outro",
+        "bpm": 123
+      },
+      {
+        "t": 602,
+        "energy": 9.3,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Fire Walk (Original Mix)",
+        "section": "outro",
+        "bpm": 123
+      },
+      {
+        "t": 612,
+        "energy": 6.7,
+        "direction": "falling",
+        "mood": "hypnotic",
+        "track": "Fire Walk (Original Mix)",
+        "section": "outro",
+        "bpm": 123
+      },
+      {
+        "t": 622,
+        "energy": 7.2,
+        "direction": "building",
+        "mood": "driving",
+        "track": "Come With Me (Original Mix)",
+        "section": "intro",
+        "bpm": 117
+      },
+      {
+        "t": 632,
+        "energy": 6.8,
+        "direction": "falling",
+        "mood": "groovy",
+        "track": "Come With Me (Original Mix)",
+        "section": "intro",
+        "bpm": 120
+      },
+      {
+        "t": 642,
+        "energy": 7.6,
+        "direction": "falling",
+        "mood": "driving",
+        "track": "Come With Me (Original Mix)",
+        "section": "intro",
+        "bpm": 120
+      },
+      {
+        "t": 652,
+        "energy": 7.2,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Come With Me (Original Mix)",
+        "section": "intro",
+        "bpm": 120
+      },
+      {
+        "t": 662,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Come With Me (Original Mix)",
+        "section": "intro",
+        "bpm": 120
+      },
+      {
+        "t": 672,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Come With Me (Original Mix)",
+        "section": "intro",
+        "bpm": 120
+      },
+      {
+        "t": 682,
+        "energy": 7.9,
+        "direction": "rising",
+        "mood": "driving",
+        "track": "Come With Me (Original Mix)",
+        "section": "breakdown",
+        "bpm": 120
+      },
+      {
+        "t": 692,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Come With Me (Original Mix)",
+        "section": "buildup",
+        "bpm": 120
+      },
+      {
+        "t": 702,
+        "energy": 10,
+        "direction": "steady",
+        "mood": "driving",
+        "track": "Come With Me (Original Mix)",
+        "section": "buildup",
+        "bpm": 120
+      }
+    ],
+    "peak_energy": 10,
+    "status": "finished",
+    "ended_at": 1776602355.390073,
+    "track_count": 5
+  },
+  "replan_requested": false,
+  "library_need": null,
+  "producer_need": null,
+  "idle_needs_load": false,
+  "user_skip": null,
+  "set_ending": false,
+  "playlist": {
+    "planned_at": 1698974429.234,
+    "mood_snapshot": "melodic-techno",
+    "reasoning_summary": "Sticking with melodic techno, I'm prioritizing tracks that match the current energy and key while introducing some variety in mood. The library is a bit limited given what's been played, so I focused on the best available fits for a seamless transition and driving energy.",
+    "tracks": [
+      {
+        "rank": 1,
+        "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Ben B\u00f6hmer - After Earth (Original Mix).mp3",
+        "title": "Ben B\u00f6hmer - After Earth (Original Mix)",
+        "bpm": 123.0,
+        "key_camelot": "8B",
+        "energy": 9,
+        "reason": "This track offers a slightly higher energy while maintaining a similar melodic feel and a complementary key.",
+        "transition_hint": {
+          "technique": "crossfade",
+          "duration": 25,
+          "at_section": "outro"
+        }
+      },
+      {
+        "rank": 2,
+        "path": "/Users/manish.pratap/Music/DJTreta/melodic-techno/Nora En Pure - Come With Me (Original Mix).mp3",
+        "title": "Nora En Pure - Come With Me (Original Mix)",
+        "bpm": 117.5,
+        "key_camelot": "11A",
+        "energy": 8,
+        "reason": "The similar BPM and energy, plus the same artist, create a smooth continuation of the current vibe.",
+        "transition_hint": {
+          "technique": "crossfade",
+          "duration": 20,
+          "at_section": "outro"
+        }
+      }
+    ]
+  },
+  "playlist_updated_at": 1698974429.234,
+  "last_planner_error": "",
+  "knowledge_health": null,
+  "chat_history": [],
+  "emergency_count": 9,
+  "last_reflect_count": 0,
+  "saved_at": 1776602355.40172
+}
