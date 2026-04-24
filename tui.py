@@ -31,7 +31,8 @@ from textual.widgets import (
 sys.path.insert(0, str(Path(__file__).parent))
 from agent.db import get_db, get_current_set, get_set_tracks, get_track_by_path
 from agent.tui_state_source import (
-    StateSource, LocalFileStateSource, MCPRemoteStateSource,
+    StateSource, LocalFileStateSource, WebSocketRemoteStateSource,
+    DEFAULT_REMOTE_WS_URL,
 )
 
 # ── Config ────────────────────────────────────────────────────────────
@@ -44,19 +45,28 @@ THINKING_LOG = Path("/tmp/dj-treta-thinking.log")
 MUSIC_DIR = Path.home() / "Music" / "DJTreta"
 WS_URL = "ws://localhost:7779"
 
-DEFAULT_REMOTE_URL = "https://mcp.dj.treta.life/mcp/sse"
-REMOTE_TOKEN_FILE = Path.home() / ".djtreta-remote-token"
+# Remote mode — human UI goes over WebSocket (public state + token-auth command).
+# MCP stays reserved for AI agents (Himani, Claude Desktop), not this TUI.
+DEFAULT_REMOTE_URL = DEFAULT_REMOTE_WS_URL  # wss://dj.treta.life/ws/state
+REMOTE_TOKEN_FILE = Path.home() / ".djtreta-command-token"
 
 
 def _load_remote_token() -> str | None:
-    """Resolve the MCP bearer token from env or ~/.djtreta-remote-token.
+    """Resolve the /ws/command token from env or ~/.djtreta-command-token.
 
     Env wins. File is a convenience for launches outside a shell that has
-    the env exported (eg via a desktop shortcut or ``djtreta tui --remote``).
+    the env exported (eg via a desktop shortcut or ``djtreta --remote``).
+
+    Read-side (/ws/state) is public and needs no token; the token only
+    authenticates the write channel.
     """
-    tok = os.environ.get("DJTRETA_MCP_TOKEN", "").strip()
-    if tok:
-        return tok
+    # DJTRETA_MCP_TOKEN is checked as a fallback for users who configured
+    # the original MCP-bearer token scheme (from the task spec). On the
+    # public WebSocket, the token is used on /ws/command only.
+    for envvar in ("DJTRETA_COMMAND_TOKEN", "DJTRETA_RELAY_TOKEN", "DJTRETA_MCP_TOKEN"):
+        tok = os.environ.get(envvar, "").strip()
+        if tok:
+            return tok
     try:
         if REMOTE_TOKEN_FILE.exists():
             text = REMOTE_TOKEN_FILE.read_text().strip()
@@ -65,42 +75,6 @@ def _load_remote_token() -> str | None:
         pass
     return None
 
-
-# ── TUI command → MCP tool routing ────────────────────────────────────
-#
-# In LOCAL mode, TUI write commands are handled by:
-#   (a) send_command()  → writes /tmp/dj-treta-command.json (Being picks up)
-#   (b) mixxx_post()    → direct HTTP to localhost:7778 (Mixxx mixer)
-#
-# In REMOTE mode, both paths route through MCP tool calls on the remote
-# server. The maps below translate (local cmd) → (remote tool, arg shaper).
-
-def _map_mood(args: dict) -> dict:
-    return {"mood": args.get("mood", "")}
-
-def _map_skip(args: dict) -> dict:
-    # Local "skip" has empty args; remote dj_skip supports style=fast|smooth.
-    return {"style": args.get("style", "fast")}
-
-def _map_feedback(args: dict) -> dict:
-    return {"kind": args.get("type") or args.get("kind") or "like"}
-
-def _map_sources(args: dict) -> dict:
-    return {
-        "source": args.get("source", ""),
-        "enabled": bool(args.get("enabled", True)),
-    }
-
-def _map_talk(args: dict) -> dict:
-    return {"message": args.get("message", "")}
-
-BRAIN_CMD_TO_TOOL: dict[str, tuple[str, object]] = {
-    "talk":           ("dj_talk",         _map_talk),
-    "change_mood":    ("dj_set_mood",     _map_mood),
-    "skip":           ("dj_skip",         _map_skip),
-    "feedback":       ("dj_feedback",     _map_feedback),
-    "change_sources": ("dj_set_sources",  _map_sources),
-}
 
 # Commands with no remote equivalent (the VM already runs a continuous set).
 BRAIN_CMD_LOCAL_ONLY = {"play", "stop", "reset"}
@@ -275,79 +249,6 @@ def _detect_config_value(section: str, key: str, default=False):
     except Exception:
         pass
     return default
-
-
-def _load_remote_token() -> str | None:
-    """Resolve remote token: env var first, then ~/.djtreta-remote-token."""
-    tok = os.environ.get("DJTRETA_MCP_TOKEN")
-    if tok:
-        return tok.strip()
-    if REMOTE_TOKEN_FILE.exists():
-        try:
-            return REMOTE_TOKEN_FILE.read_text().strip() or None
-        except Exception:
-            return None
-    return None
-
-
-def _map_cmd_to_mcp(cmd: str, args: dict) -> tuple[str | None, dict]:
-    """Translate a local /command (or internal brain command) into
-    (mcp_tool_name, mcp_args). Returns (None, {}) if this command has no
-    remote equivalent — the caller then either runs LOCAL-only or emits a
-    "not available in REMOTE mode" notice.
-    """
-    args = args or {}
-    if cmd in ("change_mood", "mood"):
-        return "dj_set_mood", _map_mood(args)
-    if cmd == "skip":
-        return "dj_skip", _map_skip(args)
-    if cmd == "talk":
-        return "dj_talk", _map_talk(args)
-    if cmd == "request_track":
-        return "dj_request_track", {
-            "artist": args.get("artist", ""),
-            "title": args.get("title", ""),
-        }
-    if cmd == "feedback":
-        return "dj_feedback", _map_feedback(args)
-    if cmd == "change_sources":
-        return "dj_set_sources", _map_sources(args)
-    # play / stop / reset are LOCAL-only — the remote daemon runs a
-    # continuous set and owns its own lifecycle.
-    return None, {}
-
-
-def _mixxx_path_to_mcp(path: str, payload: dict) -> tuple[str | None, dict]:
-    """Translate a direct Mixxx HTTP call into (mcp_tool_name, mcp_args)."""
-    p = dict(payload or {})
-    if path == "/api/play":
-        return "dj_deck_play", {"deck_num": int(p.get("deck", 1))}
-    if path == "/api/pause":
-        return "dj_deck_pause", {"deck_num": int(p.get("deck", 1))}
-    if path == "/api/volume":
-        return "dj_set_volume", {
-            "deck_num": int(p.get("deck", 1)),
-            "value": float(p.get("volume", 1.0)),
-        }
-    if path == "/api/crossfade":
-        return "dj_set_crossfader", {"value": float(p.get("position", 0.5))}
-    if path == "/api/eq":
-        return "dj_set_eq", {
-            "deck_num": int(p.get("deck", 1)),
-            "band": str(p.get("band", "mid")),
-            "value": float(p.get("value", 1.0)),
-        }
-    if path == "/api/filter":
-        return "dj_set_filter", {
-            "deck_num": int(p.get("deck", 1)),
-            "value": float(p.get("value", 0.5)),
-        }
-    if path == "/api/load":
-        return "dj_load_track", {
-            "deck_num": int(p.get("deck", 1)),
-            "path": str(p.get("track", "")),
-        }
-    return None, {}
 
 
 def _synthesize_mixxx_from_state(state: dict) -> tuple[dict, dict]:
@@ -1112,7 +1013,7 @@ class DJTretaApp(App):
         self._remote_token = remote_token
 
     def _is_remote(self) -> bool:
-        return isinstance(self.state_source, MCPRemoteStateSource)
+        return isinstance(self.state_source, WebSocketRemoteStateSource)
 
     # ── WebSocket real-time connection ───────────────────────────────
 
@@ -1455,7 +1356,12 @@ class DJTretaApp(App):
             right.display = True
 
     def action_toggle_remote(self) -> None:
-        """Toggle between LOCAL file mode and REMOTE MCP mode."""
+        """Toggle between LOCAL file mode and REMOTE WebSocket mode.
+
+        Read-side (/ws/state) is public and needs no auth. The optional token
+        only authenticates write commands (mood/skip/talk/…) sent to the VM's
+        /ws/command endpoint — read-only viewing works without it.
+        """
         if self._is_remote():
             # Switch to LOCAL.
             try:
@@ -1467,20 +1373,20 @@ class DJTretaApp(App):
             if not STATE_FILE.exists():
                 self.log_widget.write("[yellow]  (no local daemon running — start one with /start)[/yellow]")
         else:
-            # Switch to REMOTE. Need URL + token.
             url = self._remote_url or DEFAULT_REMOTE_URL
             token = self._remote_token or _load_remote_token()
-            if not token:
-                self.log_widget.write(
-                    "[red]  No remote token configured.[/red]\n"
-                    f"[dim]  Set DJTRETA_MCP_TOKEN or write token to {REMOTE_TOKEN_FILE}[/dim]"
-                )
-                return
             try:
-                self.state_source = MCPRemoteStateSource(url=url, token=token)
+                self.state_source = WebSocketRemoteStateSource(
+                    url=url, command_token=token
+                )
                 self._remote_url = url
                 self._remote_token = token
                 self.log_widget.write(f"[cyan]  → Switched to REMOTE mode → {url}[/cyan]")
+                if not token:
+                    self.log_widget.write(
+                        "[yellow]  (read-only: no command token. Set DJTRETA_COMMAND_TOKEN "
+                        f"or write it to {REMOTE_TOKEN_FILE} to enable writes.)[/yellow]"
+                    )
             except Exception as exc:
                 self.log_widget.write(f"[red]  Remote connect failed: {exc}[/red]")
 
@@ -1901,8 +1807,9 @@ class DJTretaApp(App):
         self.log_widget.write("[dim]  thinking...[/dim]")
         if self._is_remote():
             try:
-                out = self.state_source.call_tool("dj_talk", {"message": message})
-                response = out.get("message", str(out))
+                response = self.state_source.send_command(
+                    "talk", {"message": message}, timeout=30.0
+                )
             except Exception as exc:
                 response = f"[remote error] {exc}"
         else:
@@ -1912,16 +1819,13 @@ class DJTretaApp(App):
     @work(thread=True)
     def run_brain_command(self, cmd: str, args: dict) -> None:
         if self._is_remote():
-            # Map a few common local commands onto the MCP surface.
-            mcp_tool, mcp_args = _map_cmd_to_mcp(cmd, args)
-            if mcp_tool is None:
+            if cmd in BRAIN_CMD_LOCAL_ONLY:
                 self.log_widget.write(
                     f"[yellow]  /{cmd} not available in REMOTE mode (local-only)[/yellow]"
                 )
                 return
             try:
-                out = self.state_source.call_tool(mcp_tool, mcp_args)
-                response = out.get("message") or json.dumps(out, default=str)[:200]
+                response = self.state_source.send_command(cmd, args)
             except Exception as exc:
                 response = f"[remote error] {exc}"
         else:
@@ -1929,22 +1833,24 @@ class DJTretaApp(App):
         self.log_widget.write(f"[green]  {response}[/green]")
 
     def _dispatch_mixxx(self, path: str, payload: dict) -> dict:
-        """LOCAL → direct HTTP to localhost Mixxx; REMOTE → MCP tool. Returns
-        a best-effort result dict (never raises). Safe to call from the TUI
-        thread — the MCP call is scheduled on the background loop.
+        """LOCAL → direct HTTP to localhost Mixxx; REMOTE → mixer command over
+        /ws/command on the VM. Returns a best-effort result dict (never
+        raises). Safe to call from the TUI thread.
         """
         if not self._is_remote():
             res = mixxx_post(path, payload) or {}
             return {"ok": True, "message": str(res) if res else f"posted {path}"}
 
-        tool_name, tool_args = _mixxx_path_to_mcp(path, payload)
-        if not tool_name:
-            return {"ok": False, "message": f"(remote) no MCP mapping for {path}"}
+        # Remote: wrap the Mixxx path + payload in a mixer command. The VM
+        # server forwards this to /tmp/dj-treta-command.json with a special
+        # "mixer" verb the daemon dispatches directly to Mixxx HTTP.
         try:
-            out = self.state_source.call_tool(tool_name, tool_args, timeout=10.0)
+            out = self.state_source.send_command(
+                "mixer", {"path": path, "payload": payload}, timeout=10.0
+            )
         except Exception as exc:
-            return {"ok": False, "message": f"(remote) {tool_name} failed: {exc}"}
-        return out or {"ok": True, "message": ""}
+            return {"ok": False, "message": f"(remote) mixer {path} failed: {exc}"}
+        return {"ok": True, "message": str(out) if out else f"posted {path}"}
 
     @work(thread=True)
     def _dispatch_mixxx_async(self, path: str, payload: dict, success_msg: str) -> None:
@@ -1974,61 +1880,39 @@ class DJTretaApp(App):
 
     @work(thread=True)
     def _load_track_remote(self, deck: int, query: str) -> None:
+        """Forward a load-by-query to the VM daemon. The daemon resolves the
+        query against its own library DB and drives Mixxx locally."""
         try:
-            result = self.state_source.call_tool(
-                "dj_search_library", {"query": query, "limit": 1}
+            response = self.state_source.send_command(
+                "load_track", {"deck": deck, "query": query}, timeout=15.0
             )
         except Exception as exc:
-            self.log_widget.write(f"[red]  (remote) search failed: {exc}[/red]")
+            self.log_widget.write(f"[red]  (remote) load failed: {exc}[/red]")
             return
-        tracks = (result or {}).get("tracks") or []
-        if not tracks:
-            self.log_widget.write(f"[red]  No track matching '{query}' on remote[/red]")
-            return
-        match = tracks[0]
-        path = match.get("path")
-        if not path:
-            self.log_widget.write(f"[red]  Match missing path: {match}[/red]")
-            return
-        load_out = self._dispatch_mixxx("/api/load", {"deck": deck, "track": path})
-        if load_out.get("ok") is False:
-            self.log_widget.write(f"[red]  (remote) load failed: {load_out.get('message')}[/red]")
-        else:
-            title = match.get("title") or Path(path).stem
-            self.log_widget.write(f"[green]  Loaded on Deck {deck}: {title}[/green]")
+        self.log_widget.write(f"[green]  {response}[/green]")
 
     @work(thread=True)
     def _search_library(self, query: str, limit: int = 8) -> None:
-        """Search library (REMOTE only — LOCAL has /tracks which lists files)."""
+        """Search library — REMOTE forwards to daemon; LOCAL has /tracks."""
         try:
-            result = self.state_source.call_tool(
-                "dj_search_library", {"query": query, "limit": limit}
+            response = self.state_source.send_command(
+                "search_library", {"query": query, "limit": limit}, timeout=15.0
             )
         except Exception as exc:
             self.log_widget.write(f"[red]  search failed: {exc}[/red]")
             return
-        tracks = (result or {}).get("tracks") or []
-        if not tracks:
-            self.log_widget.write(f"[yellow]  No matches for '{query}'[/yellow]")
-            return
-        lines = [f"\n[bold]Search: {query}[/bold]"]
-        for i, t in enumerate(tracks, 1):
-            title = t.get("title") or Path(t.get("path", "?")).stem
-            bpm = t.get("bpm") or "—"
-            key = t.get("key") or "—"
-            lines.append(f"  {i:2d}. [cyan]{title}[/cyan]  [dim]{bpm} BPM · {key}[/dim]")
-        self.log_widget.write("\n".join(lines))
+        self.log_widget.write(f"\n[bold]Search: {query}[/bold]\n  {response}")
 
     @work(thread=True)
     def _request_track_remote(self, artist: str, title: str) -> None:
         try:
-            out = self.state_source.call_tool(
-                "dj_request_track", {"artist": artist, "title": title}
+            response = self.state_source.send_command(
+                "request_track", {"artist": artist, "title": title}, timeout=15.0
             )
         except Exception as exc:
             self.log_widget.write(f"[red]  (remote) request failed: {exc}[/red]")
             return
-        self.log_widget.write(f"[green]  {(out or {}).get('message', 'requested')}[/green]")
+        self.log_widget.write(f"[green]  {response}[/green]")
 
     def show_tracks(self):
         lines = ["[bold]Library:[/bold]"]
@@ -2421,23 +2305,24 @@ def main(*, remote: bool = False, remote_url: str | None = None, remote_token: s
 
     Args:
         remote: if True, start in REMOTE mode using ``remote_url``/``remote_token``.
-        remote_url: MCP SSE URL (defaults to ``DEFAULT_REMOTE_URL``).
-        remote_token: bearer token (falls back to env/file via ``_load_remote_token``).
+        remote_url: WebSocket state URL (defaults to ``DEFAULT_REMOTE_URL``,
+            i.e. ``wss://dj.treta.life/ws/state``).
+        remote_token: optional command token (falls back to env/file via
+            ``_load_remote_token``). Read-side works without it; writes require it.
     """
     state_source: StateSource
     url = remote_url or DEFAULT_REMOTE_URL
     token = remote_token or _load_remote_token()
 
     if remote:
+        state_source = WebSocketRemoteStateSource(url=url, command_token=token)
         if not token:
             print(
-                "error: remote mode requires a token.\n"
-                "  Set DJTRETA_MCP_TOKEN, pass --token TOK, or write the token to "
-                f"{REMOTE_TOKEN_FILE}",
+                "info: remote read-only (no command token set).\n"
+                "  Set DJTRETA_COMMAND_TOKEN, pass --token TOK, or write the token "
+                f"to {REMOTE_TOKEN_FILE} to enable writes.",
                 file=sys.stderr,
             )
-            sys.exit(2)
-        state_source = MCPRemoteStateSource(url=url, token=token)
     else:
         state_source = LocalFileStateSource()
 
@@ -2454,7 +2339,7 @@ if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser(description="DJ Treta TUI")
     ap.add_argument("--remote", nargs="?", const=DEFAULT_REMOTE_URL, default=None,
-                    help="Connect to remote MCP server (default URL if flag alone)")
-    ap.add_argument("--token", default=None, help="Bearer token for remote MCP")
+                    help="Connect to remote VM over WebSocket (default URL if flag alone)")
+    ap.add_argument("--token", default=None, help="Command token for /ws/command (optional; read is public)")
     ns = ap.parse_args()
     main(remote=ns.remote is not None, remote_url=ns.remote, remote_token=ns.token)

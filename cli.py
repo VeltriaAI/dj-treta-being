@@ -556,7 +556,11 @@ def _parse_remote_args(argv: list[str]) -> tuple[bool, str | None, str | None, l
         if a == "--remote":
             remote_on = True
             # Peek: if next token looks like a URL, consume it.
-            if i + 1 < len(argv) and argv[i + 1].startswith(("http://", "https://")):
+            # Accept http/https (legacy MCP SSE) and ws/wss (current
+            # /ws/state WebSocket transport).
+            if i + 1 < len(argv) and argv[i + 1].startswith(
+                ("http://", "https://", "ws://", "wss://")
+            ):
                 url = argv[i + 1]
                 i += 2
             else:

@@ -1,18 +1,25 @@
-"""TUI state source abstraction — local files vs remote MCP SSE.
+"""TUI state source abstraction — local files vs remote WebSocket.
 
 The DJ Treta TUI historically reads state from two local files:
     /tmp/dj-treta-state.json           (mixxx + set + current/next track)
     ~/beings/dj-treta/.beings/session.json   (mood profile, playlist, history)
 
-To allow the TUI to connect to a remote daemon (e.g. the VM running live on
-dj.treta.life), we abstract "where state comes from" behind StateSource.
+To allow the TUI (a human UI) to connect to a remote daemon (e.g. the VM
+running live on dj.treta.life), we abstract "where state comes from" behind
+StateSource.
+
+Transport split:
+    - AI agents (Himani, Claude Desktop) use MCP (mcp_server/*) — tools + SSE.
+    - Human UIs (this TUI, the web listener) use WebSocket — real-time,
+      public-readable state + authenticated command channel.
 
 Two implementations:
-    LocalFileStateSource    — reads the files directly (default, zero overhead)
-    MCPRemoteStateSource    — runs a background asyncio thread that opens an
-                              MCP SSE session to a remote server and polls the
-                              dj_status / dj_session_state / dj_playlist tools
-                              into caches. The TUI then reads those caches.
+    LocalFileStateSource        — reads the files directly (default, zero overhead)
+    WebSocketRemoteStateSource  — runs a background asyncio thread that opens
+                                  a persistent wss:// connection to the public
+                                  state broadcaster and caches the latest frame.
+                                  Writes go through a separate /ws/command
+                                  endpoint (token-authenticated).
 
 The TUI does not need to know the difference past calling read_state() /
 read_session() and looking at .label / .connected.
@@ -21,11 +28,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 
 # ─── Local file paths (kept in sync with tui.py) ────────────────────────
@@ -38,7 +46,7 @@ SESSION_FILE = Path.home() / "beings" / "dj-treta" / ".beings" / "session.json"
 
 class StateSource:
     """Abstract state source. Subclasses implement read_state/read_session
-    (and, for remote, call_tool).
+    (and, for remote, send_command).
 
     Contract:
         read_state()   — returns dict shaped like /tmp/dj-treta-state.json, or None
@@ -49,9 +57,9 @@ class StateSource:
 
     Write-side (remote only — local dispatch goes through the Being's
     command file as before):
-        call_tool(name, args) — invoke a named MCP tool synchronously,
-                                returning the parsed JSON payload. Raises
-                                RuntimeError if not connected.
+        send_command(name, args) — dispatch a DJ command (talk, mood, skip,
+                                   etc.) to the remote daemon. Returns a short
+                                   result string. Raises if not connected.
     """
 
     label: str = "LOCAL"
@@ -70,11 +78,27 @@ class StateSource:
     def read_session(self) -> dict | None:
         raise NotImplementedError
 
-    def call_tool(self, name: str, args: dict | None = None, timeout: float = 30.0) -> dict:
-        """Invoke an MCP tool. Local source cannot — remote source overrides."""
+    def send_command(self, name: str, args: dict | None = None, timeout: float = 10.0) -> str:
+        """Dispatch a command to the daemon. Local source cannot — remote source overrides."""
         raise RuntimeError(
-            f"call_tool('{name}') not supported on {type(self).__name__}"
+            f"send_command('{name}') not supported on {type(self).__name__}"
         )
+
+    def call_tool(self, name: str, args: dict | None = None, timeout: float = 10.0) -> dict:
+        """Compat shim: the TUI was originally written against an MCP SSE
+        transport that exposed call_tool(). The current transport is WebSocket
+        (see subclass) — so we delegate to send_command() and reshape the
+        string response into the ``{"ok", "message"}`` dict the TUI expects.
+
+        Subclasses that speak true JSON-RPC (MCP) can override this directly.
+        """
+        try:
+            out = self.send_command(name, args, timeout=timeout)
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+        if isinstance(out, dict):
+            return out
+        return {"ok": True, "message": str(out) if out is not None else ""}
 
     def close(self) -> None:
         """Stop background work. Idempotent."""
@@ -117,36 +141,55 @@ class LocalFileStateSource(StateSource):
         return None
 
 
-# ─── Remote MCP SSE source ──────────────────────────────────────────────
+# ─── Remote WebSocket source ────────────────────────────────────────────
 
-class MCPRemoteStateSource(StateSource):
-    """Polls a remote DJ Treta MCP server over SSE.
+DEFAULT_REMOTE_WS_URL = "wss://dj.treta.life/ws/state"
+DEFAULT_REMOTE_CMD_URL = "wss://dj.treta.life/ws/command"
 
-    Runs a background thread with its own asyncio loop. The thread opens an
-    SSE session, initializes MCP, and every ``poll_interval`` seconds calls
-    the dj_status, dj_session_state and dj_playlist tools. Results are parsed
-    and cached. TUI reads from the caches — never blocks on network.
+
+class WebSocketRemoteStateSource(StateSource):
+    """Streams live state from the public /ws/state broadcaster.
+
+    Runs a background thread with its own asyncio loop. The thread opens a
+    persistent WebSocket connection and listens for JSON frames pushed by the
+    server at roughly 3 Hz. Each frame is stashed in ``_last_frame``; TUI reads
+    from the cache so rendering never blocks on network.
+
+    Writes are sent over a separate /ws/command WebSocket using a short-lived
+    connection per call (token-authenticated via ?token=). This keeps the
+    read socket simple and one-way.
 
     Backoff on disconnect: 1s → 2s → 5s → 10s → 30s → 30s ...
     """
 
     def __init__(
         self,
-        url: str,
-        token: str,
-        poll_interval: float = 1.5,
+        url: str = DEFAULT_REMOTE_WS_URL,
+        command_url: str | None = None,
+        command_token: str | None = None,
+        token: str | None = None,
     ):
+        # ``token`` is an alias for ``command_token`` — kept for callers that
+        # predate the split between the state socket (anonymous, read-only) and
+        # the command socket (authenticated). tui.py passes token=.
+        if command_token is None and token is not None:
+            command_token = token
         self.url = url
-        self.token = token
-        self.poll_interval = poll_interval
+        # Derive default command URL from the state URL (same host, /ws/command).
+        if command_url is None:
+            parsed = urlparse(url)
+            cmd_parsed = parsed._replace(path="/ws/command", query="", fragment="")
+            command_url = urlunparse(cmd_parsed)
+        self.command_url = command_url
+        self.command_token = command_token or os.environ.get("DJTRETA_COMMAND_TOKEN") or os.environ.get("DJTRETA_RELAY_TOKEN") or ""
 
         parsed = urlparse(url)
         self._host = parsed.hostname or url
+        if parsed.port:
+            self._host = f"{self._host}:{parsed.port}"
 
-        # caches — TUI reads these (thread-safe: only replaced, not mutated)
-        self._status_cache: dict | None = None
-        self._session_cache: dict | None = None
-        self._playlist_cache: dict | None = None
+        # caches — TUI reads these (thread-safe: reference-replaced only)
+        self._last_frame: dict | None = None
         self._last_ok_ts: float = 0.0
 
         # thread control
@@ -154,9 +197,6 @@ class MCPRemoteStateSource(StateSource):
         self._connected = False
         self._last_error: str = "connecting..."
         self._loop: asyncio.AbstractEventLoop | None = None
-        # Active ClientSession is only valid on the background loop; we
-        # keep a reference so call_tool can dispatch cross-thread.
-        self._active_session = None
         self._thread = threading.Thread(target=self._run_thread, daemon=True)
         self._thread.start()
 
@@ -180,29 +220,59 @@ class MCPRemoteStateSource(StateSource):
         return self._last_error or "disconnected"
 
     def read_state(self) -> dict | None:
-        """Return state.json-shaped dict synthesized from dj_status (+ playlist)."""
-        if not self._status_cache:
+        """Return state.json-shaped dict synthesized from the last WS frame."""
+        if not self._last_frame:
             return None
-        return _status_to_state(self._status_cache, self._playlist_cache)
+        return _ws_frame_to_state(self._last_frame)
 
     def read_session(self) -> dict | None:
-        return self._session_cache
-
-    def call_tool(self, name: str, args: dict | None = None, timeout: float = 30.0) -> dict:
-        """Invoke an MCP tool synchronously from the TUI thread. Blocks until
-        the background loop returns the parsed JSON payload. Raises if not
-        connected or the call fails.
+        """WS /ws/state doesn't push session.json — return a minimal synthesised
+        version so session-driven widgets don't blank out. Full planner history
+        isn't available in remote mode (would need /ws/session, future work).
         """
-        if not self._connected or self._active_session is None or self._loop is None:
-            raise RuntimeError("remote not connected")
-        args = args or {}
+        if not self._last_frame:
+            return None
+        return _ws_frame_to_session(self._last_frame)
 
-        async def _do_call():
-            result = await self._active_session.call_tool(name, arguments=args)
-            return _extract_tool_json(result) or {}
+    def send_command(self, name: str, args: dict | None = None, timeout: float = 10.0) -> str:
+        """Dispatch a DJ command over /ws/command. Short-lived WS: open,
+        auth via ?token=, send one JSON payload, await one response, close.
+        """
+        if self._loop is None:
+            raise RuntimeError("remote not connected (loop missing)")
+        if not self.command_token:
+            raise RuntimeError(
+                "No command token configured. Set DJTRETA_COMMAND_TOKEN "
+                "(or DJTRETA_RELAY_TOKEN) env var."
+            )
 
-        fut = asyncio.run_coroutine_threadsafe(_do_call(), self._loop)
-        return fut.result(timeout=timeout)
+        payload = {"command": name, "args": args or {}}
+
+        async def _do_send():
+            # Local import — only the remote thread path needs websockets.
+            import websockets
+
+            sep = "&" if "?" in self.command_url else "?"
+            url = f"{self.command_url}{sep}token={self.command_token}"
+            async with websockets.connect(url, open_timeout=timeout, close_timeout=2) as ws:
+                await ws.send(json.dumps(payload))
+                # Server responds with {ok: bool, result: str} or {error: ...}
+                raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
+                try:
+                    resp = json.loads(raw)
+                except Exception:
+                    return raw
+                if isinstance(resp, dict):
+                    if resp.get("ok") is False:
+                        return f"[error] {resp.get('error') or resp.get('result') or 'unknown error'}"
+                    return resp.get("result") or resp.get("message") or "ok"
+                return str(resp)
+
+        fut = asyncio.run_coroutine_threadsafe(_do_send(), self._loop)
+        try:
+            return fut.result(timeout=timeout + 2)
+        except asyncio.TimeoutError:
+            raise RuntimeError(f"send_command('{name}') timed out")
 
     def close(self) -> None:
         self._shutdown = True
@@ -236,7 +306,7 @@ class MCPRemoteStateSource(StateSource):
                 await self._session_run()
                 attempt = 0  # reset after a clean session
             except Exception as exc:
-                self._last_error = str(exc)[:80]
+                self._last_error = str(exc)[:80] or type(exc).__name__
             self._connected = False
             if self._shutdown:
                 break
@@ -248,107 +318,138 @@ class MCPRemoteStateSource(StateSource):
                 await asyncio.sleep(0.1)
 
     async def _session_run(self):
-        """One MCP SSE session — connect, init, poll in a loop until failure."""
-        # Import inside to keep module import cheap for local-only users.
-        from mcp import ClientSession
-        from mcp.client.sse import sse_client
+        """One WebSocket session — connect, read frames until failure."""
+        # Local import — only remote users need websockets on the import path.
+        import websockets
 
-        headers = {"Authorization": f"Bearer {self.token}"}
-
-        async with sse_client(
-            url=self.url,
-            headers=headers,
-            timeout=10.0,
-            sse_read_timeout=60.0,
-        ) as (read_stream, write_stream):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
-                self._active_session = session
-                self._connected = True
-                self._last_error = ""
+        async with websockets.connect(
+            self.url,
+            open_timeout=10.0,
+            ping_interval=20,
+            ping_timeout=10,
+            close_timeout=2,
+        ) as ws:
+            self._connected = True
+            self._last_error = ""
+            while not self._shutdown:
+                raw = await asyncio.wait_for(ws.recv(), timeout=30.0)
                 try:
-                    while not self._shutdown:
-                        await self._poll_once(session)
-                        # Short sleep loop so shutdown reacts quickly.
-                        slept = 0.0
-                        while slept < self.poll_interval and not self._shutdown:
-                            await asyncio.sleep(0.1)
-                            slept += 0.1
-                finally:
-                    self._active_session = None
-
-    async def _poll_once(self, session):
-        """Call the read-only tools and update caches."""
-        try:
-            status_result = await session.call_tool("dj_status", arguments={})
-            session_result = await session.call_tool("dj_session_state", arguments={})
-            playlist_result = await session.call_tool("dj_playlist", arguments={})
-        except Exception as exc:
-            self._last_error = str(exc)[:80]
-            raise
-
-        status = _extract_tool_json(status_result)
-        session_json = _extract_tool_json(session_result)
-        playlist = _extract_tool_json(playlist_result)
-
-        if status is not None:
-            self._status_cache = status
-        if session_json is not None:
-            self._session_cache = session_json
-        if playlist is not None:
-            self._playlist_cache = playlist
-        self._last_ok_ts = time.time()
+                    frame = json.loads(raw)
+                except Exception:
+                    continue
+                if isinstance(frame, dict):
+                    self._last_frame = frame
+                    self._last_ok_ts = time.time()
 
 
 # ─── helpers ────────────────────────────────────────────────────────────
 
-def _extract_tool_json(tool_result) -> dict | None:
-    """MCP tool results are wrapped. Extract the JSON payload (dict)."""
-    if tool_result is None:
-        return None
-    # FastMCP returns CallToolResult with .content = [TextContent(text=...), ...]
-    # and .structuredContent for structured JSON.
-    structured = getattr(tool_result, "structuredContent", None)
-    if isinstance(structured, dict):
-        # FastMCP wraps dict results under "result"
-        if "result" in structured and isinstance(structured["result"], dict):
-            return structured["result"]
-        return structured
+def _ws_frame_to_state(frame: dict) -> dict:
+    """Map /ws/state (camelCase, flat) back to the /tmp/dj-treta-state.json
+    schema the TUI already knows how to render.
 
-    content = getattr(tool_result, "content", None)
-    if content:
-        for item in content:
-            text = getattr(item, "text", None)
-            if text:
-                try:
-                    return json.loads(text)
-                except Exception:
-                    pass
-    return None
+    Public WS frame shape (observed 2026-04-23):
+      { phase, activeDeck, currentTrack: {title, artist, bpm, key, energy,
+        duration, elapsed, remaining}, nextTrack, mood, decks: {deck1, deck2},
+        crossfader, vu, brain, history, perception, harmonicMap, finishedSet, ... }
 
-
-def _status_to_state(status: dict, playlist: dict | None) -> dict:
-    """Map dj_status output back to the /tmp/dj-treta-state.json schema the TUI
-    already knows how to render.
-
-    dj_status is nearly identical (phase, mood, current_track, next_track,
-    set), we just fill a few derived / missing fields.
+    Local state.json shape (snake_case):
+      { phase, mood, tracks_played, current_track: {title, artist, bpm, key,
+        energy, duration, position, remaining, deck, file_path}, next_track,
+        set: {...}, user_intent, planner_directive, dj_directive, ... }
     """
-    out: dict[str, Any] = {
-        "phase": status.get("phase") or "?",
-        "mood": status.get("mood") or "",
-        "tracks_played": status.get("tracks_played") or 0,
-        "current_track": status.get("current_track") or {},
-        "next_track": status.get("next_track"),
-        "set": status.get("set") or {},
-        "last_command_id": status.get("last_command_id"),
-        "last_command_result": status.get("last_result"),
-        "user_intent": status.get("user_intent") or "",
-        "planner_directive": status.get("planner_directive") or "",
-        "dj_directive": status.get("dj_directive") or "",
+    def _track(src: dict | None, deck_num: int | None) -> dict | None:
+        if not src:
+            return None
+        pos = src.get("elapsed")
+        dur = src.get("duration") or 0
+        out = {
+            "title": src.get("title") or "",
+            "artist": src.get("artist") or "",
+            "bpm": src.get("bpm") or 0,
+            "file_bpm": src.get("bpm") or 0,
+            "key": src.get("key") or "",
+            "energy": src.get("energy") or 0,
+            "duration": dur,
+            "position": pos if pos is not None else 0,
+            "remaining": src.get("remaining") if src.get("remaining") is not None else max(0, dur - (pos or 0)),
+        }
+        if deck_num is not None:
+            out["deck"] = deck_num
+        return out
+
+    active = frame.get("activeDeck")
+    current = _track(frame.get("currentTrack"), active)
+    nxt_deck = None
+    if active is not None:
+        nxt_deck = 2 if active == 1 else 1
+    next_track = _track(frame.get("nextTrack"), nxt_deck)
+
+    brain = frame.get("brain") or {}
+    set_info = frame.get("set") or {}
+    history = frame.get("history") or []
+
+    state: dict[str, Any] = {
+        "phase": frame.get("phase") or "?",
+        "mood": frame.get("mood") or "",
+        "tracks_played": len(history),
+        "current_track": current or {},
+        "next_track": next_track,
+        "set": {
+            "mood": frame.get("mood") or "",
+            "tracks_played": len(history),
+            **set_info,
+        },
+        "user_intent": brain.get("currentIntent") or "",
+        "planner_directive": brain.get("transitionAnalysis") or "",
+        "dj_directive": brain.get("lastDecision") or "",
+        # Surfaced raw frame for widgets that want camelCase (decks, vu).
+        "_ws_frame": frame,
     }
-    # Playlist depth may be useful to the BrainWidget in the future; not
-    # rendered today but parity is cheap.
-    if playlist:
-        out["playlist_depth"] = playlist.get("count")
-    return out
+
+    # history mapping — local schema uses tracks_played under "set"
+    if history:
+        state["set"]["history"] = [
+            {
+                "title": h.get("title", ""),
+                "artist": h.get("artist", ""),
+                "played_at": h.get("playedAt", ""),
+                "energy": h.get("energy", 0),
+            }
+            for h in history
+        ]
+
+    return state
+
+
+def _ws_frame_to_session(frame: dict) -> dict:
+    """Minimal session.json synthesis. The remote server doesn't expose the
+    daemon's full session (planner playlist, directives, feedback history)
+    over /ws/state. We populate just enough so the TUI doesn't crash on
+    missing keys.
+    """
+    history = frame.get("history") or []
+    current = frame.get("currentTrack") or {}
+    return {
+        "mood": frame.get("mood") or "",
+        "phase": frame.get("phase") or "?",
+        "current_track": current,
+        "tracks_played": [
+            {
+                "title": h.get("title", ""),
+                "artist": h.get("artist", ""),
+                "played_at": h.get("playedAt", ""),
+            }
+            for h in history
+        ],
+        "planner": {},
+        "directives": [],
+        "feedback_history": [],
+    }
+
+
+# ─── Backwards-compat alias ─────────────────────────────────────────────
+# tui.py imports MCPRemoteStateSource under that name. Keep it pointed at
+# the WebSocket impl so any stale import paths still resolve to the correct
+# transport. (Deprecated — will be removed once TUI is fully migrated.)
+MCPRemoteStateSource = WebSocketRemoteStateSource
