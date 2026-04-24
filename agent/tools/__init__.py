@@ -97,6 +97,7 @@ from .directives import (
     set_mood,
     get_directives,
     clear_directives,
+    defer_decision,
 )
 
 # Evolution tools (self-modification + subagent spawning)
@@ -137,7 +138,7 @@ __all__ = [
     "save_learning", "recall_learnings",
     # directives
     "set_dj_directive", "set_planner_directive", "set_mood",
-    "get_directives", "clear_directives",
+    "get_directives", "clear_directives", "defer_decision",
     # evolution
     "evolve", "propose_change", "review_evolution",
     "spawn_agent", "get_spawn_result",

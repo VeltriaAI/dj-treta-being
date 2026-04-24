@@ -34,7 +34,7 @@ from .tools import (
     read_file, write_file, save_learning, recall_learnings,
     # Directive tools (Being → Agent communication)
     set_dj_directive, set_planner_directive, set_mood,
-    get_directives, clear_directives,
+    get_directives, clear_directives, defer_decision,
     # Evolution tools
     evolve, propose_change, review_evolution,
     spawn_agent, get_spawn_result,
@@ -63,6 +63,9 @@ def _dj_prompt_v8() -> str:
         "the primary action. Python executes the transition precisely.\n"
         "  - load_track(deck, track_path) — load a track onto the idle deck. "
         "Use the planner's playlist path.\n"
+        "  - defer_decision(seconds) — ask again later. Use when the active "
+        "track is mid-drop / mid-buildup / too early, or the library is "
+        "thin. ALWAYS prefer this over replying in plain text.\n"
         "  - get_dj_status / get_live_data / get_deck_info — read Mixxx state.\n"
         "  - hear_music / analyze_track / preview_track — inspect audio.\n"
         "  - save_learning / recall_learnings — DJ knowledge memory.\n"
@@ -72,15 +75,15 @@ def _dj_prompt_v8() -> str:
         "YOU DO NOT HAVE: generate_track, search_music, download_track, "
         "transfer_to_agent(producer), transfer_to_agent(library). Those are "
         "peer agents that run independently — NEVER try to call them. If the "
-        "library is thin or no candidate is playable, say 'waiting' and let "
-        "the library/producer peers handle it.\n"
+        "library is thin or no candidate is playable, call "
+        "defer_decision(60) and let the library/producer peers catch up.\n"
         "\n"
         "WHEN TO TRANSITION (by section of active track):\n"
         "  - breakdown → schedule NOW\n"
         "  - outro → schedule NOW\n"
-        "  - drop → say 'waiting' (never interrupt a drop)\n"
-        "  - buildup → say 'waiting' (let it resolve into the drop)\n"
-        "  - groove / intro → say 'waiting' (let the track develop)\n"
+        "  - drop → defer_decision(30) (never interrupt a drop)\n"
+        "  - buildup → defer_decision(30) (let it resolve into the drop)\n"
+        "  - groove / intro → defer_decision(30) (let the track develop)\n"
         "  - past ~80% of duration, idle ready → schedule regardless\n"
         "\n"
         "TECHNIQUE CHOICE (strict — by measurable gap, not vibes):\n"
@@ -98,22 +101,24 @@ def _dj_prompt_v8() -> str:
         "TRANSITION TIMING:\n"
         "  - at_position should be the START of a breakdown or outro.\n"
         "  - duration 30-60 seconds for melodic crossfade, 10-20 for hard_cut.\n"
-        "  - If transition is already pending, say 'pending' and do NOTHING.\n"
+        "  - If transition is already pending, call defer_decision(30) and "
+        "do nothing else.\n"
         "\n"
         "IF IDLE DECK IS EMPTY OR LOADED WRONG:\n"
         "  - If session.playlist has a rank-1 candidate → call "
         "load_track(idle_deck, playlist[0].path). Prefer rank 1 unless a "
         "clear reason to override exists.\n"
-        "  - If no playlist and library thin → say 'waiting'. Do NOT invent, "
-        "do NOT apologize, do NOT hallucinate tools. Planner will populate "
-        "the playlist on its next tick.\n"
+        "  - If no playlist and library thin → defer_decision(60). Do NOT "
+        "invent, do NOT apologize, do NOT hallucinate tools. Planner will "
+        "populate the playlist on its next tick.\n"
         "\n"
         "RULES:\n"
         "  1. ONE transition per heartbeat. Never schedule twice in a row.\n"
         "  2. Never repeat a track already in the played list.\n"
         "  3. Music must never stop — but if there's nothing valid to do, "
-        "just say 'waiting'. The Python safety net keeps music alive.\n"
-        "  4. Don't narrate. Either invoke a tool or reply with ≤10 words.\n"
+        "call defer_decision(30). The Python safety net keeps music alive.\n"
+        "  4. EVERY response MUST be a tool call. Never reply in plain text. "
+        "If genuinely unsure, defer_decision(60) is always safe.\n"
     )
 
 
@@ -405,6 +410,7 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
             _wrap(hear_music), _wrap(analyze_track), _wrap(preview_track),
             _wrap(load_track),          # v8 Phase 4: DJ owns deck loading
             _wrap(schedule_transition),
+            _wrap(defer_decision),      # Issue #76: replaces 'waiting' escape hatch
             _wrap(save_learning), _wrap(recall_learnings),
             _wrap(read_file), _wrap(write_file),
         ],

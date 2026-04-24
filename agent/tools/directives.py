@@ -100,3 +100,28 @@ def clear_directives() -> str:
     sess.dj_directive = ""
     sess.planner_directive = ""
     return "Directives cleared"
+
+
+def defer_decision(seconds: int = 30) -> dict:
+    """Defer the DJ's transition decision by N seconds.
+
+    Use when the active track is mid-drop / mid-buildup / too early for a
+    transition. The heartbeat will skip P4 invocation until this time
+    elapses, then ask again. Honor the music — don't transition if it
+    would feel forced.
+
+    Args:
+        seconds: how long to defer (default 30, clamped to 5-120).
+    """
+    import time
+    sess = _session()
+    if sess is None:
+        return {"ok": False, "message": "session not registered"}
+    seconds = max(5, min(int(seconds), 120))
+    sess.dj_deferred_until = time.time() + seconds
+    log.info(f"DJ deferred decision for {seconds}s")
+    return {
+        "ok": True,
+        "deferred_seconds": seconds,
+        "deferred_until": sess.dj_deferred_until,
+    }

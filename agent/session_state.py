@@ -155,6 +155,10 @@ _FIELD_DEFAULTS: dict[str, Any] = {
     # Subsystem health (Phase 3.5)
     "knowledge_health": None,
 
+    # Issue #76: DJ defer-decision gate. P4 skips DJ invoke when
+    # now < this. Set by the defer_decision tool; naturally ages out.
+    "dj_deferred_until": 0.0,
+
     # Housekeeping
     "chat_history": list,
     "emergency_count": 0,

@@ -218,20 +218,31 @@ class HeartbeatMixin:
                               remaining, idle_loaded, idle_remaining)
 
         # === PRIORITY 4: Agent decides transition (Software 3.0) ===
-        # Fires only when active is past-half-played and idle is ready.
+        # Fires when active has < 120s remaining and idle is ready. Issue
+        # #76 moved this earlier than "past-half" so Flash latency + any
+        # defer_decision retries still leave room before track end.
         # DJ picks technique (crossfade / bass_swap / echo_out / hard_cut)
         # based on BPM/key/energy gap between active and next-loaded.
         # Phase 7: if the idle deck is externally owned, DJ has nothing to
         # schedule into — skip the agent call entirely. Active-only DJing
         # (just let the current track finish) is the right behaviour.
         sched_file_exists = Path("/tmp/dj-treta-scheduled-transition.json").exists()
-        past_half = idle_ready and duration > 0 and position > (duration * 0.5)
-        if self._deck_owned_by_external(idle_deck):
+        # Issue #76: invoke earlier so defer_decision retries still have a
+        # scheduling window before the P2 watchdog fires (< 30s remaining).
+        transition_window = idle_ready and remaining > 0 and remaining < 120
+        # Issue #76: respect defer_decision — DJ told us to ask later.
+        deferred_until = getattr(self.session, "dj_deferred_until", 0.0) or 0.0
+        if time.time() < deferred_until:
+            log.debug(
+                f"P4 DJ invoke skipped — deferred until {deferred_until:.0f} "
+                f"({deferred_until - time.time():.0f}s left)"
+            )
+        elif self._deck_owned_by_external(idle_deck):
             owner = self.session.deck_ownership.get(int(idle_deck))
             log.debug(
                 f"P4 DJ invoke skipped — idle deck {idle_deck} owned by {owner}"
             )
-        elif (past_half
+        elif (transition_window
                 and not self._agent_busy and not self._transition_pending
                 and not sched_file_exists):
             from .db import get_track_by_path

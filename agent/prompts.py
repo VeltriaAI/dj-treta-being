@@ -121,9 +121,10 @@ def build_dj_user_message(
         f"invoke the load_track tool with the best path from the playlist "
         f"above.\n"
         f"  - Otherwise (active track is mid-drop, mid-buildup, or too "
-        f"early), respond with the single word: waiting\n\n"
-        f"Respond with a tool invocation OR the word 'waiting'. Do not "
-        f"write out function-call syntax as text; actually call the tool."
+        f"early), call defer_decision(seconds=30) so the heartbeat asks "
+        f"you again in 30s.\n\n"
+        f"Respond with EXACTLY ONE tool call. Never respond in plain text. "
+        f"If unsure, defer_decision(60) is always safe."
     )
 
 
