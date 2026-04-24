@@ -1,19 +1,29 @@
 """MCP tool implementations for DJ Treta.
 
-Ten tools in three groups:
-
 Read-only (safe, fast):
     dj_status          — compact now-playing + set info
     dj_playlist        — ranked upcoming candidates
     dj_session_state   — full session.json snapshot (debug)
+    dj_search_library  — fuzzy search the local library DB
 
-Write (via command file, agent-mediated):
+Write — via command file (agent-mediated, asynchronous):
     dj_talk            — conversational intent to Being
     dj_set_mood        — change mood + replan
     dj_skip            — skip current track (fast or smooth)
     dj_request_track   — queue a specific artist/title for fetch
+    dj_feedback        — like / dislike current track
+    dj_set_sources     — toggle youtube / originals source
 
-Co-being hooks (Phase 7 stubs — contract stable now):
+Write — direct to Mixxx (fast, live mixer controls):
+    dj_deck_play       — unpause / start a deck
+    dj_deck_pause      — pause a deck
+    dj_set_volume      — set deck volume 0.0..1.0
+    dj_set_crossfader  — set crossfader 0.0..1.0 (0 = deck1, 1 = deck2)
+    dj_set_eq          — set EQ band (hi/mid/lo) for a deck
+    dj_set_filter      — set quick-effect filter
+    dj_load_track      — load an absolute path onto a deck (no ownership)
+
+Co-being hooks (Phase 7 — DJ agent honours reservations):
     dj_take_deck
     dj_release_deck
     dj_load_on_deck
@@ -216,6 +226,252 @@ def dj_request_track(artist: str, title: str) -> Dict[str, Any]:
         "message": f"request for '{artist} — {title}' submitted to Being",
         "cmd_id": cmd_id,
     }
+
+
+def dj_feedback(kind: str) -> Dict[str, Any]:
+    """Mark the current track as liked or disliked.
+
+    kind: 'like' or 'dislike' (case-insensitive). Routes to the Being's
+    feedback command; the planner reads feedback history to bias future
+    recommendations.
+    """
+    kind = (kind or "").lower().strip()
+    if kind not in ("like", "dislike"):
+        return {"ok": False, "message": "kind must be 'like' or 'dislike'"}
+    cmd_id = write_command("feedback", {"type": kind})
+    outcome = wait_for_command_result(cmd_id, timeout=3.0)
+    return {
+        "ok": True,
+        "message": outcome["result"] if outcome["processed"] else f"{kind} queued",
+        "cmd_id": cmd_id,
+    }
+
+
+def dj_set_sources(source: str, enabled: bool = True) -> Dict[str, Any]:
+    """Toggle a music source on or off.
+
+    source: 'youtube' (alias 'yt') or 'originals'.
+    enabled: True to enable, False to disable.
+    """
+    source = (source or "").lower().strip()
+    if source == "yt":
+        source = "youtube"
+    if source not in ("youtube", "originals"):
+        return {"ok": False, "message": "source must be 'youtube' or 'originals'"}
+    cmd_id = write_command(
+        "change_sources", {"source": source, "enabled": bool(enabled)}
+    )
+    outcome = wait_for_command_result(cmd_id, timeout=3.0)
+    return {
+        "ok": True,
+        "message": outcome["result"]
+        if outcome["processed"]
+        else f"source {source} → {'on' if enabled else 'off'}",
+        "cmd_id": cmd_id,
+    }
+
+
+# ──────────────────────── direct mixer / deck ────────────────────────
+#
+# These tools post directly to the Mixxx HTTP API on the same host as the
+# daemon (localhost:7778 on the VM). They are NOT routed through the
+# Being's command file — they're sub-second operations an AI agent or
+# co-being wants to feel immediately. The DJ agent still owns track
+# loading + transitions; these are the "hands on the mixer" controls.
+
+
+def _mixxx_post(path: str, payload: Dict[str, Any], timeout: float = 5.0) -> Dict[str, Any]:
+    """Thin wrapper around a Mixxx POST. Returns the normalised status dict."""
+    try:
+        resp = httpx.post(f"{MIXXX_URL}{path}", json=payload, timeout=timeout)
+    except Exception as exc:
+        return {"ok": False, "message": f"mixxx unreachable: {exc}"}
+    ok = resp.status_code < 400
+    body = ""
+    try:
+        body = resp.text[:200]
+    except Exception:
+        pass
+    return {
+        "ok": ok,
+        "message": body or (f"HTTP {resp.status_code}"),
+        "status": resp.status_code,
+    }
+
+
+def dj_deck_play(deck_num: int) -> Dict[str, Any]:
+    """Resume / start playback on a deck. deck_num: 1 or 2."""
+    if deck_num not in (1, 2):
+        return {"ok": False, "message": "deck_num must be 1 or 2"}
+    return _mixxx_post("/api/play", {"deck": deck_num})
+
+
+def dj_deck_pause(deck_num: int) -> Dict[str, Any]:
+    """Pause a deck. deck_num: 1 or 2.
+
+    Note: pausing the deck currently routed to the live stream will cause
+    dead air. Prefer dj_skip for set-time interruptions.
+    """
+    if deck_num not in (1, 2):
+        return {"ok": False, "message": "deck_num must be 1 or 2"}
+    return _mixxx_post("/api/pause", {"deck": deck_num})
+
+
+def dj_set_volume(deck_num: int, value: float) -> Dict[str, Any]:
+    """Set deck volume. value: 0.0 (silent) to 1.0 (unity)."""
+    if deck_num not in (1, 2):
+        return {"ok": False, "message": "deck_num must be 1 or 2"}
+    try:
+        v = max(0.0, min(1.0, float(value)))
+    except Exception:
+        return {"ok": False, "message": "value must be a number"}
+    return _mixxx_post("/api/volume", {"deck": deck_num, "volume": v})
+
+
+def dj_set_crossfader(value: float) -> Dict[str, Any]:
+    """Set the crossfader position.
+
+    value: 0.0 = full Deck 1, 0.5 = center, 1.0 = full Deck 2.
+    (Matches Mixxx /api/crossfade convention.)
+    """
+    try:
+        v = max(0.0, min(1.0, float(value)))
+    except Exception:
+        return {"ok": False, "message": "value must be a number"}
+    return _mixxx_post("/api/crossfade", {"position": v})
+
+
+def dj_set_eq(deck_num: int, band: str, value: float) -> Dict[str, Any]:
+    """Set an EQ band on a deck.
+
+    band: 'hi', 'mid', or 'lo' (also accepts 'high'/'low').
+    value: 0.0 (cut) .. 1.0 (unity) .. ~4.0 (boost). 1.0 is neutral.
+    """
+    if deck_num not in (1, 2):
+        return {"ok": False, "message": "deck_num must be 1 or 2"}
+    b = (band or "").lower().strip()
+    if b == "high":
+        b = "hi"
+    if b == "low":
+        b = "lo"
+    if b not in ("hi", "mid", "lo"):
+        return {"ok": False, "message": "band must be hi / mid / lo"}
+    try:
+        v = max(0.0, min(4.0, float(value)))
+    except Exception:
+        return {"ok": False, "message": "value must be a number"}
+    return _mixxx_post("/api/eq", {"deck": deck_num, "band": b, "value": v})
+
+
+def dj_set_filter(deck_num: int, value: float) -> Dict[str, Any]:
+    """Set the quick-effect filter on a deck.
+
+    value: 0.0 = full high-pass, 0.5 = neutral, 1.0 = full low-pass.
+    """
+    if deck_num not in (1, 2):
+        return {"ok": False, "message": "deck_num must be 1 or 2"}
+    try:
+        v = max(0.0, min(1.0, float(value)))
+    except Exception:
+        return {"ok": False, "message": "value must be a number"}
+    return _mixxx_post("/api/filter", {"deck": deck_num, "value": v})
+
+
+def dj_load_track(deck_num: int, path: str) -> Dict[str, Any]:
+    """Load an absolute filesystem path onto a deck directly via Mixxx.
+
+    Does NOT claim deck ownership. Use dj_take_deck + dj_load_on_deck if
+    you need to lock the deck against DJ Treta's auto-load. This tool is
+    for the operator who IS the DJ.
+    """
+    if deck_num not in (1, 2):
+        return {"ok": False, "message": "deck_num must be 1 or 2"}
+    p = (path or "").strip()
+    if not p:
+        return {"ok": False, "message": "path is required"}
+    if not p.startswith("/"):
+        return {"ok": False, "message": "path must be absolute"}
+    import os as _os
+    if not _os.path.exists(p):
+        return {"ok": False, "message": f"file not found: {p}"}
+    return _mixxx_post("/api/load", {"deck": deck_num, "track": p})
+
+
+# ──────────────────────── library search ────────────────────────
+
+DB_PATH_CANDIDATES = [
+    "/mnt/data/dj-treta/djtreta.db",
+    str(Path.home() / "beings" / "dj-treta" / "djtreta.db"),
+    str(Path(__file__).resolve().parent.parent / "djtreta.db"),
+]
+
+
+def _find_db_path() -> str | None:
+    for p in DB_PATH_CANDIDATES:
+        if Path(p).exists():
+            return p
+    return None
+
+
+def dj_search_library(query: str, limit: int = 10) -> Dict[str, Any]:
+    """Fuzzy-search the local library DB by title or artist.
+
+    Returns up to `limit` matches with BPM, key, energy and absolute path.
+    The path is what clients can feed into dj_load_track or dj_load_on_deck.
+    """
+    q = (query or "").strip().lower()
+    if not q:
+        return {"ok": False, "message": "query is required", "tracks": []}
+    try:
+        limit = max(1, min(50, int(limit)))
+    except Exception:
+        limit = 10
+
+    db_path = _find_db_path()
+    if not db_path:
+        return {"ok": False, "message": "library DB not found", "tracks": []}
+
+    import sqlite3
+    like = f"%{q}%"
+    rows = []
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            cur = conn.execute(
+                "SELECT path, title, canonical_artist, bpm, key_camelot, energy_peak "
+                "FROM tracks "
+                "WHERE LOWER(title) LIKE ? OR LOWER(canonical_artist) LIKE ? "
+                "LIMIT ?",
+                (like, like, limit),
+            )
+            rows = cur.fetchall()
+        except sqlite3.OperationalError:
+            # Older schema — fall back to title-only
+            cur = conn.execute(
+                "SELECT path, title, NULL as canonical_artist, bpm, "
+                "key_camelot, energy_peak FROM tracks "
+                "WHERE LOWER(title) LIKE ? LIMIT ?",
+                (like, limit),
+            )
+            rows = cur.fetchall()
+        finally:
+            conn.close()
+    except Exception as exc:
+        return {"ok": False, "message": f"DB error: {exc}", "tracks": []}
+
+    tracks = [
+        {
+            "path": r["path"],
+            "title": r["title"],
+            "artist": r["canonical_artist"],
+            "bpm": r["bpm"],
+            "key": r["key_camelot"],
+            "energy": r["energy_peak"],
+        }
+        for r in rows
+    ]
+    return {"ok": True, "count": len(tracks), "tracks": tracks}
 
 
 # ──────────────────── co-being deck ownership (Phase 7 stubs) ────────────────────

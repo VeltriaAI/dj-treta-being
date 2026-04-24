@@ -125,6 +125,85 @@ def build_mcp() -> FastMCP:
             "it on next replan."
         ),
     )
+    mcp.add_tool(
+        dj_tools.dj_feedback,
+        name="dj_feedback",
+        description=(
+            "Mark the current track as 'like' or 'dislike'. Planner uses "
+            "the feedback history to bias future recommendations."
+        ),
+    )
+    mcp.add_tool(
+        dj_tools.dj_set_sources,
+        name="dj_set_sources",
+        description=(
+            "Toggle a music source on or off. source: 'youtube' (alias 'yt') "
+            "or 'originals'. enabled: True/False."
+        ),
+    )
+
+    # Direct mixer / deck — posted straight to Mixxx for low-latency feel.
+    mcp.add_tool(
+        dj_tools.dj_deck_play,
+        name="dj_deck_play",
+        description="Resume or start playback on a deck. deck_num: 1 or 2.",
+    )
+    mcp.add_tool(
+        dj_tools.dj_deck_pause,
+        name="dj_deck_pause",
+        description=(
+            "Pause a deck. Note: pausing the live-stream deck will cause "
+            "dead air — prefer dj_skip for set-time interruptions."
+        ),
+    )
+    mcp.add_tool(
+        dj_tools.dj_set_volume,
+        name="dj_set_volume",
+        description="Set deck volume. value: 0.0 (silent) to 1.0 (unity).",
+    )
+    mcp.add_tool(
+        dj_tools.dj_set_crossfader,
+        name="dj_set_crossfader",
+        description=(
+            "Set crossfader position. 0.0 = full Deck 1, 0.5 = center, "
+            "1.0 = full Deck 2."
+        ),
+    )
+    mcp.add_tool(
+        dj_tools.dj_set_eq,
+        name="dj_set_eq",
+        description=(
+            "Set an EQ band on a deck. band: hi / mid / lo. "
+            "value: 0.0 (cut) .. 1.0 (unity) .. 4.0 (boost)."
+        ),
+    )
+    mcp.add_tool(
+        dj_tools.dj_set_filter,
+        name="dj_set_filter",
+        description=(
+            "Set the quick-effect filter on a deck. "
+            "0.0 = full high-pass, 0.5 = neutral, 1.0 = full low-pass."
+        ),
+    )
+    mcp.add_tool(
+        dj_tools.dj_load_track,
+        name="dj_load_track",
+        description=(
+            "Load an absolute filesystem path onto a deck directly via Mixxx. "
+            "Use dj_search_library to find a path first. Does NOT claim deck "
+            "ownership — DJ Treta may auto-load over it on the next tick."
+        ),
+    )
+
+    # Library search (read-only, SQLite)
+    mcp.add_tool(
+        dj_tools.dj_search_library,
+        name="dj_search_library",
+        description=(
+            "Fuzzy-search the local library DB by title or artist. Returns "
+            "BPM / key / energy / absolute path for each hit."
+        ),
+    )
 
     # Co-being deck hooks (Phase 7 live — DJ agent honours reservations)
     mcp.add_tool(
