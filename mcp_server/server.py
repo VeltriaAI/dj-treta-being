@@ -231,6 +231,66 @@ def build_mcp() -> FastMCP:
         ),
     )
 
+    # Knowledge — vector similarity over the 3.5M-track embedding index
+    mcp.add_tool(
+        dj_tools.dj_similar_to,
+        name="dj_similar_to",
+        description=(
+            "ANN vector search over the 3.5M-track dataset. Given (artist, "
+            "title) returns sonically similar tracks with bpm / year / "
+            "video_id / mbid / similarity. Returns [] if the index isn't "
+            "ready yet (still ingesting)."
+        ),
+    )
+
+    # Observability — read the thinking log
+    mcp.add_tool(
+        dj_tools.dj_get_thinking,
+        name="dj_get_thinking",
+        description=(
+            "Read DJ Treta's recent [THINK:] thoughts and [CALL:] tool "
+            "invocations from /tmp/dj-treta-thinking.log. Structured rows "
+            "with type / agent / content."
+        ),
+    )
+
+    # Recording — ffmpeg-capture the Icecast stream to disk
+    mcp.add_tool(
+        dj_tools.dj_record_set,
+        name="dj_record_set",
+        description=(
+            "Start recording the live Icecast stream to "
+            "/mnt/data/recordings/<name>.mp3. Non-destructive — broadcast "
+            "continues. Only one recording at a time."
+        ),
+    )
+    mcp.add_tool(
+        dj_tools.dj_stop_recording,
+        name="dj_stop_recording",
+        description=(
+            "Stop the active recording. Returns {path, duration_s, "
+            "size_bytes}. Flushes ffmpeg cleanly (SIGINT)."
+        ),
+    )
+
+    # Chat — announce + read recent
+    mcp.add_tool(
+        dj_tools.dj_announce,
+        name="dj_announce",
+        description=(
+            "Broadcast a message to all listeners on /ws/chat. Persisted to "
+            "chat_messages table via the server's /api/chat/announce."
+        ),
+    )
+    mcp.add_tool(
+        dj_tools.dj_read_chat,
+        name="dj_read_chat",
+        description=(
+            "Read recent /ws/chat messages (oldest-first) via the server's "
+            "/api/chat/history endpoint."
+        ),
+    )
+
     return mcp
 
 

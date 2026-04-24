@@ -5,6 +5,9 @@ Read-only (safe, fast):
     dj_playlist        — ranked upcoming candidates
     dj_session_state   — full session.json snapshot (debug)
     dj_search_library  — fuzzy search the local library DB
+    dj_similar_to      — ANN query against the 3.5M-track embedding index
+    dj_get_thinking    — read recent [THINK:]/[CALL:] lines from thinking log
+    dj_read_chat       — read recent /ws/chat messages
 
 Write — via command file (agent-mediated, asynchronous):
     dj_talk            — conversational intent to Being
@@ -23,6 +26,11 @@ Write — direct to Mixxx (fast, live mixer controls):
     dj_set_filter      — set quick-effect filter
     dj_load_track      — load an absolute path onto a deck (no ownership)
 
+Recording + chat (host-side):
+    dj_record_set      — ffmpeg-capture the Icecast stream to disk
+    dj_stop_recording  — stop active recording, report duration/size
+    dj_announce        — broadcast a message to the chat channel
+
 Co-being hooks (Phase 7 — DJ agent honours reservations):
     dj_take_deck
     dj_release_deck
@@ -31,9 +39,12 @@ Co-being hooks (Phase 7 — DJ agent honours reservations):
 from __future__ import annotations
 
 import json
+import os
+import signal
+import subprocess
 import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import httpx
 
@@ -47,6 +58,14 @@ from .session_writer import (
 
 MIXXX_URL = "http://localhost:7778"
 DECK_OWNERSHIP_FILE = Path("/tmp/dj-treta-deck-ownership.json")
+
+# Host-side paths / endpoints for recording + chat tools.
+THINKING_LOG_PATH = Path("/tmp/dj-treta-thinking.log")
+RECORDING_PID_FILE = Path("/tmp/dj-treta-recording.pid")
+RECORDING_META_FILE = Path("/tmp/dj-treta-recording.meta")
+RECORDINGS_DIR = Path("/mnt/data/recordings")
+ICECAST_STREAM_URL = "http://localhost:8000/live"
+SERVER_HTTP_URL = "http://localhost:8080"
 
 
 # ────────────────────────── read-only ──────────────────────────
@@ -640,3 +659,308 @@ def dj_load_on_deck(
         "deck": deck_num,
         "path": target,
     }
+
+
+# ──────────────────── knowledge: similar_to (ANN) ────────────────────
+
+def dj_similar_to(artist: str, title: str, limit: int = 10) -> List[Dict[str, Any]]:
+    """Find tracks sonically similar to a given (artist, title) via vector search.
+
+    Uses the 3.5M-track dataset's embedding index. Returns an empty list if the
+    index isn't built yet (still ingesting) — retry in a few minutes.
+
+    Args:
+        artist: exact or close artist name.
+        title:  track title (without version suffix preferred).
+        limit:  max results (default 10, capped at 50).
+    """
+    try:
+        from agent.knowledge import queries as kb
+        from agent.knowledge.models import CanonicalRef
+        import agent.knowledge.queries as q_mod
+
+        # The knowledge package gates everything behind a config flag; for
+        # MCP reads we force-enable the backend so we don't silently return
+        # [] because of a config toggle.
+        q_mod._enabled = lambda: True  # type: ignore[attr-defined]
+
+        try:
+            limit_i = max(1, min(int(limit), 50))
+        except Exception:
+            limit_i = 10
+
+        results = kb.similar_to(
+            CanonicalRef(artist=artist, song=title), limit=limit_i
+        )
+        return [
+            {
+                "artist": r.artist_name,
+                "title": r.title,
+                "year": r.year,
+                "bpm": r.bpm_hint,
+                "video_id": r.video_id,
+                "similarity": r.similarity_score,
+                "mbid": r.mbid,
+            }
+            for r in results
+        ]
+    except Exception as exc:
+        return [{"error": str(exc)[:200]}]
+
+
+# ──────────────────── observability: thinking log ────────────────────
+
+def dj_get_thinking(limit: int = 50) -> List[Dict[str, Any]]:
+    """Read DJ Treta's recent thinking log — [THINK:] thoughts and [CALL:] tool
+    invocations.
+
+    Debug-first observability: see what planner / DJ agent are reasoning about
+    in real time.
+
+    Args:
+        limit: max entries to return (default 50, capped at 200).
+    """
+    import re
+
+    if not THINKING_LOG_PATH.exists():
+        return [{"error": "thinking log not found"}]
+    try:
+        limit_i = max(1, min(int(limit), 200))
+    except Exception:
+        limit_i = 50
+
+    # Tail the last ~200 KB — enough for a few hundred entries without
+    # loading a multi-MB file into memory.
+    try:
+        with THINKING_LOG_PATH.open("rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - 200_000))
+            tail = f.read().decode("utf-8", errors="ignore")
+    except Exception as exc:
+        return [{"error": f"read failed: {exc}"}]
+
+    # [TYPE:agent] payload — may span multiple lines until the next header.
+    pattern = re.compile(r"\[(\w+):(\w+)\] (.*?)(?=\n\[\w+:|\Z)", re.DOTALL)
+    entries: List[Dict[str, Any]] = []
+    for m in pattern.finditer(tail):
+        entries.append({
+            "type": m.group(1),       # THINK, CALL, …
+            "agent": m.group(2),
+            "content": m.group(3).strip()[:500],
+        })
+    return entries[-limit_i:]
+
+
+# ──────────────────── recording (ffmpeg of Icecast stream) ────────────────────
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
+
+
+def dj_record_set(name: str) -> Dict[str, Any]:
+    """Start recording the current live set to /mnt/data/recordings/<name>.mp3.
+
+    Uses ffmpeg to capture the Icecast stream. Non-destructive — the broadcast
+    keeps running. Only ONE recording at a time. Call dj_stop_recording() to end.
+
+    Args:
+        name: filename base (no extension). Sanitised to [A-Za-z0-9_-].
+    """
+    import re
+
+    safe = re.sub(r"[^a-zA-Z0-9_-]", "_", str(name or ""))[:100]
+    if not safe:
+        return {"ok": False, "message": "invalid name"}
+
+    # Refuse if a recording is already live.
+    if RECORDING_PID_FILE.exists():
+        try:
+            old_pid = int(RECORDING_PID_FILE.read_text().strip() or "0")
+        except Exception:
+            old_pid = 0
+        if old_pid and _pid_alive(old_pid):
+            return {
+                "ok": False,
+                "message": f"recording already in progress (pid {old_pid})",
+            }
+
+    RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = RECORDINGS_DIR / f"{safe}.mp3"
+
+    try:
+        proc = subprocess.Popen(
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                "-i", ICECAST_STREAM_URL,
+                "-c:a", "copy", str(out_path),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except FileNotFoundError:
+        return {"ok": False, "message": "ffmpeg not installed on host"}
+    except Exception as exc:
+        return {"ok": False, "message": f"ffmpeg spawn failed: {exc}"}
+
+    # Give ffmpeg a moment to latch the stream; bail if it died immediately.
+    time.sleep(0.4)
+    if proc.poll() is not None:
+        return {
+            "ok": False,
+            "message": f"ffmpeg exited immediately (rc={proc.returncode})",
+        }
+
+    RECORDING_PID_FILE.write_text(str(proc.pid))
+    RECORDING_META_FILE.write_text(
+        f"{proc.pid}\n{out_path}\n{time.time()}\n"
+    )
+    return {
+        "ok": True,
+        "message": f"recording to {out_path}",
+        "pid": proc.pid,
+        "path": str(out_path),
+    }
+
+
+def dj_stop_recording() -> Dict[str, Any]:
+    """Stop the currently-active recording. Returns the file path, duration,
+    and size on disk."""
+    if not RECORDING_PID_FILE.exists():
+        return {"ok": False, "message": "no active recording"}
+
+    try:
+        pid = int(RECORDING_PID_FILE.read_text().strip() or "0")
+    except Exception:
+        pid = 0
+
+    path = ""
+    started_at = 0.0
+    if RECORDING_META_FILE.exists():
+        try:
+            lines = RECORDING_META_FILE.read_text().strip().split("\n")
+            if len(lines) >= 3:
+                path = lines[1]
+                started_at = float(lines[2])
+        except Exception:
+            pass
+
+    # Clean ffmpeg exit so the MP3 trailer is flushed.
+    if pid and _pid_alive(pid):
+        try:
+            os.kill(pid, signal.SIGINT)
+        except Exception:
+            pass
+        for _ in range(30):  # up to ~3s for flush
+            if not _pid_alive(pid):
+                break
+            time.sleep(0.1)
+        # Hard stop if still alive.
+        if _pid_alive(pid):
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except Exception:
+                pass
+
+    try:
+        RECORDING_PID_FILE.unlink(missing_ok=True)  # type: ignore[arg-type]
+    except TypeError:  # py < 3.8 compat fallback — not expected here
+        if RECORDING_PID_FILE.exists():
+            RECORDING_PID_FILE.unlink()
+    try:
+        RECORDING_META_FILE.unlink(missing_ok=True)  # type: ignore[arg-type]
+    except TypeError:
+        if RECORDING_META_FILE.exists():
+            RECORDING_META_FILE.unlink()
+
+    duration = int(time.time() - started_at) if started_at else 0
+    size = 0
+    if path and Path(path).exists():
+        try:
+            size = Path(path).stat().st_size
+        except Exception:
+            size = 0
+
+    return {
+        "ok": True,
+        "path": path,
+        "duration_s": duration,
+        "size_bytes": size,
+    }
+
+
+# ──────────────────── chat: announce + read ────────────────────
+
+def dj_announce(message: str) -> Dict[str, Any]:
+    """Broadcast a message to all listeners in the /ws/chat channel.
+
+    Posts to the server's internal /api/chat/announce endpoint (bearer-authed
+    with the same RELAY token). The server persists the message to Postgres
+    and broadcasts to every authenticated chat client.
+
+    Args:
+        message: text to announce (trimmed to 500 chars).
+    """
+    msg = str(message or "")[:500].strip()
+    if not msg:
+        return {"ok": False, "message": "empty message"}
+
+    token = os.environ.get("DJTRETA_RELAY_TOKEN") or os.environ.get(
+        "DJTRETA_COMMAND_TOKEN"
+    )
+    if not token:
+        return {
+            "ok": False,
+            "message": "DJTRETA_RELAY_TOKEN not set; cannot auth to server",
+        }
+
+    try:
+        resp = httpx.post(
+            f"{SERVER_HTTP_URL}/api/chat/announce",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"text": msg},
+            timeout=5.0,
+        )
+    except Exception as exc:
+        return {"ok": False, "message": f"server unreachable: {exc}"}
+
+    if resp.status_code >= 400:
+        return {
+            "ok": False,
+            "message": f"server returned {resp.status_code}: {resp.text[:200]}",
+        }
+    return {"ok": True, "message": "announced"}
+
+
+def dj_read_chat(limit: int = 20) -> List[Dict[str, Any]]:
+    """Read recent messages from /ws/chat (via the server's /api/chat/history).
+
+    Args:
+        limit: max messages to return, oldest-first (default 20, capped at 100).
+    """
+    try:
+        limit_i = max(1, min(int(limit), 100))
+    except Exception:
+        limit_i = 20
+    try:
+        resp = httpx.get(
+            f"{SERVER_HTTP_URL}/api/chat/history",
+            timeout=3.0,
+        )
+    except Exception as exc:
+        return [{"error": str(exc)[:200]}]
+    if resp.status_code != 200:
+        return [{"error": f"server returned {resp.status_code}"}]
+    try:
+        rows = resp.json()
+    except Exception as exc:
+        return [{"error": f"invalid JSON: {exc}"}]
+    if not isinstance(rows, list):
+        return [{"error": "unexpected payload shape"}]
+    # /api/chat/history returns oldest-first; take the last N.
+    return rows[-limit_i:]
