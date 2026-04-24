@@ -30,6 +30,9 @@ from textual.widgets import (
 # DB access for track timeline + stats
 sys.path.insert(0, str(Path(__file__).parent))
 from agent.db import get_db, get_current_set, get_set_tracks, get_track_by_path
+from agent.tui_state_source import (
+    StateSource, LocalFileStateSource, MCPRemoteStateSource,
+)
 
 # ── Config ────────────────────────────────────────────────────────────
 
@@ -40,6 +43,67 @@ DAEMON_LOG = Path("/tmp/dj-treta-daemon.log")
 THINKING_LOG = Path("/tmp/dj-treta-thinking.log")
 MUSIC_DIR = Path.home() / "Music" / "DJTreta"
 WS_URL = "ws://localhost:7779"
+
+DEFAULT_REMOTE_URL = "https://mcp.dj.treta.life/mcp/sse"
+REMOTE_TOKEN_FILE = Path.home() / ".djtreta-remote-token"
+
+
+def _load_remote_token() -> str | None:
+    """Resolve the MCP bearer token from env or ~/.djtreta-remote-token.
+
+    Env wins. File is a convenience for launches outside a shell that has
+    the env exported (eg via a desktop shortcut or ``djtreta tui --remote``).
+    """
+    tok = os.environ.get("DJTRETA_MCP_TOKEN", "").strip()
+    if tok:
+        return tok
+    try:
+        if REMOTE_TOKEN_FILE.exists():
+            text = REMOTE_TOKEN_FILE.read_text().strip()
+            return text or None
+    except Exception:
+        pass
+    return None
+
+
+# ── TUI command → MCP tool routing ────────────────────────────────────
+#
+# In LOCAL mode, TUI write commands are handled by:
+#   (a) send_command()  → writes /tmp/dj-treta-command.json (Being picks up)
+#   (b) mixxx_post()    → direct HTTP to localhost:7778 (Mixxx mixer)
+#
+# In REMOTE mode, both paths route through MCP tool calls on the remote
+# server. The maps below translate (local cmd) → (remote tool, arg shaper).
+
+def _map_mood(args: dict) -> dict:
+    return {"mood": args.get("mood", "")}
+
+def _map_skip(args: dict) -> dict:
+    # Local "skip" has empty args; remote dj_skip supports style=fast|smooth.
+    return {"style": args.get("style", "fast")}
+
+def _map_feedback(args: dict) -> dict:
+    return {"kind": args.get("type") or args.get("kind") or "like"}
+
+def _map_sources(args: dict) -> dict:
+    return {
+        "source": args.get("source", ""),
+        "enabled": bool(args.get("enabled", True)),
+    }
+
+def _map_talk(args: dict) -> dict:
+    return {"message": args.get("message", "")}
+
+BRAIN_CMD_TO_TOOL: dict[str, tuple[str, object]] = {
+    "talk":           ("dj_talk",         _map_talk),
+    "change_mood":    ("dj_set_mood",     _map_mood),
+    "skip":           ("dj_skip",         _map_skip),
+    "feedback":       ("dj_feedback",     _map_feedback),
+    "change_sources": ("dj_set_sources",  _map_sources),
+}
+
+# Commands with no remote equivalent (the VM already runs a continuous set).
+BRAIN_CMD_LOCAL_ONLY = {"play", "stop", "reset"}
 
 KEY_MAP = {
     1: "C", 2: "Db", 3: "D", 4: "Eb", 5: "E", 6: "F",
@@ -213,6 +277,138 @@ def _detect_config_value(section: str, key: str, default=False):
     return default
 
 
+def _load_remote_token() -> str | None:
+    """Resolve remote token: env var first, then ~/.djtreta-remote-token."""
+    tok = os.environ.get("DJTRETA_MCP_TOKEN")
+    if tok:
+        return tok.strip()
+    if REMOTE_TOKEN_FILE.exists():
+        try:
+            return REMOTE_TOKEN_FILE.read_text().strip() or None
+        except Exception:
+            return None
+    return None
+
+
+def _map_cmd_to_mcp(cmd: str, args: dict) -> tuple[str | None, dict]:
+    """Translate a local /command (or internal brain command) into
+    (mcp_tool_name, mcp_args). Returns (None, {}) if this command has no
+    remote equivalent — the caller then either runs LOCAL-only or emits a
+    "not available in REMOTE mode" notice.
+    """
+    args = args or {}
+    if cmd in ("change_mood", "mood"):
+        return "dj_set_mood", _map_mood(args)
+    if cmd == "skip":
+        return "dj_skip", _map_skip(args)
+    if cmd == "talk":
+        return "dj_talk", _map_talk(args)
+    if cmd == "request_track":
+        return "dj_request_track", {
+            "artist": args.get("artist", ""),
+            "title": args.get("title", ""),
+        }
+    if cmd == "feedback":
+        return "dj_feedback", _map_feedback(args)
+    if cmd == "change_sources":
+        return "dj_set_sources", _map_sources(args)
+    # play / stop / reset are LOCAL-only — the remote daemon runs a
+    # continuous set and owns its own lifecycle.
+    return None, {}
+
+
+def _mixxx_path_to_mcp(path: str, payload: dict) -> tuple[str | None, dict]:
+    """Translate a direct Mixxx HTTP call into (mcp_tool_name, mcp_args)."""
+    p = dict(payload or {})
+    if path == "/api/play":
+        return "dj_deck_play", {"deck_num": int(p.get("deck", 1))}
+    if path == "/api/pause":
+        return "dj_deck_pause", {"deck_num": int(p.get("deck", 1))}
+    if path == "/api/volume":
+        return "dj_set_volume", {
+            "deck_num": int(p.get("deck", 1)),
+            "value": float(p.get("volume", 1.0)),
+        }
+    if path == "/api/crossfade":
+        return "dj_set_crossfader", {"value": float(p.get("position", 0.5))}
+    if path == "/api/eq":
+        return "dj_set_eq", {
+            "deck_num": int(p.get("deck", 1)),
+            "band": str(p.get("band", "mid")),
+            "value": float(p.get("value", 1.0)),
+        }
+    if path == "/api/filter":
+        return "dj_set_filter", {
+            "deck_num": int(p.get("deck", 1)),
+            "value": float(p.get("value", 0.5)),
+        }
+    if path == "/api/load":
+        return "dj_load_track", {
+            "deck_num": int(p.get("deck", 1)),
+            "path": str(p.get("track", "")),
+        }
+    return None, {}
+
+
+def _synthesize_mixxx_from_state(state: dict) -> tuple[dict, dict]:
+    """REMOTE mode: fake a Mixxx status/live payload from current_track.
+
+    The VM's Mixxx is not reachable from the Mac. We reconstruct just enough
+    for the deck widgets to render track + BPM + key + position + duration.
+    """
+    ct = state.get("current_track") or {}
+    nt = state.get("next_track") or {}
+
+    def _deck_for_track(track: dict, playing: bool) -> dict:
+        if not track:
+            return {"track_loaded": False}
+        dur = track.get("duration") or 0
+        pos = track.get("position") or 0
+        rem = track.get("remaining")
+        if rem is None:
+            rem = max(0, dur - pos) if dur else 0
+        return {
+            "track_loaded": True,
+            "playing": playing,
+            "bpm": track.get("bpm") or 0,
+            "file_bpm": track.get("file_bpm") or track.get("bpm") or 0,
+            "key": track.get("key") or 0,
+            "position_seconds": pos,
+            "duration": dur,
+            "remaining_seconds": rem,
+            "volume": 1.0,
+            "rate": 0.0,
+            "sync_enabled": False,
+            "loop_enabled": False,
+            "eq_hi": 1.0,
+            "eq_mid": 1.0,
+            "eq_lo": 1.0,
+            "file_path": track.get("file_path") or "",
+        }
+
+    cur_deck = int(ct.get("deck") or 1)
+    nxt_deck = int(nt.get("deck") or (2 if cur_deck == 1 else 1))
+
+    d1 = _deck_for_track(ct, True) if cur_deck == 1 else _deck_for_track(nt if nxt_deck == 1 else {}, False)
+    d2 = _deck_for_track(ct, True) if cur_deck == 2 else _deck_for_track(nt if nxt_deck == 2 else {}, False)
+
+    status = {
+        "deck1": d1,
+        "deck2": d2,
+        "crossfader": -1 if cur_deck == 1 else 1,
+        "master_volume": 1.0,
+        "headphone_volume": 0.0,
+    }
+    # Minimal live data — no VU in remote mode (would need more tools).
+    live = {
+        "deck1": {"vu_left": 0, "vu_right": 0, "beat_active": False, "beat_distance": 0, "peak_indicator": False},
+        "deck2": {"vu_left": 0, "vu_right": 0, "beat_active": False, "beat_distance": 0, "peak_indicator": False},
+        "master_vu_left": 0,
+        "master_vu_right": 0,
+    }
+    return status, live
+
+
 def send_command(command: str, args: dict = {}) -> str:
     cmd_id = f"{time.time():.6f}"
     payload = {"command": command, "args": args, "id": cmd_id}
@@ -272,7 +468,11 @@ class DeckWidget(Static):
         # Track name
         track_name = get_track_name(self.deck_num)
         if not track_name:
-            state = read_state()
+            # Prefer app state_source if available (LOCAL/REMOTE aware).
+            try:
+                state = self.app.state_source.read_state()
+            except Exception:
+                state = read_state()
             if state:
                 ct = state.get("current_track", {})
                 if ct.get("title"):
@@ -583,9 +783,29 @@ class MixerWidget(Static):
 class BrainWidget(Static):
     """Brain panel — set info, status, DJ decisions, timeline, billing."""
 
+    def _mode_badge(self) -> str:
+        """Return a [LOCAL] / [REMOTE host] / [REMOTE host ● DISCONNECTED] prefix."""
+        try:
+            src = self.app.state_source
+        except Exception:
+            return ""
+        label = getattr(src, "label", "LOCAL")
+        connected = getattr(src, "connected", True)
+        detail = getattr(src, "status_detail", "")
+        if "REMOTE" in label:
+            if connected:
+                extra = f" {detail}" if detail else ""
+                return f"[bold cyan]\\[{label}{extra}][/bold cyan] "
+            return f"[bold red]\\[{label} ● DISCONNECTED {detail}][/bold red] "
+        # LOCAL
+        if not connected:
+            return f"[dim]\\[LOCAL daemon off][/dim] "
+        return f"[green]\\[{label}][/green] "
+
     def update_brain(self, state: dict | None, status: dict | None = None):
+        badge = self._mode_badge()
         if not state:
-            self.update("[dim]Brain offline — /start to launch[/dim]")
+            self.update(f"{badge}[dim]Brain offline — /start to launch[/dim]")
             return
 
         phase = state.get("phase", "?")
@@ -743,6 +963,11 @@ class BrainWidget(Static):
         except Exception:
             pass
 
+        # Prefix first line with the LOCAL/REMOTE badge so mode is always visible.
+        if lines:
+            lines[0] = badge + lines[0]
+        else:
+            lines = [badge]
         self.update("\n".join(lines))
 
 
@@ -865,9 +1090,29 @@ class DJTretaApp(App):
         Binding("f2", "toggle_debug", "Debug"),
         Binding("f4", "show_tracks", "Tracks"),
         Binding("f5", "show_set", "Set"),
+        # ctrl+r instead of plain 'r' — prompt Input always has focus and
+        # would otherwise swallow bare 'r' keypresses.
+        Binding("ctrl+r", "toggle_remote", "Local/Remote", priority=True),
     ]
 
     debug_mode = reactive(False)
+
+    # ── State source (LOCAL/REMOTE) ──────────────────────────────────
+    def __init__(
+        self,
+        state_source: StateSource | None = None,
+        remote_url: str | None = None,
+        remote_token: str | None = None,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.state_source: StateSource = state_source or LocalFileStateSource()
+        # Stored so 'r' can toggle back to remote after going LOCAL.
+        self._remote_url = remote_url
+        self._remote_token = remote_token
+
+    def _is_remote(self) -> bool:
+        return isinstance(self.state_source, MCPRemoteStateSource)
 
     # ── WebSocket real-time connection ───────────────────────────────
 
@@ -892,6 +1137,11 @@ class DJTretaApp(App):
                 asyncio.run_coroutine_threadsafe(ws.close(), el).result(timeout=2.0)
             except Exception:
                 pass
+        # Stop remote state source if any.
+        try:
+            self.state_source.close()
+        except Exception:
+            pass
         await super().action_quit()
 
     def _ws_thread(self):
@@ -1204,6 +1454,36 @@ class DJTretaApp(App):
             brain.display = True
             right.display = True
 
+    def action_toggle_remote(self) -> None:
+        """Toggle between LOCAL file mode and REMOTE MCP mode."""
+        if self._is_remote():
+            # Switch to LOCAL.
+            try:
+                self.state_source.close()
+            except Exception:
+                pass
+            self.state_source = LocalFileStateSource()
+            self.log_widget.write("[green]  → Switched to LOCAL mode[/green]")
+            if not STATE_FILE.exists():
+                self.log_widget.write("[yellow]  (no local daemon running — start one with /start)[/yellow]")
+        else:
+            # Switch to REMOTE. Need URL + token.
+            url = self._remote_url or DEFAULT_REMOTE_URL
+            token = self._remote_token or _load_remote_token()
+            if not token:
+                self.log_widget.write(
+                    "[red]  No remote token configured.[/red]\n"
+                    f"[dim]  Set DJTRETA_MCP_TOKEN or write token to {REMOTE_TOKEN_FILE}[/dim]"
+                )
+                return
+            try:
+                self.state_source = MCPRemoteStateSource(url=url, token=token)
+                self._remote_url = url
+                self._remote_token = token
+                self.log_widget.write(f"[cyan]  → Switched to REMOTE mode → {url}[/cyan]")
+            except Exception as exc:
+                self.log_widget.write(f"[red]  Remote connect failed: {exc}[/red]")
+
     def action_toggle_debug(self) -> None:
         debug_log = self.query_one("#debug-log")
         if debug_log.has_class("visible"):
@@ -1269,13 +1549,20 @@ class DJTretaApp(App):
             pass
 
     def refresh_status(self) -> None:
-        status = mixxx_get("/api/status")
-        live = mixxx_get("/api/live")
-        # Prefer WebSocket state when connected, fall back to file
-        if self._ws_connected and self._ws_state:
+        remote = self._is_remote()
+        # In remote mode, the VM owns Mixxx — don't hit localhost.
+        status = None if remote else mixxx_get("/api/status")
+        live = None if remote else mixxx_get("/api/live")
+        # Prefer WebSocket state when connected (local-only), else StateSource.
+        if not remote and self._ws_connected and self._ws_state:
             state = self._ws_state
         else:
-            state = read_state()
+            state = self.state_source.read_state()
+
+        # In remote mode, synthesize a minimal deck/live payload from
+        # current_track so the deck widgets have something to render.
+        if remote and state:
+            status, live = _synthesize_mixxx_from_state(state)
 
         deck1_w = self.query_one("#deck1", DeckWidget)
         deck2_w = self.query_one("#deck2", DeckWidget)
@@ -1439,28 +1726,38 @@ class DJTretaApp(App):
         if cmd == "help":
             self.log_widget.write(
                 "\n[bold]Commands:[/bold]\n"
-                "  [cyan]<message>[/cyan]          Talk to DJ Treta\n"
-                "  [cyan]/play[/cyan] [mood] [min] Start a set (e.g. /play dark-techno 60)\n"
-                "  [cyan]/stop[/cyan]              Stop the set (fade out)\n"
-                "  [cyan]/mood[/cyan] <name>       Change mood\n"
-                "  [cyan]/skip[/cyan]              Skip (smooth 20s transition)\n"
-                "  [cyan]/pause[/cyan] [deck]      Pause\n"
-                "  [cyan]/load[/cyan] <d> <name>   Load track by name\n"
-                "  [cyan]/set[/cyan]               Show current set info\n"
-                "  [cyan]/set history[/cyan]       Show all sets from DB\n"
-                "  [cyan]/queue[/cyan]             Show next track + planner plan\n"
-                "  [cyan]/brain[/cyan]             Show last DJ decisions\n"
-                "  [cyan]/stats[/cyan]             Show library stats from DB\n"
-                "  [cyan]/relay[/cyan]             Show relay status\n"
-                "  [cyan]/tracks[/cyan]            List library\n"
-                "  [cyan]/like[/cyan]              👍 Like current track\n"
-                "  [cyan]/dislike[/cyan]           👎 Dislike current track\n"
-                "  [cyan]/sources[/cyan] <src> on|off  Toggle music sources (yt, originals)\n"
-                "  [cyan]/cost[/cyan]              Show billing details\n"
-                "  [cyan]/start[/cyan]             Start Being daemon\n"
-                "  [cyan]/kill[/cyan]              Kill Being daemon\n"
-                "  [cyan]/help[/cyan]              This help\n"
-                "  [dim]Ctrl+Q quit | F2 debug | Ctrl+S skip[/dim]\n"
+                "  [cyan]<message>[/cyan]              Talk to DJ Treta\n"
+                "  [cyan]/play[/cyan] [mood] [min]     Start a set (LOCAL only — remote runs continuously)\n"
+                "  [cyan]/stop[/cyan]                  Stop the set (LOCAL only)\n"
+                "  [cyan]/mood[/cyan] <name>           Change mood\n"
+                "  [cyan]/skip[/cyan]                  Skip (smooth transition)\n"
+                "  [bold]Mixer[/bold]\n"
+                "  [cyan]/pause[/cyan] [deck]          Pause a deck\n"
+                "  [cyan]/resume[/cyan] [deck]         Resume (play) a deck\n"
+                "  [cyan]/volume[/cyan] <deck> <0-1>   Deck volume\n"
+                "  [cyan]/crossfade[/cyan] <0-1>       Crossfader (0=deck1, 1=deck2)\n"
+                "  [cyan]/eq[/cyan] <deck> <band> <v>  EQ band (hi/mid/lo, 0-4)\n"
+                "  [cyan]/filter[/cyan] <deck> <0-1>   Filter (0.5 = neutral)\n"
+                "  [bold]Library[/bold]\n"
+                "  [cyan]/load[/cyan] <d> <name>       Load track by name fuzzy\n"
+                "  [cyan]/search[/cyan] <query>        Search library (remote: SQLite FTS)\n"
+                "  [cyan]/request[/cyan] <artist> <title>  Request a track to fetch\n"
+                "  [cyan]/tracks[/cyan]                List library (LOCAL only)\n"
+                "  [bold]Set + state[/bold]\n"
+                "  [cyan]/set[/cyan]                   Show current set info\n"
+                "  [cyan]/set history[/cyan]           Show all sets from DB\n"
+                "  [cyan]/queue[/cyan]                 Show next track + planner plan\n"
+                "  [cyan]/brain[/cyan]                 Show last DJ decisions\n"
+                "  [cyan]/stats[/cyan]                 Show library stats\n"
+                "  [cyan]/relay[/cyan]                 Show relay status\n"
+                "  [cyan]/like[/cyan]  /dislike        Feedback on current track\n"
+                "  [cyan]/sources[/cyan] <src> on|off  Toggle music sources\n"
+                "  [cyan]/cost[/cyan]                  Show billing details\n"
+                "  [cyan]/start[/cyan] /kill           Start / kill local daemon\n"
+                "  [cyan]/help[/cyan]                  This help\n"
+                "  [cyan]/remote[/cyan] [URL]          Connect to remote VM daemon via MCP\n"
+                "  [cyan]/local[/cyan]                 Switch back to LOCAL file mode\n"
+                "  [dim]Ctrl+Q quit | F2 debug | Ctrl+S skip | Ctrl+R toggle LOCAL/REMOTE[/dim]\n"
             )
         elif cmd == "play":
             mood = args[0] if args else "melodic-techno"
@@ -1474,9 +1771,76 @@ class DJTretaApp(App):
         elif cmd == "skip":
             self.action_skip()
         elif cmd == "pause":
-            deck = int(args[0]) if args else 1
-            mixxx_post("/api/pause", {"deck": deck})
-            self.log_widget.write(f"[yellow]  Paused Deck {deck}[/yellow]")
+            try:
+                deck = int(args[0]) if args else 1
+            except ValueError:
+                self.log_widget.write("[red]  Usage: /pause [1|2][/red]")
+                return
+            self.log_widget.write(f"[yellow]  Pausing Deck {deck}...[/yellow]")
+            self._dispatch_mixxx_async("/api/pause", {"deck": deck}, f"Paused Deck {deck}")
+        elif cmd == "resume":
+            try:
+                deck = int(args[0]) if args else 1
+            except ValueError:
+                self.log_widget.write("[red]  Usage: /resume [1|2][/red]")
+                return
+            self.log_widget.write(f"[yellow]  Resuming Deck {deck}...[/yellow]")
+            self._dispatch_mixxx_async("/api/play", {"deck": deck}, f"Playing Deck {deck}")
+        elif cmd == "volume" and len(args) >= 2:
+            try:
+                deck = int(args[0])
+                vol = float(args[1])
+            except ValueError:
+                self.log_widget.write("[red]  Usage: /volume <deck> <0.0-1.0>[/red]")
+                return
+            self._dispatch_mixxx_async(
+                "/api/volume", {"deck": deck, "volume": vol},
+                f"Deck {deck} volume → {vol:.2f}",
+            )
+        elif cmd == "crossfade" and args:
+            try:
+                pos = float(args[0])
+            except ValueError:
+                self.log_widget.write("[red]  Usage: /crossfade <0.0-1.0>[/red]")
+                return
+            self._dispatch_mixxx_async(
+                "/api/crossfade", {"position": pos},
+                f"Crossfader → {pos:.2f}",
+            )
+        elif cmd == "eq" and len(args) >= 3:
+            try:
+                deck = int(args[0])
+                band = args[1].lower()
+                val = float(args[2])
+            except ValueError:
+                self.log_widget.write("[red]  Usage: /eq <deck> <hi|mid|lo> <0.0-4.0>[/red]")
+                return
+            self._dispatch_mixxx_async(
+                "/api/eq", {"deck": deck, "band": band, "value": val},
+                f"Deck {deck} EQ {band} → {val:.2f}",
+            )
+        elif cmd == "filter" and len(args) >= 2:
+            try:
+                deck = int(args[0])
+                val = float(args[1])
+            except ValueError:
+                self.log_widget.write("[red]  Usage: /filter <deck> <0.0-1.0>[/red]")
+                return
+            self._dispatch_mixxx_async(
+                "/api/filter", {"deck": deck, "value": val},
+                f"Deck {deck} filter → {val:.2f}",
+            )
+        elif cmd == "search" and args:
+            self._search_library(" ".join(args))
+        elif cmd == "request" and len(args) >= 2:
+            # /request <artist> | <title>  or  /request artist title
+            rest = " ".join(args)
+            if "|" in rest:
+                artist, _, title = rest.partition("|")
+            else:
+                # Heuristic: first token = artist, remainder = title
+                artist, title = args[0], " ".join(args[1:])
+            self._request_track_remote(artist.strip(), title.strip())
         elif cmd == "load" and len(args) >= 2:
             deck = int(args[0])
             query = " ".join(args[1:]).lower()
@@ -1518,6 +1882,16 @@ class DJTretaApp(App):
                 source = "youtube"
             self.run_brain_command("change_sources", {"source": source, "enabled": enabled})
             self.log_widget.write(f"[green]  Source {source} → {'on' if enabled else 'off'}[/green]")
+        elif cmd in ("remote", "local"):
+            # Explicit toggle — /remote or /local or /remote URL
+            if cmd == "remote" and args and args[0].startswith(("http://", "https://")):
+                self._remote_url = args[0]
+            # If already in requested mode, no-op; otherwise toggle.
+            want_remote = (cmd == "remote")
+            if want_remote != self._is_remote():
+                self.action_toggle_remote()
+            else:
+                self.log_widget.write(f"[dim]  already in {cmd.upper()} mode[/dim]")
         else:
             self.log_widget.write(f"[red]Unknown: {text}[/red] — /help")
 
@@ -1525,15 +1899,69 @@ class DJTretaApp(App):
     def handle_talk(self, message: str) -> None:
         self.log_widget.write(f"\n[bold cyan]You:[/bold cyan] {message}")
         self.log_widget.write("[dim]  thinking...[/dim]")
-        response = send_command("talk", {"message": message})
+        if self._is_remote():
+            try:
+                out = self.state_source.call_tool("dj_talk", {"message": message})
+                response = out.get("message", str(out))
+            except Exception as exc:
+                response = f"[remote error] {exc}"
+        else:
+            response = send_command("talk", {"message": message})
         self.log_widget.write(f"[bold magenta]DJ Treta:[/bold magenta] {response}\n")
 
     @work(thread=True)
     def run_brain_command(self, cmd: str, args: dict) -> None:
-        response = send_command(cmd, args)
+        if self._is_remote():
+            # Map a few common local commands onto the MCP surface.
+            mcp_tool, mcp_args = _map_cmd_to_mcp(cmd, args)
+            if mcp_tool is None:
+                self.log_widget.write(
+                    f"[yellow]  /{cmd} not available in REMOTE mode (local-only)[/yellow]"
+                )
+                return
+            try:
+                out = self.state_source.call_tool(mcp_tool, mcp_args)
+                response = out.get("message") or json.dumps(out, default=str)[:200]
+            except Exception as exc:
+                response = f"[remote error] {exc}"
+        else:
+            response = send_command(cmd, args)
         self.log_widget.write(f"[green]  {response}[/green]")
 
+    def _dispatch_mixxx(self, path: str, payload: dict) -> dict:
+        """LOCAL → direct HTTP to localhost Mixxx; REMOTE → MCP tool. Returns
+        a best-effort result dict (never raises). Safe to call from the TUI
+        thread — the MCP call is scheduled on the background loop.
+        """
+        if not self._is_remote():
+            res = mixxx_post(path, payload) or {}
+            return {"ok": True, "message": str(res) if res else f"posted {path}"}
+
+        tool_name, tool_args = _mixxx_path_to_mcp(path, payload)
+        if not tool_name:
+            return {"ok": False, "message": f"(remote) no MCP mapping for {path}"}
+        try:
+            out = self.state_source.call_tool(tool_name, tool_args, timeout=10.0)
+        except Exception as exc:
+            return {"ok": False, "message": f"(remote) {tool_name} failed: {exc}"}
+        return out or {"ok": True, "message": ""}
+
+    @work(thread=True)
+    def _dispatch_mixxx_async(self, path: str, payload: dict, success_msg: str) -> None:
+        out = self._dispatch_mixxx(path, payload)
+        if out.get("ok") is False:
+            self.log_widget.write(f"[red]  {out.get('message', 'failed')}[/red]")
+        else:
+            self.log_widget.write(f"[green]  {success_msg}[/green]")
+
     def load_track(self, deck: int, query: str):
+        """Resolve a fuzzy track name to a playable path and load it onto a
+        deck. LOCAL mode walks ~/Music/DJTreta. REMOTE mode uses
+        dj_search_library on the VM.
+        """
+        if self._is_remote():
+            self._load_track_remote(deck, query)
+            return
         for genre_dir in sorted(MUSIC_DIR.iterdir()):
             if not genre_dir.is_dir():
                 continue
@@ -1543,6 +1971,64 @@ class DJTretaApp(App):
                     self.log_widget.write(f"[green]  Loaded on Deck {deck}: {f.stem}[/green]")
                     return
         self.log_widget.write(f"[red]  No track matching '{query}'[/red]")
+
+    @work(thread=True)
+    def _load_track_remote(self, deck: int, query: str) -> None:
+        try:
+            result = self.state_source.call_tool(
+                "dj_search_library", {"query": query, "limit": 1}
+            )
+        except Exception as exc:
+            self.log_widget.write(f"[red]  (remote) search failed: {exc}[/red]")
+            return
+        tracks = (result or {}).get("tracks") or []
+        if not tracks:
+            self.log_widget.write(f"[red]  No track matching '{query}' on remote[/red]")
+            return
+        match = tracks[0]
+        path = match.get("path")
+        if not path:
+            self.log_widget.write(f"[red]  Match missing path: {match}[/red]")
+            return
+        load_out = self._dispatch_mixxx("/api/load", {"deck": deck, "track": path})
+        if load_out.get("ok") is False:
+            self.log_widget.write(f"[red]  (remote) load failed: {load_out.get('message')}[/red]")
+        else:
+            title = match.get("title") or Path(path).stem
+            self.log_widget.write(f"[green]  Loaded on Deck {deck}: {title}[/green]")
+
+    @work(thread=True)
+    def _search_library(self, query: str, limit: int = 8) -> None:
+        """Search library (REMOTE only — LOCAL has /tracks which lists files)."""
+        try:
+            result = self.state_source.call_tool(
+                "dj_search_library", {"query": query, "limit": limit}
+            )
+        except Exception as exc:
+            self.log_widget.write(f"[red]  search failed: {exc}[/red]")
+            return
+        tracks = (result or {}).get("tracks") or []
+        if not tracks:
+            self.log_widget.write(f"[yellow]  No matches for '{query}'[/yellow]")
+            return
+        lines = [f"\n[bold]Search: {query}[/bold]"]
+        for i, t in enumerate(tracks, 1):
+            title = t.get("title") or Path(t.get("path", "?")).stem
+            bpm = t.get("bpm") or "—"
+            key = t.get("key") or "—"
+            lines.append(f"  {i:2d}. [cyan]{title}[/cyan]  [dim]{bpm} BPM · {key}[/dim]")
+        self.log_widget.write("\n".join(lines))
+
+    @work(thread=True)
+    def _request_track_remote(self, artist: str, title: str) -> None:
+        try:
+            out = self.state_source.call_tool(
+                "dj_request_track", {"artist": artist, "title": title}
+            )
+        except Exception as exc:
+            self.log_widget.write(f"[red]  (remote) request failed: {exc}[/red]")
+            return
+        self.log_widget.write(f"[green]  {(out or {}).get('message', 'requested')}[/green]")
 
     def show_tracks(self):
         lines = ["[bold]Library:[/bold]"]
@@ -1557,8 +2043,10 @@ class DJTretaApp(App):
 
     def show_set_history(self):
         """Show full set journey — played tracks from DB, now playing, next."""
-        state = read_state()
-        status = mixxx_get("/api/status")
+        state = self.state_source.read_state()
+        status = None if self._is_remote() else mixxx_get("/api/status")
+        if self._is_remote() and state:
+            status, _ = _synthesize_mixxx_from_state(state)
 
         lines = ["\n[bold]SET JOURNEY[/bold]"]
 
@@ -1680,7 +2168,7 @@ class DJTretaApp(App):
 
     def show_current_set(self):
         """Show current set info from state file."""
-        state = read_state()
+        state = self.state_source.read_state()
         lines = ["\n[bold]CURRENT SET[/bold]"]
         if state:
             sd = state.get("set", {})
@@ -1740,7 +2228,7 @@ class DJTretaApp(App):
 
     def show_queue(self):
         """Show next track on idle deck + planner plan."""
-        state = read_state()
+        state = self.state_source.read_state()
         lines = ["\n[bold]QUEUE[/bold]"]
 
         # Next track from state
@@ -1869,7 +2357,7 @@ class DJTretaApp(App):
 
     def show_relay_status(self):
         """Show relay connection status."""
-        state = read_state()
+        state = self.state_source.read_state()
         lines = ["\n[bold]RELAY STATUS[/bold]"]
         if state:
             enabled = state.get("relay_enabled", False)
@@ -1928,10 +2416,45 @@ class DJTretaApp(App):
         self.show_set_history()
 
 
-def main():
-    app = DJTretaApp()
+def main(*, remote: bool = False, remote_url: str | None = None, remote_token: str | None = None):
+    """Launch the TUI.
+
+    Args:
+        remote: if True, start in REMOTE mode using ``remote_url``/``remote_token``.
+        remote_url: MCP SSE URL (defaults to ``DEFAULT_REMOTE_URL``).
+        remote_token: bearer token (falls back to env/file via ``_load_remote_token``).
+    """
+    state_source: StateSource
+    url = remote_url or DEFAULT_REMOTE_URL
+    token = remote_token or _load_remote_token()
+
+    if remote:
+        if not token:
+            print(
+                "error: remote mode requires a token.\n"
+                "  Set DJTRETA_MCP_TOKEN, pass --token TOK, or write the token to "
+                f"{REMOTE_TOKEN_FILE}",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        state_source = MCPRemoteStateSource(url=url, token=token)
+    else:
+        state_source = LocalFileStateSource()
+
+    app = DJTretaApp(
+        state_source=state_source,
+        remote_url=url,
+        remote_token=token,
+    )
     app.run()
 
 
 if __name__ == "__main__":
-    main()
+    # Minimal CLI so `python tui.py --remote ...` works directly too.
+    import argparse
+    ap = argparse.ArgumentParser(description="DJ Treta TUI")
+    ap.add_argument("--remote", nargs="?", const=DEFAULT_REMOTE_URL, default=None,
+                    help="Connect to remote MCP server (default URL if flag alone)")
+    ap.add_argument("--token", default=None, help="Bearer token for remote MCP")
+    ns = ap.parse_args()
+    main(remote=ns.remote is not None, remote_url=ns.remote, remote_token=ns.token)

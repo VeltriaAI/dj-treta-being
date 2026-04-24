@@ -536,7 +536,61 @@ BANNER = """[bold bright_white]
   ╚══════════════════════════════════════╝
 [/bold bright_white]"""
 
+def _parse_remote_args(argv: list[str]) -> tuple[bool, str | None, str | None, list[str]]:
+    """Strip --remote / --token from argv. Returns (remote_on, url, token, leftover).
+
+    Accepts:
+        --remote                 → default URL
+        --remote URL             → explicit URL
+        --token TOK              → bearer token
+    The flags may appear anywhere; leftover preserves order of unrelated args.
+    """
+    remote_on = False
+    url: str | None = None
+    token: str | None = None
+    rest: list[str] = []
+
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--remote":
+            remote_on = True
+            # Peek: if next token looks like a URL, consume it.
+            if i + 1 < len(argv) and argv[i + 1].startswith(("http://", "https://")):
+                url = argv[i + 1]
+                i += 2
+            else:
+                i += 1
+        elif a.startswith("--remote="):
+            remote_on = True
+            url = a.split("=", 1)[1] or None
+            i += 1
+        elif a == "--token":
+            if i + 1 < len(argv):
+                token = argv[i + 1]
+                i += 2
+            else:
+                i += 1
+        elif a.startswith("--token="):
+            token = a.split("=", 1)[1] or None
+            i += 1
+        else:
+            rest.append(a)
+            i += 1
+    return remote_on, url, token, rest
+
+
 def main():
+    # Extract global --remote / --token flags first (can appear anywhere).
+    remote_on, remote_url, remote_token, remaining = _parse_remote_args(sys.argv[1:])
+    sys.argv = [sys.argv[0]] + remaining
+
+    # If --remote is set without any subcommand, launch the TUI in remote mode.
+    if remote_on and not remaining:
+        from tui import main as tui_main
+        tui_main(remote=True, remote_url=remote_url, remote_token=remote_token)
+        return
+
     # One-shot commands
     if len(sys.argv) > 1:
         cmd = sys.argv[1]
@@ -545,7 +599,7 @@ def main():
             return
         elif cmd in ("ui", "tui"):
             from tui import main as tui_main
-            tui_main()
+            tui_main(remote=remote_on, remote_url=remote_url, remote_token=remote_token)
             return
         elif cmd == "live":
             cmd_live()
