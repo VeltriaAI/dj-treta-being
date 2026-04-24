@@ -152,8 +152,8 @@ def do_transition(to_deck: int, duration: int = 60, bpm_after: str = "keep", gli
     xf = 0.0 if to_deck == 1 else 1.0
     _mixxx_post("/api/crossfade", {"position": xf})
     _mixxx_post("/api/pause", {"deck": out_deck})
-    _mixxx_post("/api/volume", {"deck": out_deck, "volume": 1.0})
-    _mixxx_post("/api/volume", {"deck": to_deck, "volume": 1.0})
+    _mixxx_post("/api/volume", {"deck": out_deck, "level":1.0})
+    _mixxx_post("/api/volume", {"deck": to_deck, "level":1.0})
     for band in ["hi", "mid", "lo"]:
         _mixxx_post("/api/eq", {"deck": out_deck, band: 1.0})
         _mixxx_post("/api/eq", {"deck": to_deck, band: 1.0})
@@ -203,7 +203,7 @@ def do_bass_swap(to_deck: int, duration: int = 60, bpm_after: str = "keep", glid
     # Sync + play incoming with bass killed and volume at 0
     _mixxx_post("/api/sync", {"deck": to_deck})
     _mixxx_post("/api/eq", {"deck": to_deck, "lo": 0.0})
-    _mixxx_post("/api/volume", {"deck": to_deck, "volume": 0.0})
+    _mixxx_post("/api/volume", {"deck": to_deck, "level":0.0})
     _mixxx_post("/api/play", {"deck": to_deck})
 
     # Phase 1 (0-40%): Bring in incoming volume (bass still cut)
@@ -213,14 +213,14 @@ def do_bass_swap(to_deck: int, duration: int = 60, bpm_after: str = "keep", glid
         t = i / total
         if t <= 0.4:
             blend = t / 0.4
-            _mixxx_post("/api/volume", {"deck": to_deck, "volume": round(blend, 2)})
+            _mixxx_post("/api/volume", {"deck": to_deck, "level":round(blend, 2)})
         elif t <= 0.6:
             swap_t = (t - 0.4) / 0.2
             _mixxx_post("/api/eq", {"deck": out_deck, "lo": round(1.0 - swap_t, 2)})
             _mixxx_post("/api/eq", {"deck": to_deck, "lo": round(swap_t, 2)})
         else:
             fade = 1.0 - ((t - 0.6) / 0.4)
-            _mixxx_post("/api/volume", {"deck": out_deck, "volume": round(fade, 2)})
+            _mixxx_post("/api/volume", {"deck": out_deck, "level":round(fade, 2)})
         _time.sleep(1.0 / fps)
 
     # Cleanup -- smooth crossfader to final position, pause + reset
@@ -234,8 +234,8 @@ def do_bass_swap(to_deck: int, duration: int = 60, bpm_after: str = "keep", glid
         _time.sleep(0.1)
 
     _mixxx_post("/api/pause", {"deck": out_deck})
-    _mixxx_post("/api/volume", {"deck": out_deck, "volume": 1.0})
-    _mixxx_post("/api/volume", {"deck": to_deck, "volume": 1.0})
+    _mixxx_post("/api/volume", {"deck": out_deck, "level":1.0})
+    _mixxx_post("/api/volume", {"deck": to_deck, "level":1.0})
     for band in ["hi", "mid", "lo"]:
         _mixxx_post("/api/eq", {"deck": out_deck, band: 1.0})
         _mixxx_post("/api/eq", {"deck": to_deck, band: 1.0})
@@ -360,7 +360,7 @@ def do_echo_out(to_deck: int, duration: int = 30, bpm_after: str = "keep", glide
     _mixxx_post("/api/crossfade", {"position": 0.5})
 
     # Start incoming silently -- it will be revealed after outgoing fades
-    _mixxx_post("/api/volume", {"deck": to_deck, "volume": 0.0})
+    _mixxx_post("/api/volume", {"deck": to_deck, "level":0.0})
     _mixxx_post("/api/sync", {"deck": to_deck})
     _mixxx_post("/api/play", {"deck": to_deck})
 
@@ -374,7 +374,7 @@ def do_echo_out(to_deck: int, duration: int = 30, bpm_after: str = "keep", glide
         _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5 * (1 - t)})
 
         # Fade volume on outgoing
-        _mixxx_post("/api/volume", {"deck": out_deck, "volume": 1.0 - t})
+        _mixxx_post("/api/volume", {"deck": out_deck, "level":1.0 - t})
 
         _time.sleep(1 / fps)
 
@@ -382,7 +382,7 @@ def do_echo_out(to_deck: int, duration: int = 30, bpm_after: str = "keep", glide
     _mixxx_post("/api/pause", {"deck": out_deck})
     # Quick volume rise on incoming (0.5s clean drop-in)
     for s in range(5):
-        _mixxx_post("/api/volume", {"deck": to_deck, "volume": round((s + 1) / 5, 2)})
+        _mixxx_post("/api/volume", {"deck": to_deck, "level":round((s + 1) / 5, 2)})
         _time.sleep(0.1)
 
     # Glide crossfader to final position
@@ -392,7 +392,7 @@ def do_echo_out(to_deck: int, duration: int = 30, bpm_after: str = "keep", glide
         _mixxx_post("/api/crossfade", {"position": round(xf, 2)})
         _time.sleep(0.1)
 
-    _mixxx_post("/api/volume", {"deck": out_deck, "volume": 1.0})
+    _mixxx_post("/api/volume", {"deck": out_deck, "level":1.0})
     _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5})
     _apply_bpm_after(to_deck, bpm_after, glide_duration)
     _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})

@@ -325,7 +325,8 @@ def dj_set_volume(deck_num: int, value: float) -> Dict[str, Any]:
         v = max(0.0, min(1.0, float(value)))
     except Exception:
         return {"ok": False, "message": "value must be a number"}
-    return _mixxx_post("/api/volume", {"deck": deck_num, "volume": v})
+    # Mixxx /api/volume expects {"deck", "level"} — not "volume"
+    return _mixxx_post("/api/volume", {"deck": deck_num, "level": v})
 
 
 def dj_set_crossfader(value: float) -> Dict[str, Any]:
@@ -360,7 +361,9 @@ def dj_set_eq(deck_num: int, band: str, value: float) -> Dict[str, Any]:
         v = max(0.0, min(4.0, float(value)))
     except Exception:
         return {"ok": False, "message": "value must be a number"}
-    return _mixxx_post("/api/eq", {"deck": deck_num, "band": b, "value": v})
+    # Mixxx /api/eq uses the band name as the JSON key (hi/mid/lo), not a
+    # generic {"band": ..., "value": ...} pair. See apiserver.cpp /api/eq.
+    return _mixxx_post("/api/eq", {"deck": deck_num, b: v})
 
 
 def dj_set_filter(deck_num: int, value: float) -> Dict[str, Any]:

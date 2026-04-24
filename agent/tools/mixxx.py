@@ -94,7 +94,8 @@ def set_volume(deck: int, volume: float) -> dict:
         deck: The deck number, either 1 or 2.
         volume: Volume level from 0.0 (silent) to 1.0 (full).
     """
-    return _dj_post("/api/volume", {"deck": deck, "volume": volume})
+    # Mixxx /api/volume expects {"deck", "level"} — NOT "volume"
+    return _dj_post("/api/volume", {"deck": deck, "level": volume})
 
 
 def set_crossfader(position: float) -> dict:
@@ -113,10 +114,17 @@ def set_eq(deck: int, band: str, value: float) -> dict:
 
     Args:
         deck: The deck number, either 1 or 2.
-        band: EQ band name -- 'hi', 'mid', or 'lo'.
+        band: EQ band name -- 'hi', 'mid', or 'lo' (also accepts 'high'/'low').
         value: EQ value from 0.0 (cut) to 4.0 (boost), 1.0 is neutral.
     """
-    return _dj_post("/api/eq", {"deck": deck, "band": band, "value": value})
+    # Mixxx /api/eq expects the band NAME as the JSON key, not a generic
+    # {"band": "hi", "value": v} pair. See apiserver.cpp /api/eq.
+    b = (band or "").lower().strip()
+    if b == "high":
+        b = "hi"
+    elif b == "low":
+        b = "lo"
+    return _dj_post("/api/eq", {"deck": deck, b: value})
 
 
 def set_filter(deck: int, value: float) -> dict:
@@ -136,7 +144,10 @@ def set_sync(deck: int, enabled: bool) -> dict:
         deck: The deck number, either 1 or 2.
         enabled: True to enable sync, False to disable.
     """
-    return _dj_post("/api/sync", {"deck": deck, "enabled": enabled})
+    # Mixxx has two endpoints: /api/sync (always enables) and /api/sync_off
+    # (disables). The "enabled" field is ignored on /api/sync.
+    path = "/api/sync" if enabled else "/api/sync_off"
+    return _dj_post(path, {"deck": deck})
 
 
 def get_live_data() -> dict:

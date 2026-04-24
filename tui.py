@@ -1700,7 +1700,8 @@ class DJTretaApp(App):
                 self.log_widget.write("[red]  Usage: /volume <deck> <0.0-1.0>[/red]")
                 return
             self._dispatch_mixxx_async(
-                "/api/volume", {"deck": deck, "volume": vol},
+                # Mixxx /api/volume expects "level" not "volume"
+                "/api/volume", {"deck": deck, "level": vol},
                 f"Deck {deck} volume → {vol:.2f}",
             )
         elif cmd == "crossfade" and args:
@@ -1722,7 +1723,8 @@ class DJTretaApp(App):
                 self.log_widget.write("[red]  Usage: /eq <deck> <hi|mid|lo> <0.0-4.0>[/red]")
                 return
             self._dispatch_mixxx_async(
-                "/api/eq", {"deck": deck, "band": band, "value": val},
+                # Mixxx /api/eq uses band name as JSON key (hi/mid/lo)
+                "/api/eq", {"deck": deck, band: val},
                 f"Deck {deck} EQ {band} → {val:.2f}",
             )
         elif cmd == "filter" and len(args) >= 2:
