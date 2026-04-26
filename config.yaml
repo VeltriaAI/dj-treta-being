@@ -46,13 +46,13 @@ sets:
   local_recording: false  # server records via Icecast, no need for local
 
 relay:
-  enabled: true
+  enabled: true  # VM (production) pushes state to dj.treta.life relay-ws
   server_url: "wss://dj.treta.life/ws/relay"
   token: ""  # set in .env: DJTRETA_RELAY_TOKEN
   push_hz: 3
 
 broadcast:
-  auto_start: true
+  auto_start: false  # VM handles broadcast; Mac stays silent
 
 producer:
   enabled: false
