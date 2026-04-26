@@ -479,10 +479,31 @@ class HeartbeatMixin:
             )
             self.session.idle_needs_load = False
         elif idle_needs_load and not self._transition_pending:
-            # Only act if idle really is stale (not already freshly loaded).
-            idle_stale = (not idle_loaded) or idle_remaining < 60
+            # Idle counts as stale when:
+            #   - empty (no track loaded), OR
+            #   - the loaded track has < 60s remaining (won't survive
+            #     a transition window), OR
+            #   - the loaded track is the SAME file as the active deck.
+            #     This last case (BUG-A: same-track-on-both-decks) used to
+            #     escape the check: signal_set + idle_loaded + plenty of
+            #     time-left = treated as fine, so the executor never
+            #     swapped, and the next "transition" played the same track
+            #     to the user, looking stuck.
+            from .playback_applier import get_deck_paths
+            deck_paths = get_deck_paths(self.config.mixxx.url)
+            active_path = deck_paths.get(active_deck, "") or ""
+            idle_path = deck_paths.get(idle_deck, "") or ""
+            duplicate = bool(active_path) and active_path == idle_path
+
+            idle_stale = (not idle_loaded) or idle_remaining < 60 or duplicate
             if idle_stale:
                 try:
+                    if duplicate:
+                        log.info(
+                            f"[SIGNAL] idle_needs_load → idle deck {idle_deck} "
+                            f"holds the same track as active deck {active_deck}; "
+                            f"forcing reload"
+                        )
                     self._load_next_on_idle(status)
                     log.info("[SIGNAL] idle_needs_load → loaded rank-1 on idle deck")
                     self.session.idle_needs_load = False
