@@ -1,11 +1,418 @@
 {
-  "tests": {},
-  "summary": {
-    "total": 0,
-    "passed": 0,
-    "failed": 0,
-    "score": 0,
-    "categories": {}
+  "tests": {
+    "test_gs01_genre_switch_melodic_to_psytrance": {
+      "status": "fail",
+      "category": "GS"
+    },
+    "test_gs02_gradual_genre_shift": {
+      "status": "pass",
+      "category": "GS"
+    },
+    "test_gs03_planner_genre_switch_bpm": {
+      "status": "pass",
+      "category": "GS"
+    },
+    "test_ln01_full_hindi_conversation": {
+      "status": "pass",
+      "category": "LN"
+    },
+    "test_ln02_never_tu_tum": {
+      "status": "pass",
+      "category": "LN"
+    },
+    "test_ln03_hinglish_technical_action": {
+      "status": "pass",
+      "category": "LN"
+    },
+    "test_ro01_readonly_cannot_skip": {
+      "status": "pass",
+      "category": "RO"
+    },
+    "test_ro02_readonly_cannot_change_mood": {
+      "status": "pass",
+      "category": "RO"
+    },
+    "test_st01_seed_track_search": {
+      "status": "pass",
+      "category": "ST"
+    },
+    "test_st02_seed_track_directive_chain": {
+      "status": "pass",
+      "category": "ST"
+    },
+    "test_ts05_energy_jump_max_2": {
+      "status": "pass",
+      "category": "TS"
+    },
+    "test_ts07_artist_diversity": {
+      "status": "pass",
+      "category": "TS"
+    },
+    "test_ap02_bpm_jump_over_10": {
+      "status": "pass",
+      "category": "AP"
+    },
+    "test_ap03_peak_track_as_opener": {
+      "status": "pass",
+      "category": "AP"
+    },
+    "test_ap05_key_clash_on_long_blend": {
+      "status": "pass",
+      "category": "AP"
+    },
+    "test_ap06_track_repeat_detection": {
+      "status": "pass",
+      "category": "AP"
+    },
+    "test_ap07_ignore_crowd_three_signals": {
+      "status": "pass",
+      "category": "AP"
+    },
+    "test_ap08_unmixable_content": {
+      "status": "pass",
+      "category": "AP"
+    },
+    "test_be01_mood_change_request": {
+      "status": "pass",
+      "category": "BE"
+    },
+    "test_be02_seed_track_request": {
+      "status": "pass",
+      "category": "BE"
+    },
+    "test_be03_energy_request_hinglish": {
+      "status": "pass",
+      "category": "BE"
+    },
+    "test_be04_conversation_no_action": {
+      "status": "pass",
+      "category": "BE"
+    },
+    "test_be05_readonly_mode": {
+      "status": "pass",
+      "category": "BE"
+    },
+    "test_be06_hindi_response_with_action": {
+      "status": "pass",
+      "category": "BE"
+    },
+    "test_be07_positive_feedback_recognition": {
+      "status": "pass",
+      "category": "BE"
+    },
+    "test_be08_negative_feedback_suggest_change": {
+      "status": "pass",
+      "category": "BE"
+    },
+    "test_be09_dont_override_explicit_mood": {
+      "status": "pass",
+      "category": "BE"
+    },
+    "test_bm01_bpm_within_ideal_range": {
+      "status": "pass",
+      "category": "BM"
+    },
+    "test_bm02_bpm_hard_limit": {
+      "status": "pass",
+      "category": "BM"
+    },
+    "test_bm03_genre_specific_bpm_psytrance": {
+      "status": "pass",
+      "category": "BM"
+    },
+    "test_hm01_same_key_safe": {
+      "status": "pass",
+      "category": "HM"
+    },
+    "test_hm02_adjacent_camelot_key": {
+      "status": "pass",
+      "category": "HM"
+    },
+    "test_hm03_relative_major_minor": {
+      "status": "pass",
+      "category": "HM"
+    },
+    "test_hm04_far_key_ok_for_hard_cut": {
+      "status": "pass",
+      "category": "HM"
+    },
+    "test_co01_heartbeat_ok_when_calm": {
+      "status": "pass",
+      "category": "CO"
+    },
+    "test_co02_propose_change_on_issues": {
+      "status": "pass",
+      "category": "CO"
+    },
+    "test_co03_save_genuine_learning": {
+      "status": "pass",
+      "category": "CO"
+    },
+    "test_co04_stay_grounded_dj_related": {
+      "status": "pass",
+      "category": "CO"
+    },
+    "test_co05_dont_spam_after_recent_ok": {
+      "status": "pass",
+      "category": "CO"
+    },
+    "test_dj01_schedule_at_breakdown": {
+      "status": "pass",
+      "category": "DJ"
+    },
+    "test_dj02_wait_during_drop": {
+      "status": "pass",
+      "category": "DJ"
+    },
+    "test_dj03_wait_during_buildup": {
+      "status": "pass",
+      "category": "DJ"
+    },
+    "test_dj04_schedule_at_outro": {
+      "status": "pass",
+      "category": "DJ"
+    },
+    "test_dj05_no_double_schedule": {
+      "status": "pass",
+      "category": "DJ"
+    },
+    "test_dj06_respect_directive_bass_swap": {
+      "status": "pass",
+      "category": "DJ"
+    },
+    "test_dj07_no_idle_track": {
+      "status": "pass",
+      "category": "DJ"
+    },
+    "test_tt05_wait_if_too_early": {
+      "status": "pass",
+      "category": "TT"
+    },
+    "test_tc04_hard_cut_for_bpm_gap": {
+      "status": "pass",
+      "category": "TC"
+    },
+    "test_tc05_echo_out_for_tempo_change": {
+      "status": "pass",
+      "category": "TC"
+    },
+    "test_ea01_opening_track_calm": {
+      "status": "pass",
+      "category": "EA"
+    },
+    "test_ea02_no_peak_in_first_quarter": {
+      "status": "pass",
+      "category": "EA"
+    },
+    "test_ea03_max_consecutive_peaks_then_drop": {
+      "status": "pass",
+      "category": "EA"
+    },
+    "test_ea04_monotone_detection": {
+      "status": "pass",
+      "category": "EA"
+    },
+    "test_ea05_closing_track_resolution": {
+      "status": "pass",
+      "category": "EA"
+    },
+    "test_ea06_warmup_phase_pacing": {
+      "status": "pass",
+      "category": "EA"
+    },
+    "test_ea07_main_peak_timing": {
+      "status": "pass",
+      "category": "EA"
+    },
+    "test_mt01_blend_duration_30_60s": {
+      "status": "pass",
+      "category": "MT"
+    },
+    "test_mt02_harmonic_clash_rejected": {
+      "status": "pass",
+      "category": "MT"
+    },
+    "test_mt03_breakdown_not_drop": {
+      "status": "pass",
+      "category": "MT"
+    },
+    "test_dt01_shorter_transitions_15_30s": {
+      "status": "pass",
+      "category": "DT"
+    },
+    "test_dt02_bass_swap_at_high_energy": {
+      "status": "pass",
+      "category": "DT"
+    },
+    "test_dt03_hard_cut_at_drops": {
+      "status": "pass",
+      "category": "DT"
+    },
+    "test_ph01_extra_long_blends_45_120s": {
+      "status": "pass",
+      "category": "PH"
+    },
+    "test_ph02_filter_sweep_preferred": {
+      "status": "pass",
+      "category": "PH"
+    },
+    "test_psy01_quick_transitions_under_20s": {
+      "status": "pass",
+      "category": "PS"
+    },
+    "test_psy02_drop_based_mixing": {
+      "status": "pass",
+      "category": "PS"
+    },
+    "test_dh01_ultra_smooth_45_90s": {
+      "status": "pass",
+      "category": "DH"
+    },
+    "test_dh02_crossfade_only": {
+      "status": "pass",
+      "category": "DH"
+    },
+    "test_amb01_texture_blending_60_180s": {
+      "status": "pass",
+      "category": "AM"
+    },
+    "test_amb02_energy_mismatch_flagged": {
+      "status": "pass",
+      "category": "AM"
+    },
+    "test_pl01_mood_overrides_preferences": {
+      "status": "pass",
+      "category": "PL"
+    },
+    "test_pl02_follow_directive": {
+      "status": "pass",
+      "category": "PL"
+    },
+    "test_pl03_no_repeat_played_tracks": {
+      "status": "pass",
+      "category": "PL"
+    },
+    "test_pl04_library_first": {
+      "status": "pass",
+      "category": "PL"
+    },
+    "test_pl05_bpm_compatibility": {
+      "status": "pass",
+      "category": "PL"
+    }
   },
-  "timestamp": "2026-04-12T22:02:13.121883"
+  "summary": {
+    "total": 75,
+    "passed": 74,
+    "failed": 1,
+    "score": 98.7,
+    "categories": {
+      "GS": {
+        "passed": 2,
+        "total": 3,
+        "score": 66.7
+      },
+      "LN": {
+        "passed": 3,
+        "total": 3,
+        "score": 100.0
+      },
+      "RO": {
+        "passed": 2,
+        "total": 2,
+        "score": 100.0
+      },
+      "ST": {
+        "passed": 2,
+        "total": 2,
+        "score": 100.0
+      },
+      "TS": {
+        "passed": 2,
+        "total": 2,
+        "score": 100.0
+      },
+      "AP": {
+        "passed": 6,
+        "total": 6,
+        "score": 100.0
+      },
+      "BE": {
+        "passed": 9,
+        "total": 9,
+        "score": 100.0
+      },
+      "BM": {
+        "passed": 3,
+        "total": 3,
+        "score": 100.0
+      },
+      "HM": {
+        "passed": 4,
+        "total": 4,
+        "score": 100.0
+      },
+      "CO": {
+        "passed": 5,
+        "total": 5,
+        "score": 100.0
+      },
+      "DJ": {
+        "passed": 7,
+        "total": 7,
+        "score": 100.0
+      },
+      "TT": {
+        "passed": 1,
+        "total": 1,
+        "score": 100.0
+      },
+      "TC": {
+        "passed": 2,
+        "total": 2,
+        "score": 100.0
+      },
+      "EA": {
+        "passed": 7,
+        "total": 7,
+        "score": 100.0
+      },
+      "MT": {
+        "passed": 3,
+        "total": 3,
+        "score": 100.0
+      },
+      "DT": {
+        "passed": 3,
+        "total": 3,
+        "score": 100.0
+      },
+      "PH": {
+        "passed": 2,
+        "total": 2,
+        "score": 100.0
+      },
+      "PS": {
+        "passed": 2,
+        "total": 2,
+        "score": 100.0
+      },
+      "DH": {
+        "passed": 2,
+        "total": 2,
+        "score": 100.0
+      },
+      "AM": {
+        "passed": 2,
+        "total": 2,
+        "score": 100.0
+      },
+      "PL": {
+        "passed": 5,
+        "total": 5,
+        "score": 100.0
+      }
+    }
+  },
+  "timestamp": "2026-04-12T21:33:57.109766"
 }

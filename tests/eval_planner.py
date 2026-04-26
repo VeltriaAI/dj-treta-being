@@ -64,50 +64,22 @@ def test_pl01_mood_overrides_preferences():
     assert "anyma" not in text and "eternity" not in text, (
         "Should not recommend melodic-techno track when mood is psychill"
     )
-    # v8: planner no longer has search_music (moved to library peer in Phase 5).
-    # If the LLM hallucinates the call anyway, defend against missing 'query' arg.
+    # If it searches YouTube, query should be psychill-related, not melodic-techno
     if has_tool_call(result, "search_music"):
-        args = get_tool_args(result, "search_music") or {}
-        query = (args.get("query") or "").lower()
-        if query:
-            assert "psychill" in query or "ambient" in query or "downtempo" in query, (
-                f"search_music query should be psychill-related, got: {query}"
-            )
-            assert "melodic-techno" not in query, (
-                "search_music query should not contain learned preference 'melodic-techno'"
-            )
+        args = get_tool_args(result, "search_music")
+        query = args["query"].lower()
+        assert "psychill" in query or "ambient" in query or "downtempo" in query, (
+            f"search_music query should be psychill-related, got: {query}"
+        )
+        assert "melodic-techno" not in query, (
+            "search_music query should not contain learned preference 'melodic-techno'"
+        )
 
 
 @pytest.mark.eval
-@pytest.mark.xfail(
-    reason=(
-        "v8 planner has no download tools (Phase 5 moved search/download to "
-        "library peer). This directive ('Download 3 bhojpuri tracks') is now "
-        "routed to the library peer via session.library_need. The planner's "
-        "response to an un-fulfillable directive is often empty text from "
-        "Flash — it doesn't know what to do. Test should be rewritten to "
-        "target the library peer agent, or to assert planner emits "
-        "library_need signal. Tracked: v9 follow-up."
-    ),
-    strict=False,
-)
 def test_pl02_follow_directive():
-    """PL-02: Planner should follow a DIRECTIVE FROM TRETA above all else.
-
-    v8 architecture change (Phase 5): planner no longer has search_music
-    or download_track. Those live on the library peer thread. When a
-    directive asks for tracks that don't exist in library, planner's
-    correct behavior is to either:
-      (a) reflect the directive in its reasoning_summary and emit an
-          empty tracks list (the planner_loop bridge then sets
-          session.library_need which wakes the library peer), OR
-      (b) mention the directive's genre explicitly in the text so the
-          library peer / Being can route appropriately.
-
-    This test now asserts the directive's content ends up in the
-    planner's output SOMEWHERE (reasoning or text) — not that planner
-    itself calls search_music.
-    """
+    """PL-02: Planner should follow a DIRECTIVE FROM TRETA above all else —
+    in this case, searching for bhojpuri electronic fusion tracks."""
     result = eval_agent(
         system_prompt=EVAL_SYSTEM_PROMPT,
         user_message=(
@@ -121,19 +93,14 @@ def test_pl02_follow_directive():
         tools=PLANNER_TOOLS,
     )
 
-    # v8 accepts either path:
-    # - planner mentions the directive's content in its response text
-    # - OR planner calls search_music (with legacy schema/prompt hints)
-    text = (result.get("text") or "").lower()
-    directive_acknowledged = "bhojpuri" in text
-    if has_tool_call(result, "search_music"):
-        args = get_tool_args(result, "search_music") or {}
-        query = (args.get("query") or "").lower()
-        directive_acknowledged = directive_acknowledged or "bhojpuri" in query
-
-    assert directive_acknowledged, (
-        f"Directive 'bhojpuri' should appear in planner output (text or "
-        f"search query). Got text: {text[:200]}"
+    # Must call search_music with bhojpuri-related query
+    assert has_tool_call(result, "search_music"), (
+        "Expected search_music call to find bhojpuri tracks"
+    )
+    args = get_tool_args(result, "search_music")
+    query = args["query"].lower()
+    assert "bhojpuri" in query, (
+        f"search_music query should contain 'bhojpuri' per directive, got: {query}"
     )
 
 

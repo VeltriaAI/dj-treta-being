@@ -338,6 +338,7 @@ class HeartbeatMixin:
                         log.info(f"DJ decision: {result[:500]}")
                         if hasattr(self, '_ws_broadcast'):
                             self._ws_broadcast("log", {"text": f"DJ decision: {result[:200]}"})
+                    # Clear directive after DJ has read it
                     if self.dj_directive:
                         log.info(f"DJ directive consumed: {self.dj_directive[:80]}")
                         self.dj_directive = ""

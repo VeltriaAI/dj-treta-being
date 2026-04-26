@@ -23,11 +23,7 @@ from agent.prompts import (
 class TestBuildDjUserMessage:
 
     def test_basic_format(self):
-        """DJ message has ACTIVE / NEXT / decision options with the
-        schedule_transition and load_track tool names. The earlier template
-        used an ACTION REQUIRED: header; the prose was rewritten to stop
-        Flash echoing `CALL schedule_transition(...)` as literal text,
-        see commit 3fecb11."""
+        """DJ message should contain ACTIVE, NEXT, and ACTION REQUIRED."""
         msg = build_dj_user_message(
             active_track="Test Track", position=100, duration=300, remaining=200,
             active_bpm=125, active_file_bpm=125, active_key="Am",
@@ -41,10 +37,9 @@ class TestBuildDjUserMessage:
         assert "Test Track" in msg
         assert "NEXT:" in msg
         assert "Next Track" in msg
+        assert "ACTION REQUIRED:" in msg
         assert "schedule_transition" in msg
-        assert "load_track" in msg
-        # idle deck appears in the decision-options block
-        assert "deck 2" in msg
+        assert "to_deck=2" in msg
 
     def test_directive_included(self):
         """DJ directive should appear at top of message."""
@@ -126,88 +121,6 @@ class TestBuildDjUserMessage:
         )
         assert "123s/457s" in msg
         assert "333s left" in msg
-
-
-class TestBuildDjUserMessageNoSignals:
-    """Signals were removed from the DJ prompt (2026-04-20 revert).
-    Phase A2 had added idle_needs_load / user_skip / set_ending kwargs
-    that rendered a 'Signals:' block with conditional branches + path
-    validation prose. Flash started dropping ~46% of those invocations.
-    Signals are now executed directly in Python (heartbeat._execute_signals)
-    — the DJ prompt stays lean and only handles creative transition
-    decisions.
-    """
-
-    def _base_kwargs(self):
-        return dict(
-            active_track="Active",
-            position=100, duration=300, remaining=200,
-            active_bpm=125, active_file_bpm=125, active_key="Am",
-            active_section="groove", active_timeline="...",
-            idle_track="Idle", idle_deck=2,
-            idle_bpm=125, idle_file_bpm=125, idle_key="Am",
-            idle_timeline="...",
-        )
-
-    def test_signals_block_never_rendered(self):
-        """The DJ prompt must not include a Signals: block — signals are
-        a Python routing concern, not a prompt concern."""
-        msg = build_dj_user_message(**self._base_kwargs())
-        assert "Signals:" not in msg
-        assert "idle_needs_load" not in msg
-        assert "user_skip" not in msg
-        assert "set_ending" not in msg
-
-    def test_signal_kwargs_rejected(self):
-        """The signal kwargs were removed from the signature — passing
-        them must error, not silently get ignored."""
-        with pytest.raises(TypeError):
-            build_dj_user_message(
-                **self._base_kwargs(), idle_needs_load=True,
-            )
-
-
-class TestBuildDjUserMessagePlaylist:
-    """Phase A2 — playlist block renders each candidate's path so DJ
-    can load_track with the exact path verbatim (without this, Flash
-    copied the rendered title string into track_path)."""
-
-    def test_path_rendered_when_playlist_given(self):
-        playlist = {
-            "planned_at": 0.0,
-            "mood_snapshot": "melodic-techno",
-            "reasoning_summary": "test",
-            "tracks": [
-                {"rank": 1, "path": "/music/a.mp3", "title": "Track A",
-                 "bpm": 123, "key_camelot": "9A", "energy": 7, "reason": "tight"},
-                {"rank": 2, "path": "/music/b.mp3", "title": "Track B",
-                 "bpm": 124, "key_camelot": "9A", "energy": 6, "reason": "mid"},
-            ],
-        }
-        msg = build_dj_user_message(
-            active_track="A", position=100, duration=300, remaining=200,
-            active_bpm=125, active_file_bpm=125, active_key="Am",
-            active_section="groove", active_timeline="...",
-            idle_track="B", idle_deck=2,
-            idle_bpm=125, idle_file_bpm=125, idle_key="Am",
-            idle_timeline="...",
-            playlist=playlist,
-        )
-        assert "#1: Track A" in msg
-        assert "path: /music/a.mp3" in msg
-        assert "path: /music/b.mp3" in msg
-
-    def test_no_playlist_block_when_empty(self):
-        msg = build_dj_user_message(
-            active_track="A", position=100, duration=300, remaining=200,
-            active_bpm=125, active_file_bpm=125, active_key="Am",
-            active_section="groove", active_timeline="...",
-            idle_track="B", idle_deck=2,
-            idle_bpm=125, idle_file_bpm=125, idle_key="Am",
-            idle_timeline="...",
-            playlist=None,
-        )
-        assert "Planner's ranked suggestions" not in msg
 
 
 class TestBuildPlannerUserMessage:

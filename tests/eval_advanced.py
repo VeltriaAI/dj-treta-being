@@ -13,7 +13,7 @@ Cost: ~$0.012 (12 calls at ~$0.001 each)
 
 import pytest
 
-from tests.eval_helpers import eval_agent, eval_agent_nonempty, has_tool_call, get_tool_args, has_no_tool_calls, text_contains
+from tests.eval_helpers import eval_agent, has_tool_call, get_tool_args, has_no_tool_calls, text_contains
 from tests.eval_conftest import (
     being_system_prompt, BEING_TOOLS,
     planner_system_prompt, PLANNER_TOOLS,
@@ -26,28 +26,20 @@ from tests.eval_conftest import (
 
 @pytest.mark.eval
 def test_gs01_genre_switch_melodic_to_psytrance():
-    """GS-01: Being should handle dramatic genre switch request.
-
-    Flakiness-hardened — Flash drops responses on dramatic genre-switch
-    prompts sometimes.
-    """
+    """GS-01: Being should handle dramatic genre switch request."""
     msg = build_being_user_message(
         context="Current mood: melodic-techno | 125 BPM | Set running 30 min",
         history="",
         message="switch to psytrance, I want something intense!",
     )
-    result = eval_agent_nonempty(being_system_prompt(), msg, BEING_TOOLS)
+    result = eval_agent(being_system_prompt(), msg, BEING_TOOLS)
 
     assert has_tool_call(result, "set_mood"), "Must call set_mood for genre switch"
     mood_args = get_tool_args(result, "set_mood")
     assert "psytrance" in mood_args["mood"].lower() or "psy" in mood_args["mood"].lower()
-    # v8 Phase 1: set_mood auto-triggers planner replan via Session callback
-    # (agent/main.py registers _on_mood_change). Being no longer needs to
-    # also call set_planner_directive — set_mood alone is sufficient.
-    # Accept either: just set_mood (v8 clean path), OR additionally directing
-    # agents (still OK, extra clarity doesn't hurt).
-    # The original assertion "Should also direct agents" is removed — it was
-    # a v7 requirement that v8's Session-callback architecture obsoletes.
+    # Should also direct planner
+    assert has_tool_call(result, "set_planner_directive") or has_tool_call(result, "set_dj_directive"), \
+        "Should direct agents for dramatic genre change"
 
 
 @pytest.mark.eval
@@ -82,19 +74,9 @@ def test_gs03_planner_genre_switch_bpm():
     result = eval_agent(planner_system_prompt(), msg, PLANNER_TOOLS)
 
     text = result["text"].lower()
-    # v8 Phase 3/5: planner picks from library OR emits library_need signal.
-    # search_music is no longer planner's tool (moved to library peer).
-    # Valid outcomes: picks Astrix (only psytrance match in candidates),
-    # OR flags the need for more psytrance content in reasoning.
-    picked_astrix = "astrix" in text
-    flagged_need = any(w in text for w in ("library thin", "need more", "download", "expand", "limited"))
-    # Also still accept search_music if the LLM hallucinates it (schema drift
-    # from the stale EVAL_SYSTEM_PROMPT); this is a legacy escape hatch.
-    called_search = has_tool_call(result, "search_music")
-    assert picked_astrix or flagged_need or called_search, (
-        f"Should pick psytrance track (Astrix), flag library need, or search. "
-        f"Got text: {text[:200]}"
-    )
+    # Should pick Astrix (psytrance, 145 BPM) — not deep house tracks
+    assert "astrix" in text or has_tool_call(result, "search_music"), \
+        "Should pick psytrance track or search for more"
 
 
 # ── Language Tests (LN) ────────────────────────────────────────────────
@@ -110,26 +92,19 @@ def test_ln01_full_hindi_conversation():
     )
     result = eval_agent(being_system_prompt(), msg, BEING_TOOLS)
 
-    # "kuch alag bajao" is genuinely ambiguous — user didn't say WHAT to
-    # switch to. Being has two valid responses:
-    #   (a) take action with a reasonable guess (set_mood to a contrasting genre)
-    #   (b) ask a clarifying question ("kya try karein? downtempo, organic...?")
-    # Option (b) is arguably better DJ UX — pushing a random switch on a
-    # vague request is worse than clarifying. Accept both.
+    # Should take action (change mood, directive, or at minimum search for something new)
+    # Note: Gemini Flash sometimes writes tool calls as text instead of calling them
     took_action = (
         has_tool_call(result, "set_mood")
         or has_tool_call(result, "set_planner_directive")
         or has_tool_call(result, "set_dj_directive")
         or has_tool_call(result, "search_music")
     )
+    # Also accept if model wrote set_mood() in text (Gemini Flash behavior)
     text = result["text"].lower()
-    # Clarifying question markers — Hindi/Hinglish vocabulary
-    asked_clarification = any(
-        w in text for w in ("kya", "konsa", "which", "?", "downtempo", "house", "trance", "suggest")
-    )
     text_mentions_action = "set_mood" in text or "set_planner" in text or "change" in text
-    assert took_action or asked_clarification or text_mentions_action, (
-        f"Should take action OR ask clarifying question on 'kuch alag bajao'. "
+    assert took_action or text_mentions_action, (
+        f"Should take action on 'kuch alag bajao' (play something different). "
         f"Got tools: {[tc['name'] for tc in result['tool_calls']]}, text: {result['text'][:200]}"
     )
     # Response should be in Hindi/Hinglish
@@ -165,10 +140,7 @@ def test_ln03_hinglish_technical_action():
 
     assert has_tool_call(result, "set_dj_directive"), "Should set DJ directive for bass swap request"
     args = get_tool_args(result, "set_dj_directive")
-    # v8: actual production arg name is `instruction` (matches the function
-    # signature in agent/tools/directives.py). Hardcoded eval schema used
-    # `directive` which never matched reality. Live schema introspection fixed.
-    directive = (args.get("instruction") or args.get("directive") or "").lower()
+    directive = args["directive"].lower()
     assert "bass" in directive or "swap" in directive or "energy" in directive, \
         f"Directive should mention bass swap or energy, got: {directive}"
 

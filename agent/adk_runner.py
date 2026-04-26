@@ -35,6 +35,28 @@ _corruption_detector = _CorruptionDetector()
 logging.getLogger().addHandler(_corruption_detector)
 
 
+class _CorruptionDetector(logging.Handler):
+    """Detects 'Missing tool results' warnings from ADK/LiteLLM.
+    Sets a flag so the caller can rotate the corrupted session."""
+
+    def __init__(self):
+        super().__init__(level=logging.WARNING)
+        self.corrupted = False
+
+    def reset(self):
+        self.corrupted = False
+
+    def emit(self, record):
+        msg = record.getMessage().lower()
+        if "missing tool results" in msg or "tool_call_id" in msg:
+            self.corrupted = True
+
+
+# Attach to root logger (LiteLLM logs at root level)
+_corruption_detector = _CorruptionDetector()
+logging.getLogger().addHandler(_corruption_detector)
+
+
 class ADKRunnerMixin:
 
     def _run_async(self, coro, timeout=120):

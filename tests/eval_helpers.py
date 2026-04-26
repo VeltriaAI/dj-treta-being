@@ -19,10 +19,7 @@ from litellm import completion
 
 MODELS = {
     "flash": "openai/gemini-3-flash",
-    "flash3": "openai/gemini-3-flash-preview",
     "pro": "openai/gemini-3.1-pro",
-    "flash25": "openai/gemini-3-flash-25",
-    "gemma4": "openai/gemma-4",
 }
 
 DEFAULT_MODEL = MODELS.get(
@@ -73,36 +70,6 @@ def eval_agent(
         "elapsed_s": round(elapsed, 2),
         "model": model,
     }
-
-
-def eval_agent_nonempty(
-    system_prompt: str,
-    user_message: str,
-    tools: list,
-    trials: int = 5,
-    model: str = DEFAULT_MODEL,
-) -> dict:
-    """Wrapper around eval_agent that retries when Gemini Flash returns an
-    empty response (silent drop).
-
-    Flash has a measurable ~60% empty-response rate on certain niche
-    prompts (6-step Camelot clash, atmospheric progressive house, dramatic
-    genre switch). When it does respond, the answer is usually correct.
-    This wrapper returns the first non-empty result within `trials`
-    attempts. If all trials drop, returns the last result so the test's
-    downstream asserts can produce an informative failure.
-
-    Prob of green with 5 trials + 60% empty rate: 1 - 0.6^5 = 92.2%.
-    """
-    last = None
-    for _ in range(max(1, trials)):
-        result = eval_agent(system_prompt, user_message, tools, model)
-        last = result
-        has_text = bool((result.get("text") or "").strip())
-        has_calls = bool(result.get("tool_calls"))
-        if has_text or has_calls:
-            return result
-    return last
 
 
 def eval_agent_retry(
@@ -162,47 +129,6 @@ def get_tool_args(result: dict, name: str) -> Optional[dict]:
 def has_no_tool_calls(result: dict) -> bool:
     """Check that the result has zero tool calls."""
     return len(result["tool_calls"]) == 0
-
-
-# ── Scenario-driven helpers (transition eval framework) ────────────────
-
-
-def assert_technique_acceptable(
-    picked: str,
-    expected: str | None,
-    alternatives: list[str],
-    rejected: list[str],
-) -> None:
-    """Pass if `picked` matches expected or an allowed alternative; fail
-    if it's in the rejected set. Unknown techniques fail silently as a
-    soft warning (catch bad output schemas)."""
-    assert picked not in (rejected or []), (
-        f"DJ picked rejected technique {picked!r}; "
-        f"expected {expected!r} or alternatives {alternatives!r}"
-    )
-    valid = {expected, *(alternatives or [])} - {None}
-    if valid:
-        assert picked in valid, (
-            f"DJ picked {picked!r}, not in accepted set "
-            f"{sorted(v for v in valid if v)}"
-        )
-
-
-# NOTE: phrase-alignment assertion was removed 2026-04-18 as dead code.
-# librosa's section boundaries in tests/fixtures/tracks.yaml are not
-# beat-locked (typical variance of 2-6 beats from a real phrase boundary),
-# so a phrase-aligned check against section_start catches librosa
-# imprecision, not DJ precision. If we later ship per-track beat grids,
-# this belongs in a separate ground-truth source (not the section
-# timeline) and should gate ONLY scenarios where the DJ is given those
-# beats.
-
-
-def assert_in_range(value: float, lo: float, hi: float, label: str) -> None:
-    """Inclusive range check with a readable assertion message."""
-    assert lo <= value <= hi, (
-        f"{label} {value} outside expected range [{lo}, {hi}]"
-    )
 
 
 def text_contains(result: dict, *keywords: str) -> bool:

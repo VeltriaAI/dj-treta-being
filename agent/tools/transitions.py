@@ -9,6 +9,7 @@ from ..runtime_paths import runtime_path
 
 log = logging.getLogger("dj-treta")
 
+log = logging.getLogger("dj-treta")
 
 def _tempo_ride(deck: int, target_bpm: float = None, duration_s: float = 60.0):
     """Tempo ride — gradually adjust BPM like a real DJ.
@@ -394,7 +395,7 @@ def do_echo_out(to_deck: int, duration: int = 30, bpm_after: str = "keep", glide
         _mixxx_post("/api/crossfade", {"position": round(xf, 2)})
         _time.sleep(0.1)
 
-    _mixxx_post("/api/volume", {"deck": out_deck, "level":1.0})
+    _mixxx_post("/api/volume", {"deck": out_deck, "level": 1.0})
     _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5})
     _apply_bpm_after(to_deck, bpm_after, glide_duration)
     _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})

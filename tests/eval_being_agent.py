@@ -42,9 +42,7 @@ def test_be03_energy_request_hinglish():
 
     assert has_tool_call(result, "set_dj_directive"), "Should call set_dj_directive for energy request"
     directive_args = get_tool_args(result, "set_dj_directive")
-    # v8: production arg is `instruction` (matches function signature).
-    directive_text = directive_args.get("instruction") or directive_args.get("directive") or ""
-    assert directive_text, "Directive should not be empty"
+    assert directive_args["directive"], "Directive should not be empty"
 
 
 @pytest.mark.eval
