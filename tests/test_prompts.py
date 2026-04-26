@@ -23,7 +23,7 @@ from agent.prompts import (
 class TestBuildDjUserMessage:
 
     def test_basic_format(self):
-        """DJ message should contain ACTIVE, NEXT, and ACTION REQUIRED."""
+        """DJ message should contain ACTIVE, NEXT, and the decision-prompt section."""
         msg = build_dj_user_message(
             active_track="Test Track", position=100, duration=300, remaining=200,
             active_bpm=125, active_file_bpm=125, active_key="Am",
@@ -37,9 +37,10 @@ class TestBuildDjUserMessage:
         assert "Test Track" in msg
         assert "NEXT:" in msg
         assert "Next Track" in msg
-        assert "ACTION REQUIRED:" in msg
+        # New v8/v9 prompt drops the literal "ACTION REQUIRED:" header in
+        # favour of a "Decide now. Your options:" decision block.
+        assert "Decide now" in msg
         assert "schedule_transition" in msg
-        assert "to_deck=2" in msg
 
     def test_directive_included(self):
         """DJ directive should appear at top of message."""

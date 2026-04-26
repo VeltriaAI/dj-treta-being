@@ -135,3 +135,30 @@ def text_contains(result: dict, *keywords: str) -> bool:
     """Check that the text response contains all given keywords (case-insensitive)."""
     text = result["text"].lower()
     return all(k.lower() in text for k in keywords)
+
+
+# Aliases / convenience wrappers expected by tests/eval_transition_scenarios.py.
+# Originally lived in main but didn't make it through the v9 merge cleanly —
+# adding here so the eval suite collects.
+
+def eval_agent_nonempty(*args, **kwargs):
+    """Run eval_agent and assert the result has either a tool call or non-empty text."""
+    result = eval_agent(*args, **kwargs)
+    assert (result.get("tool_calls") or (result.get("text") or "").strip()), (
+        f"Agent returned empty response: {result!r}"
+    )
+    return result
+
+
+def assert_technique_acceptable(args: dict, *acceptable: str) -> None:
+    """Assert the schedule_transition `technique` arg is one of the acceptable values."""
+    technique = (args or {}).get("technique", "").lower()
+    acceptable_lower = {t.lower() for t in acceptable}
+    assert technique in acceptable_lower, (
+        f"Technique {technique!r} not in acceptable set {sorted(acceptable_lower)}"
+    )
+
+
+def assert_in_range(value, low, high, label: str = "value") -> None:
+    """Assert ``low <= value <= high`` with a clear failure message."""
+    assert low <= value <= high, f"{label}={value} outside range [{low}, {high}]"

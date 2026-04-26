@@ -9,7 +9,6 @@ from ..runtime_paths import runtime_path
 
 log = logging.getLogger("dj-treta")
 
-log = logging.getLogger("dj-treta")
 
 def _tempo_ride(deck: int, target_bpm: float = None, duration_s: float = 60.0):
     """Tempo ride — gradually adjust BPM like a real DJ.
