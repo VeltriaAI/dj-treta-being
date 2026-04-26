@@ -39,33 +39,20 @@ def load_track(deck: int, track_path: str) -> str:
         deck: The deck number to load onto, either 1 or 2.
         track_path: Full file path OR partial track name to search for.
     """
-    path = Path(track_path)
+    from ..playback_applier import resolve_track_path
 
-    # If not a valid absolute path, search the library
-    if not path.is_absolute() or not path.exists():
-        query = _normalize_for_search(track_path)
-        found = None
-        for genre_dir in sorted(_music_dir().iterdir()):
-            if not genre_dir.is_dir() or genre_dir.name.startswith('.'):
-                continue
-            for f in sorted(genre_dir.iterdir()):
-                if f.suffix.lower() in ('.mp3', '.wav', '.flac', '.ogg', '.m4a'):
-                    if query in _normalize_for_search(f.stem) or query in _normalize_for_search(f.name):
-                        found = str(f)
-                        break
-            if found:
-                break
+    resolved = resolve_track_path(track_path)
+    if not resolved:
+        return (
+            f"ERROR: Track not found in library: '{track_path}'. "
+            f"Use list_library_tracks to see available tracks."
+        )
 
-        if not found:
-            return f"ERROR: Track not found in library: '{track_path}'. Use list_library_tracks to see available tracks."
-
-        track_path = found
-
-    result = _mixxx_post("/api/load", {"deck": deck, "track": track_path})
+    result = _mixxx_post("/api/load", {"deck": deck, "track": resolved})
     if err := _mixxx_failed(result):
         return f"ERROR: Mixxx load failed: {err}"
     if result and result.get("ok"):
-        return f"Loaded on Deck {deck}: {Path(track_path).stem}"
+        return f"Loaded on Deck {deck}: {Path(resolved).stem}"
     return f"ERROR: Mixxx rejected load: {result}"
 
 
