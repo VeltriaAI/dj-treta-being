@@ -25,6 +25,8 @@ rsync -avP --delete $DRY \
   --exclude '__pycache__/' \
   --exclude '*.pyc' \
   --exclude '.venv/' \
+  --exclude '.env' \
+  --exclude '.env.local' \
   --exclude '.beings/session.json' \
   --exclude '.beings/session-PRE-RESET.json' \
   --exclude 'djtreta.db' \
