@@ -1,0 +1,16 @@
+[Unit]
+Description=DJ Treta audio capture and Icecast push (MP3 320kbps)
+After=pulseaudio.service
+Requires=pulseaudio.service
+
+[Service]
+Type=simple
+User=__SVC_USER__
+Group=pulse-access
+Environment=PULSE_SERVER=unix:/var/run/pulse/native
+ExecStart=/bin/bash -c 'parec --server=/var/run/pulse/native --device=djtreta_out.monitor --format=s16le --rate=48000 --channels=2 | lame -r -s 48 --bitwidth 16 -b 320 -q 0 --silent - - | ezstream -c __EZSTREAM_CONFIG__'
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

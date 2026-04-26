@@ -11,4 +11,7 @@ djtreta.db-wal
 djclaw.egg-info/
 scripts/knowledge/.job_id
 scripts/knowledge/.job_ids
+scripts/knowledge/.job_id_v2
 scripts/knowledge/__pycache__/
+scripts/knowledge/logs/
+.env.deploy

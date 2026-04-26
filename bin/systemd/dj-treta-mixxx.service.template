@@ -1,0 +1,17 @@
+[Unit]
+Description=DJ Treta — Mixxx audio engine (persistent; do NOT restart frequently)
+After=pulseaudio.service dj-treta-xvfb.service network-online.target
+Requires=pulseaudio.service dj-treta-xvfb.service
+
+[Service]
+Type=simple
+User=__SVC_USER__
+Group=pulse-access
+Environment=DISPLAY=:__DISPLAY_NUM__
+Environment=PULSE_SERVER=unix:/var/run/pulse/native
+ExecStart=__MIXXX_BIN__ --resourcePath __MIXXX_RESOURCE__ --settingsPath __MIXXX_SETTINGS__
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
