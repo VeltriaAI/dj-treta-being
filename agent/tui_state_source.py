@@ -484,6 +484,10 @@ class WebSocketRemoteStateSource(StateSource):
                 self._last_mixxx_live = data if isinstance(data, dict) else None
             elif evt == "thinking":
                 if isinstance(data, dict):
+                    # Carry the replay flag through so the TUI can render
+                    # history entries differently from live events.
+                    if frame.get("replay"):
+                        data = {**data, "_replay": True}
                     with self._pending_lock:
                         self._pending_thinking.append(data)
             elif evt == "log":
@@ -493,6 +497,8 @@ class WebSocketRemoteStateSource(StateSource):
                 elif isinstance(data, str):
                     text = data
                 if text:
+                    if frame.get("replay"):
+                        text = f"[history] {text}"
                     with self._pending_lock:
                         self._pending_logs.append(text)
             elif evt == "talk_response":

@@ -1185,6 +1185,11 @@ class DJTretaApp(App):
         text = data.get("text", "")
         tool = data.get("tool", "")
         args = data.get("args", "")
+        # Replayed-on-connect history entries get a [hist] tag so the user
+        # can tell live activity apart from what was buffered before they
+        # opened the TUI.
+        is_replay = bool(data.get("_replay"))
+        prefix = "[dim][hist][/dim] " if is_replay else ""
 
         # Update agent activity panel
         try:
@@ -1211,8 +1216,9 @@ class DJTretaApp(App):
             color = "dim"
 
         if think_type == "think":
-            if "dj_treta" in agent:
+            if "dj_treta" in agent and not is_replay:
                 # Ring buffer entries kept short to keep /brain output scannable.
+                # Don't pollute /brain with replayed history.
                 self._last_dj_decision = text[:300]
                 self._last_dj_decision_time = time.time()
                 buf = getattr(self, "_recent_dj_thoughts", None)
@@ -1224,7 +1230,7 @@ class DJTretaApp(App):
                     del buf[:-30]
             if text and len(text.strip()) > 5:
                 # Full text — RichLog has wrap=True so it word-wraps naturally.
-                line = f"[{color}]  {agent}:[/{color}] [italic]{text}[/italic]"
+                line = f"{prefix}[{color}]  {agent}:[/{color}] [italic]{text}[/italic]"
                 tab.write(line)
                 # Mirror to All tab so the user has a single chronological feed.
                 self.log_widget.write(line)
@@ -1233,7 +1239,7 @@ class DJTretaApp(App):
             tool_name = tool or text or "?"
             # Full args — RichLog wraps. Truncating cut off important JSON
             # context (planner reasoning summaries, schedule_transition params).
-            line = f"[bold {color}]  {agent}:[/bold {color}] [cyan]{tool_name}({args})[/cyan]"
+            line = f"{prefix}[bold {color}]  {agent}:[/bold {color}] [cyan]{tool_name}({args})[/cyan]"
             tab.write(line)
             # Mirror to All tab so the user has a single chronological feed.
             self.log_widget.write(line)
@@ -1652,6 +1658,24 @@ class DJTretaApp(App):
             self.start_brain()
         elif cmd == "kill":
             self.stop_brain()
+        elif cmd == "clear":
+            # Wipe local log widgets AND ask the daemon to flush its
+            # thinking/log replay buffers so nothing comes back on next
+            # restart. Decks/state stay untouched (they're live).
+            for w in (self.log_widget, self._log_dj, self._log_planner, self._log_treta):
+                try:
+                    w.clear()
+                except Exception:
+                    pass
+            try:
+                resp = self.state_source.send_command("clear_history", {}, timeout=5)
+                if isinstance(resp, dict):
+                    cleared = resp.get("cleared", 0)
+                    self.log_widget.write(f"[dim]  Cleared {cleared} buffered events on daemon[/dim]")
+                else:
+                    self.log_widget.write(f"[dim]  Cleared local; daemon: {resp}[/dim]")
+            except Exception as e:
+                self.log_widget.write(f"[yellow]  Cleared local; daemon clear failed: {e}[/yellow]")
         elif cmd == "cost":
             self.show_cost()
         elif cmd == "debug":

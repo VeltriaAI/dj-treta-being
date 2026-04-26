@@ -47,6 +47,16 @@ class WSServerMixin:
         #                           /ws/command socket can both write commands
         #                           and observe immediate state echoes.
         self._ws_clients: set = set()
+        # Ring buffers for replay-on-connect. A fresh TUI subscriber gets
+        # the last N thinking/log events so the user sees recent context
+        # instead of an empty pane after restart. Cleared by a fresh
+        # daemon launch (deque starts empty) or by the `clear_history`
+        # WS command. State/billing/scheduled-transition/mixxx don't need
+        # rings — those are last-value snapshots and we already replay the
+        # latest snapshot on connect.
+        from collections import deque as _deque
+        self._thinking_history: _deque = _deque(maxlen=100)
+        self._log_history: _deque = _deque(maxlen=100)
         self._ws_thread = threading.Thread(target=self._ws_run_thread, daemon=True)
         self._ws_thread.start()
         log.info(f"WebSocket server starting on ws://localhost:{WS_PORT}")
@@ -100,6 +110,9 @@ class WSServerMixin:
 
         # On connect, push the latest state snapshot so a fresh subscriber
         # doesn't have to wait up-to-2s for the next periodic _write_state.
+        # Also replay the thinking + log ring buffers so a TUI restart
+        # doesn't lose recent context (cleared on `clear_history` command
+        # or when the daemon itself restarts).
         try:
             from .runtime_paths import runtime_path
             sf = runtime_path("state.json")
@@ -120,6 +133,17 @@ class WSServerMixin:
                         "type": "event", "event": "transition_scheduled",
                         "data": json.loads(stf.read_text()),
                     }))
+            # Replay thinking + log history as ordered events with replay=True.
+            for entry in list(getattr(self, "_thinking_history", []) or []):
+                await websocket.send(json.dumps({
+                    "type": "event", "event": "thinking",
+                    "data": entry, "replay": True,
+                }))
+            for entry in list(getattr(self, "_log_history", []) or []):
+                await websocket.send(json.dumps({
+                    "type": "event", "event": "log",
+                    "data": entry, "replay": True,
+                }))
         except Exception:
             pass
 
@@ -160,6 +184,21 @@ class WSServerMixin:
                                 await websocket.send(json.dumps({
                                     "type": "error", "id": msg_id, "error": str(e)
                                 }))
+                        elif cmd == "clear_history":
+                            # User-driven flush of the thinking/log replay
+                            # buffers. Doesn't affect connected TUIs' on-
+                            # screen content; that's a client-side concern.
+                            cleared = 0
+                            if hasattr(self, "_thinking_history"):
+                                cleared += len(self._thinking_history)
+                                self._thinking_history.clear()
+                            if hasattr(self, "_log_history"):
+                                cleared += len(self._log_history)
+                                self._log_history.clear()
+                            await websocket.send(json.dumps({
+                                "type": "response", "id": msg_id,
+                                "result": {"ok": True, "cleared": cleared},
+                            }))
                         else:
                             # Sync commands — run directly
                             try:
@@ -252,7 +291,20 @@ class WSServerMixin:
         return "Timeout waiting for response"
 
     def _ws_broadcast(self, event: str, data: dict):
-        """Broadcast an event to all connected WebSocket clients."""
+        """Broadcast an event to all connected WebSocket clients.
+
+        Side effect: thinking + log events are also appended to ring buffers
+        so a fresh TUI subscriber gets recent history on connect (replayed
+        with ``replay: True`` so the client can flag them visually).
+        """
+        # Capture history BEFORE the early-return for the no-clients case —
+        # otherwise a daemon running with no live TUI for a while accumulates
+        # nothing, and the next client to attach gets a blank pane.
+        if event == "thinking" and hasattr(self, "_thinking_history"):
+            self._thinking_history.append(data)
+        elif event == "log" and hasattr(self, "_log_history"):
+            self._log_history.append(data)
+
         if not hasattr(self, '_ws_clients') or not self._ws_clients:
             return
         msg = json.dumps({"type": "event", "event": event, "data": data})
