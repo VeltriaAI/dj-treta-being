@@ -129,13 +129,23 @@ def load_on_deck(mixxx_url: str, deck: int, track_path: str, timeout: float = 5.
 
 
 def get_deck_paths(mixxx_url: str) -> dict:
-    """Return {deck_number: file_path} for both decks. Missing → empty string."""
+    """Return {deck_number: file_path} for both decks, normalized to the
+    same path-space as session/playlist/DB (relative to library.music_dir).
+
+    Mixxx's HTTP layer returns absolute paths; without normalizing here the
+    set returned would never match `track["path"]` from the playlist (which
+    became relative in the v9 portability migration), so dedup checks
+    (planner exclude_paths, heartbeat duplicate detection) silently miss.
+    Missing → empty string.
+    """
+    from .db import _normalize_track_path
     out = {1: "", 2: ""}
     for dk in (1, 2):
         try:
             resp = httpx.get(f"{mixxx_url}/api/deck/{dk}/track_info", timeout=2)
             info = resp.json() if resp.status_code == 200 else {}
-            out[dk] = info.get("file_path", "") or ""
+            raw = info.get("file_path", "") or ""
+            out[dk] = _normalize_track_path(raw) if raw else ""
         except Exception:
             pass
     return out
