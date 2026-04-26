@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 import os
 import threading
 import time
@@ -313,9 +314,13 @@ class WebSocketRemoteStateSource(StateSource):
             self._pending_logs.clear()
         return out
 
-    def send_command(self, name: str, args: dict | None = None, timeout: float = 10.0) -> str:
+    def send_command(self, name: str, args: dict | None = None, timeout: float = 10.0):
         """Dispatch a DJ command over /ws/command. Short-lived WS: open,
-        auth via ?token=, send one JSON payload, await one response, close.
+        auth via ?token=, send one JSON payload, await the matching response,
+        close.
+
+        Returns the parsed result — typically a dict (for mixxx_proxy and
+        similar) or a string (for talk and other text commands).
         """
         if self._loop is None:
             raise RuntimeError("remote not connected (loop missing)")
@@ -325,7 +330,8 @@ class WebSocketRemoteStateSource(StateSource):
                 "(or DJTRETA_RELAY_TOKEN) env var."
             )
 
-        payload = {"command": name, "args": args or {}}
+        cmd_id = uuid.uuid4().hex
+        payload = {"type": "command", "id": cmd_id, "command": name, "args": args or {}}
 
         async def _do_send():
             # Local import — only the remote thread path needs websockets.
@@ -335,17 +341,38 @@ class WebSocketRemoteStateSource(StateSource):
             url = f"{self.command_url}{sep}token={self.command_token}"
             async with websockets.connect(url, open_timeout=timeout, close_timeout=2) as ws:
                 await ws.send(json.dumps(payload))
-                # Server responds with {ok: bool, result: str} or {error: ...}
-                raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
-                try:
-                    resp = json.loads(raw)
-                except Exception:
-                    return raw
-                if isinstance(resp, dict):
+                # The /ws/command socket also receives push events (state,
+                # billing, etc.) on connect. Filter for our matching response
+                # and ignore the rest.
+                deadline = asyncio.get_event_loop().time() + timeout
+                while True:
+                    remaining = deadline - asyncio.get_event_loop().time()
+                    if remaining <= 0:
+                        raise RuntimeError(f"send_command('{name}') timed out waiting for response")
+                    raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+                    try:
+                        resp = json.loads(raw)
+                    except Exception:
+                        continue
+                    if not isinstance(resp, dict):
+                        continue
+                    msg_type = resp.get("type")
+                    # Skip push events sent on this socket.
+                    if msg_type == "event":
+                        continue
+                    # Match our command id when present.
+                    if resp.get("id") and resp.get("id") != cmd_id:
+                        continue
+                    if msg_type == "error":
+                        return f"[error] {resp.get('error') or 'unknown error'}"
                     if resp.get("ok") is False:
                         return f"[error] {resp.get('error') or resp.get('result') or 'unknown error'}"
-                    return resp.get("result") or resp.get("message") or "ok"
-                return str(resp)
+                    # Plain truthiness `or` chain breaks dicts/zero — be explicit.
+                    if "result" in resp:
+                        return resp["result"]
+                    if "message" in resp:
+                        return resp["message"]
+                    return "ok"
 
         fut = asyncio.run_coroutine_threadsafe(_do_send(), self._loop)
         try:
