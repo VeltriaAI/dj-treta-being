@@ -42,6 +42,7 @@ from .session_state import Session, register_session
 from .evolution import EvolutionMixin
 from .ws_server import WSServerMixin
 from .being_heartbeat import BeingHeartbeatMixin
+from .runtime_paths import runtime_path
 
 logging.basicConfig(
     level=logging.INFO,
@@ -50,13 +51,13 @@ logging.basicConfig(
 )
 log = logging.getLogger("dj-treta")
 
-STATE_FILE = Path("/tmp/dj-treta-state.json")
-COMMAND_FILE = Path("/tmp/dj-treta-command.json")
-PID_FILE = Path("/tmp/dj-treta.pid")
-PLAYLIST_FILE = Path("/tmp/dj-treta-playlist.json")
+STATE_FILE = runtime_path("state.json")
+COMMAND_FILE = runtime_path("command.json")
+PID_FILE = runtime_path("dj-treta.pid")
+PLAYLIST_FILE = runtime_path("playlist.json")
 PERSIST_FILE = Path(__file__).parent.parent / ".beings" / "session.json"
-THINKING_FILE = Path("/tmp/dj-treta-thinking.log")
-BILLING_FILE = Path("/tmp/dj-treta-billing.json")
+THINKING_FILE = runtime_path("thinking.log")
+BILLING_FILE = runtime_path("billing.json")
 
 
 # ── Infrastructure helpers ────────────────────────────────────────────
@@ -364,10 +365,10 @@ class DJTretaBeing(
         BILLING_FILE.unlink(missing_ok=True)
         THINKING_FILE.write_text("")
         PLAYLIST_FILE.unlink(missing_ok=True)
-        Path("/tmp/dj-treta-scheduled-transition.json").unlink(missing_ok=True)
-        Path("/tmp/dj-treta-transition-pending.lock").unlink(missing_ok=True)
-        Path("/tmp/dj-treta-directives.json").unlink(missing_ok=True)
-        Path("/tmp/dj-treta-mood-change.json").unlink(missing_ok=True)
+        runtime_path("scheduled-transition.json").unlink(missing_ok=True)
+        runtime_path("transition-pending.lock").unlink(missing_ok=True)
+        runtime_path("directives.json").unlink(missing_ok=True)
+        runtime_path("mood-change.json").unlink(missing_ok=True)
 
         # Init SQLite DB + scan library
         from .db import init_db, scan_library
@@ -490,7 +491,7 @@ class DJTretaBeing(
         self.session.register_callback("idle_needs_load", _on_idle_needs_load)
 
         # Read startup mood if provided via CLI
-        mood_file = Path("/tmp/dj-treta-mood.txt")
+        mood_file = runtime_path("mood.txt")
         if mood_file.exists():
             self.mood = mood_file.read_text().strip()
             mood_file.unlink()

@@ -31,6 +31,8 @@ from textual.widgets import (
 sys.path.insert(0, str(Path(__file__).parent))
 from agent.db import get_db, get_current_set, get_set_tracks, get_track_by_path
 from agent.tui_state_source import (
+from agent.runtime_paths import runtime_path
+
     StateSource, LocalFileStateSource, WebSocketRemoteStateSource,
     DEFAULT_REMOTE_WS_URL,
 )
@@ -38,10 +40,10 @@ from agent.tui_state_source import (
 # ── Config ────────────────────────────────────────────────────────────
 
 MIXXX_URL = "http://localhost:7778"
-STATE_FILE = Path("/tmp/dj-treta-state.json")
-COMMAND_FILE = Path("/tmp/dj-treta-command.json")
-DAEMON_LOG = Path("/tmp/dj-treta-daemon.log")
-THINKING_LOG = Path("/tmp/dj-treta-thinking.log")
+STATE_FILE = runtime_path("state.json")
+COMMAND_FILE = runtime_path("command.json")
+DAEMON_LOG = runtime_path("daemon.log")
+THINKING_LOG = runtime_path("thinking.log")
 MUSIC_DIR = Path.home() / "Music" / "DJTreta"
 WS_URL = "ws://localhost:7779"
 
@@ -232,7 +234,7 @@ def _format_timeline_compact(timeline_json, current_pos: float) -> str:
 def _get_scheduled_transition() -> dict | None:
     """Read scheduled transition data from temp file."""
     try:
-        f = Path("/tmp/dj-treta-scheduled-transition.json")
+        f = runtime_path("scheduled-transition.json")
         return json.loads(f.read_text()) if f.exists() else None
     except Exception:
         return None
@@ -849,7 +851,7 @@ class BrainWidget(Static):
 
         # ── Line 5: Billing ──
         try:
-            billing_file = Path("/tmp/dj-treta-billing.json")
+            billing_file = runtime_path("billing.json")
             if billing_file.exists():
                 b = json.loads(billing_file.read_text())
                 total_tokens = b.get("total_input_tokens", 0) + b.get("total_output_tokens", 0)
@@ -2017,7 +2019,7 @@ class DJTretaApp(App):
 
     def show_cost(self):
         """Show billing — tokens used, cost, per-agent breakdown."""
-        billing_file = Path("/tmp/dj-treta-billing.json")
+        billing_file = runtime_path("billing.json")
         if not billing_file.exists():
             self.log_widget.write("[dim]No billing data yet[/dim]")
             return
@@ -2126,7 +2128,7 @@ class DJTretaApp(App):
                 lines.append("  [dim]No track on idle deck[/dim]")
 
         # Planner output from playlist file
-        playlist_file = Path("/tmp/dj-treta-playlist.json")
+        playlist_file = runtime_path("playlist.json")
         if playlist_file.exists():
             try:
                 playlist = json.loads(playlist_file.read_text())
@@ -2215,7 +2217,7 @@ class DJTretaApp(App):
 
     def _show_planner_plan(self):
         """Read and display the full planner plan from playlist file."""
-        playlist_file = Path("/tmp/dj-treta-playlist.json")
+        playlist_file = runtime_path("playlist.json")
         if not playlist_file.exists():
             return
         try:

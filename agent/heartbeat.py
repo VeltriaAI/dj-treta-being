@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 import httpx
+from .runtime_paths import runtime_path
 
 log = logging.getLogger("dj-treta")
 
@@ -71,7 +72,7 @@ class HeartbeatMixin:
         In-memory shape: {1: "himani", 2: "treta"} — just deck→owner_id.
         """
         import os
-        ownership_file = "/tmp/dj-treta-deck-ownership.json"
+        ownership_file = str(runtime_path("deck-ownership.json"))
         if not os.path.exists(ownership_file):
             if self.session.deck_ownership:
                 # File removed externally — clear in-memory ownership.
@@ -183,7 +184,7 @@ class HeartbeatMixin:
         # Phase 7: skip if the scheduled transition targets an externally-owned
         # deck. Treta shouldn't push music onto a co-being's deck.
         if not self._transition_pending:
-            sched_file = Path("/tmp/dj-treta-scheduled-transition.json")
+            sched_file = runtime_path("scheduled-transition.json")
             if sched_file.exists():
                 try:
                     sched = json.loads(sched_file.read_text())
@@ -226,7 +227,7 @@ class HeartbeatMixin:
         # Phase 7: if the idle deck is externally owned, DJ has nothing to
         # schedule into — skip the agent call entirely. Active-only DJing
         # (just let the current track finish) is the right behaviour.
-        sched_file_exists = Path("/tmp/dj-treta-scheduled-transition.json").exists()
+        sched_file_exists = runtime_path("scheduled-transition.json").exists()
         # Issue #76: invoke earlier so defer_decision retries still have a
         # scheduling window before the P2 watchdog fires (< 30s remaining).
         transition_window = idle_ready and remaining > 0 and remaining < 120
@@ -414,8 +415,8 @@ class HeartbeatMixin:
         creative invocation). Each signal executor is idempotent and
         self-cleans its signal on success.
         """
-        sched_file = Path("/tmp/dj-treta-scheduled-transition.json")
-        lock_file = Path("/tmp/dj-treta-transition-pending.lock")
+        sched_file = runtime_path("scheduled-transition.json")
+        lock_file = runtime_path("transition-pending.lock")
 
         # Phase 7: if idle deck is externally owned, Python signals MUST NOT
         # write into it. DJ still manages treta-owned decks normally, but

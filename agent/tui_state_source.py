@@ -34,11 +34,11 @@ import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse, urlunparse
-
+from .runtime_paths import runtime_path
 
 # ─── Local file paths (kept in sync with tui.py) ────────────────────────
 
-STATE_FILE = Path("/tmp/dj-treta-state.json")
+STATE_FILE = runtime_path("state.json")
 SESSION_FILE = Path.home() / "beings" / "dj-treta" / ".beings" / "session.json"
 
 

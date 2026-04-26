@@ -27,13 +27,14 @@ from rich.layout import Layout
 from rich.columns import Columns
 from rich.markdown import Markdown
 from rich.rule import Rule
+from agent.runtime_paths import runtime_path
 
 # ── Config ────────────────────────────────────────────────────────────
 
 MIXXX_URL = "http://localhost:7778"
-STATE_FILE = Path("/tmp/dj-treta-state.json")
-COMMAND_FILE = Path("/tmp/dj-treta-command.json")
-DAEMON_LOG = Path("/tmp/dj-treta-daemon.log")
+STATE_FILE = runtime_path("state.json")
+COMMAND_FILE = runtime_path("command.json")
+DAEMON_LOG = runtime_path("daemon.log")
 MUSIC_DIR = Path.home() / "Music" / "DJTreta"
 
 console = Console()
@@ -289,7 +290,7 @@ def cmd_start_brain(mood: str = "melodic-techno", duration: int = 60):
     """Start the brain daemon."""
     import subprocess, shutil
     # Clear old log + bytecache before starting
-    Path("/tmp/dj-treta-daemon.log").write_text("")
+    runtime_path("daemon.log").write_text("")
     for cache_dir in [Path(__file__).parent / "agent" / "__pycache__",
                       Path(__file__).parent / "agent" / "tools" / "__pycache__",
                       Path(__file__).parent / "__pycache__"]:
@@ -299,7 +300,7 @@ def cmd_start_brain(mood: str = "melodic-techno", duration: int = 60):
     subprocess.Popen(
         [str(venv_python), "-m", "agent", "--mood", mood, "--duration", str(duration)],
         cwd=str(Path(__file__).parent),
-        stdout=open("/tmp/dj-treta-daemon.log", "w"),
+        stdout=open(runtime_path("daemon.log"), "w"),
         stderr=subprocess.STDOUT,
     )
     console.print(f"[green]Brain started — mood: {mood}, duration: {duration}m[/green]")
@@ -388,8 +389,8 @@ def _daemon_cmd(action):
     import subprocess
     DJ_HOME = Path(__file__).parent
     PYTHON = DJ_HOME / ".venv" / "bin" / "python3"
-    PID_FILE = Path("/tmp/dj-treta.pid")
-    LOG = Path("/tmp/dj-treta-daemon.log")
+    PID_FILE = runtime_path("dj-treta.pid")
+    LOG = runtime_path("daemon.log")
 
     if action in ("stop", "restart"):
         if PID_FILE.exists():
@@ -450,7 +451,7 @@ def _kill_all():
     subprocess.run(["pkill", "-f", "python.*agent"], capture_output=True)
     subprocess.run(["pkill", "-f", "mixxx"], capture_output=True)
     subprocess.run(["pkill", "-f", "litellm"], capture_output=True)
-    Path("/tmp/dj-treta.pid").unlink(missing_ok=True)
+    runtime_path("dj-treta.pid").unlink(missing_ok=True)
     console.print("[yellow]Killed: daemon, Mixxx, LiteLLM[/yellow]")
 
 
@@ -469,17 +470,12 @@ def _reset(hard=False):
     # Clean state files (always). Includes all in-flight signal files —
     # otherwise a fresh daemon can pick up stale scheduled transitions,
     # directives, or mood-changes from the prior run.
-    for f in ["/tmp/dj-treta-state.json", "/tmp/dj-treta-command.json",
-              "/tmp/dj-treta-thinking.log", "/tmp/dj-treta-daemon.log",
-              "/tmp/dj-treta.pid", "/tmp/dj-treta-billing.json",
-              "/tmp/dj-treta-playlist.json",
-              "/tmp/dj-treta-scheduled-transition.json",
-              "/tmp/dj-treta-transition-pending.lock",
-              "/tmp/dj-treta-directives.json",
-              "/tmp/dj-treta-mood-change.json",
-              "/tmp/dj-treta-mood.txt",
-              "/tmp/dj-treta-being-heartbeat.json"]:
-        Path(f).unlink(missing_ok=True)
+    for name in ["state.json", "command.json", "thinking.log", "daemon.log",
+                 "dj-treta.pid", "billing.json", "playlist.json",
+                 "scheduled-transition.json", "transition-pending.lock",
+                 "directives.json", "mood-change.json", "mood.txt",
+                 "being-heartbeat.json"]:
+        runtime_path(name).unlink(missing_ok=True)
 
     # Clean session + bytecache (always)
     DJ_HOME = Path.home() / "beings" / "dj-treta"
@@ -516,7 +512,7 @@ def _reset(hard=False):
 
 def cmd_logs_follow():
     """Tail -f the daemon log — full raw output, no filtering."""
-    log_file = Path("/tmp/dj-treta-daemon.log")
+    log_file = runtime_path("daemon.log")
     if not log_file.exists():
         console.print("[dim]No daemon log found[/dim]")
         return
@@ -623,7 +619,7 @@ def main():
             # djtreta start [mood] — e.g., djtreta start "dark melodic techno"
             mood_args = " ".join(sys.argv[2:]) if len(sys.argv) > 2 else ""
             if mood_args:
-                Path("/tmp/dj-treta-mood.txt").write_text(mood_args)
+                runtime_path("mood.txt").write_text(mood_args)
             _daemon_cmd("start")
             return
         elif cmd == "stop":

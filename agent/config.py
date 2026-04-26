@@ -48,6 +48,10 @@ class DaemonConfig:
     pulse_interval_seconds: float = 5.0  # legacy, use heartbeat_interval_seconds
     poll_hz: int = 2
     max_errors: int = 10
+    # Where runtime IPC files (state.json, billing.json, thinking.log, etc.)
+    # live. Empty → tempfile.gettempdir() (usually /tmp on Linux/Mac).
+    # Override via env DJTRETA_RUNTIME_DIR. See agent/runtime_paths.py.
+    runtime_dir: str = ""
 
 
 @dataclass

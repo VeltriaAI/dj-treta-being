@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 
 from .helpers import _mixxx_failed, _mixxx_get, _mixxx_post
+from ..runtime_paths import runtime_path
 
 log = logging.getLogger("dj-treta")
 
@@ -50,6 +51,7 @@ def _tempo_ride(deck: int, target_bpm: float = None, duration_s: float = 60.0):
     # Apply in small increments (~0.5 BPM per step) with irregular timing
     # Real DJs don't use smooth linear ramps — the ear detects those
     import random
+
     steps = max(10, int(bpm_gap * 4))  # ~4 steps per BPM
     base_sleep = duration_s / steps
 
@@ -419,8 +421,8 @@ def schedule_transition(to_deck: int, at_position: int, technique: str = "crossf
 
     # Don't schedule if one is already pending
     # Check both the schedule file AND the lock file (lock survives P3 deletion)
-    lock_file = Path("/tmp/dj-treta-transition-pending.lock")
-    sched_file = Path("/tmp/dj-treta-scheduled-transition.json")
+    lock_file = runtime_path("transition-pending.lock")
+    sched_file = runtime_path("scheduled-transition.json")
     if lock_file.exists() or sched_file.exists():
         try:
             existing = json.loads(sched_file.read_text()) if sched_file.exists() else {}
@@ -468,11 +470,11 @@ def schedule_transition(to_deck: int, at_position: int, technique: str = "crossf
         "bpmAfter": str(bpm_after),
         "glideDuration": max(5, min(60, glide_duration)),
     }
-    Path("/tmp/dj-treta-scheduled-transition.json").write_text(
+    runtime_path("scheduled-transition.json").write_text(
         json.dumps(scheduled, indent=2)
     )
     # Lock file survives P3 deletion of schedule file — prevents duplicate scheduling
-    Path("/tmp/dj-treta-transition-pending.lock").write_text(str(at_position))
+    runtime_path("transition-pending.lock").write_text(str(at_position))
 
     return (
         f"Scheduled {technique} to deck {to_deck} at position {at_position}s "

@@ -5,11 +5,12 @@ import json
 import logging
 import time
 from pathlib import Path
+from .runtime_paths import runtime_path
 
 log = logging.getLogger("dj-treta")
 
-THINKING_FILE = Path("/tmp/dj-treta-thinking.log")
-BILLING_FILE = Path("/tmp/dj-treta-billing.json")
+THINKING_FILE = runtime_path("thinking.log")
+BILLING_FILE = runtime_path("billing.json")
 
 
 class _CorruptionDetector(logging.Handler):

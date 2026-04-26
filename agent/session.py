@@ -6,10 +6,11 @@ import time
 from pathlib import Path
 
 import httpx
+from .runtime_paths import runtime_path
 
 log = logging.getLogger("dj-treta")
 
-STATE_FILE = Path("/tmp/dj-treta-state.json")
+STATE_FILE = runtime_path("state.json")
 PERSIST_FILE = Path(__file__).parent.parent / ".beings" / "session.json"
 
 
@@ -81,7 +82,7 @@ class SessionMixin:
             # Read billing
             billing_str = ""
             try:
-                bf = Path("/tmp/dj-treta-billing.json")
+                bf = runtime_path("billing.json")
                 if bf.exists():
                     b = json.loads(bf.read_text())
                     total_tok = b.get("total_input_tokens", 0) + b.get("total_output_tokens", 0)

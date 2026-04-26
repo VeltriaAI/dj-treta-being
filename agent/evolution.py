@@ -8,10 +8,11 @@ import json
 import logging
 import time
 from pathlib import Path
+from .runtime_paths import runtime_path
 
 log = logging.getLogger("dj-treta")
 
-THINKING_FILE = Path("/tmp/dj-treta-thinking.log")
+THINKING_FILE = runtime_path("thinking.log")
 
 
 class EvolutionMixin:
@@ -47,6 +48,7 @@ class EvolutionMixin:
                     if should:
                         log.info(f"Auto-evolution triggered: {goal}")
                         from .tools.evolve import evolve
+
                         result = evolve(
                             goal,
                             scope="agent/",

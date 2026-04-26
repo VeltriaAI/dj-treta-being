@@ -13,6 +13,7 @@ from collections import deque
 from pathlib import Path
 
 import httpx
+from .runtime_paths import runtime_path
 
 log = logging.getLogger("dj-treta")
 
@@ -545,7 +546,7 @@ class RelayEngine:
     def _get_scheduled_transition(self) -> dict | None:
         """Read scheduled transition data from temp file."""
         try:
-            f = Path("/tmp/dj-treta-scheduled-transition.json")
+            f = runtime_path("scheduled-transition.json")
             if f.exists():
                 return json.loads(f.read_text())
         except Exception:

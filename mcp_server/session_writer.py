@@ -28,11 +28,11 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
+from agent.runtime_paths import runtime_path
 
-
-COMMAND_FILE = Path("/tmp/dj-treta-command.json")
+COMMAND_FILE = runtime_path("command.json")
 SESSION_JSON = Path("/mnt/data/dj-treta/.beings/session.json")
-STATE_JSON = Path("/tmp/dj-treta-state.json")
+STATE_JSON = runtime_path("state.json")
 
 
 def _atomic_write(path: Path, payload: Dict[str, Any]) -> None:

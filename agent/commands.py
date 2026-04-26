@@ -11,10 +11,11 @@ import httpx
 from .agents import create_agents
 from google.adk.apps.app import App, EventsCompactionConfig
 from google.adk.runners import Runner
+from .runtime_paths import runtime_path
 
 log = logging.getLogger("dj-treta")
 
-COMMAND_FILE = Path("/tmp/dj-treta-command.json")
+COMMAND_FILE = runtime_path("command.json")
 
 
 class CommandsMixin:

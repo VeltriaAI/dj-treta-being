@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from .helpers import _music_dir
-
+from ..runtime_paths import runtime_path
 
 def list_library_tracks() -> list:
     """List all tracks in the music library with file path, filename, and genre folder."""
@@ -25,7 +25,7 @@ def list_library_tracks() -> list:
 
 def get_set_history() -> list:
     """Get the list of tracks played in the current set with titles and timestamps."""
-    state_file = Path("/tmp/dj-treta-state.json")
+    state_file = runtime_path("state.json")
     if state_file.exists():
         data = json.loads(state_file.read_text())
         return data.get("tracks_played", [])

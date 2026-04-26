@@ -4,6 +4,7 @@ import json
 import logging
 import time
 from pathlib import Path
+from .runtime_paths import runtime_path
 
 log = logging.getLogger("dj-treta")
 
@@ -91,5 +92,5 @@ class TransitionMixin:
             # ~90s idle-empty window. This removes the race entirely.
             if hasattr(self, "session"):
                 self.session.idle_needs_load = True
-            Path("/tmp/dj-treta-scheduled-transition.json").unlink(missing_ok=True)
-            Path("/tmp/dj-treta-transition-pending.lock").unlink(missing_ok=True)
+            runtime_path("scheduled-transition.json").unlink(missing_ok=True)
+            runtime_path("transition-pending.lock").unlink(missing_ok=True)
