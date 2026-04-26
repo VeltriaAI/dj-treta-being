@@ -30,9 +30,8 @@ from textual.widgets import (
 # DB access for track timeline + stats
 sys.path.insert(0, str(Path(__file__).parent))
 from agent.db import get_db, get_current_set, get_set_tracks, get_track_by_path
-from agent.tui_state_source import (
 from agent.runtime_paths import runtime_path
-
+from agent.tui_state_source import (
     StateSource, LocalFileStateSource, WebSocketRemoteStateSource,
     DEFAULT_REMOTE_WS_URL,
 )
