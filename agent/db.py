@@ -234,30 +234,39 @@ def _normalize_track_path(path: str) -> str:
 
 def upsert_track(path: str, title: str = None, artist: str = None,
                  genre: str = None, **kwargs):
-    """Insert or update a track. Extra kwargs stored as columns if they exist."""
+    """Insert or update a track. Extra kwargs stored as columns if they exist.
+
+    Atomic via SQLite's ON CONFLICT(path) DO UPDATE — was previously a
+    SELECT-then-INSERT/UPDATE which raced under scan_library's tight loop
+    and crashed the daemon at boot with `UNIQUE constraint failed: tracks.path`.
+    """
     path = _normalize_track_path(path)
+
+    # Build the row's values from explicit args + kwargs (skipping None).
+    all_cols = {"path": path, "title": title, "artist": artist, "genre": genre}
+    all_cols.update({k: v for k, v in kwargs.items() if v is not None})
+    insert_pairs = [(k, v) for k, v in all_cols.items() if v is not None]
+    insert_cols = [k for k, _ in insert_pairs]
+    insert_vals = [v for _, v in insert_pairs]
+    placeholders = ",".join("?" * len(insert_cols))
+
+    # Update set: everything except `path` (the conflict key).
+    update_cols = [c for c in insert_cols if c != "path"]
+    update_set = ", ".join(f"{c}=excluded.{c}" for c in update_cols)
+
+    sql = (
+        f"INSERT INTO tracks ({','.join(insert_cols)}) "
+        f"VALUES ({placeholders}) "
+        f"ON CONFLICT(path) DO UPDATE SET {update_set}"
+    ) if update_cols else (
+        f"INSERT INTO tracks ({','.join(insert_cols)}) "
+        f"VALUES ({placeholders}) "
+        f"ON CONFLICT(path) DO NOTHING"
+    )
+
     db = get_db()
     try:
-        existing = db.execute("SELECT id FROM tracks WHERE path=?", (path,)).fetchone()
-        if existing:
-            updates = {k: v for k, v in kwargs.items() if v is not None}
-            if title:
-                updates["title"] = title
-            if artist:
-                updates["artist"] = artist
-            if genre:
-                updates["genre"] = genre
-            if updates:
-                sets = ", ".join(f"{k}=?" for k in updates)
-                db.execute(f"UPDATE tracks SET {sets} WHERE path=?",
-                           list(updates.values()) + [path])
-        else:
-            all_cols = {"path": path, "title": title, "artist": artist, "genre": genre}
-            all_cols.update({k: v for k, v in kwargs.items() if v is not None})
-            cols = [k for k, v in all_cols.items() if v is not None]
-            vals = [v for v in all_cols.values() if v is not None]
-            placeholders = ",".join("?" * len(cols))
-            db.execute(f"INSERT INTO tracks ({','.join(cols)}) VALUES ({placeholders})", vals)
+        db.execute(sql, insert_vals)
         db.commit()
     finally:
         db.close()
