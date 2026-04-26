@@ -18,8 +18,12 @@ REPO_ID = "NaturNestAI/electronic-music-knowledge"
 LOCAL_FILE = Path("/mnt/data/library/DJTreta/knowledge/dj_treta_library_v4.parquet")
 PATH_IN_REPO = "v4/dj_treta_library.parquet"
 
-# Write-capable token; falls back to env if you'd rather not bake it in.
-HF_TOKEN = os.environ.get("HF_TOKEN") or "HF_TOKEN_REMOVED_FROM_HISTORY"
+HF_TOKEN = os.environ.get("HF_TOKEN")
+if not HF_TOKEN:
+    raise SystemExit(
+        "HF_TOKEN env var required (write-capable). Set it in .env or export. "
+        "Get a token at https://huggingface.co/settings/tokens"
+    )
 
 README = b"""# v4 \xe2\x80\x94 Metadata + Text Embeddings
 

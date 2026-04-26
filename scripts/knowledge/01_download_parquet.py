@@ -29,8 +29,12 @@ REPO_FILE_V3 = "v3/dj_treta_library.parquet"
 # v3 is ~354 MB, v4 is ~5 GB. Use v3's lower bound as the "non-empty" check.
 MIN_VALID_BYTES = 100_000_000
 
-# From handoff — read works anon but token avoids throttle.
-HF_TOKEN = os.environ.get("HF_TOKEN") or "HF_TOKEN_REMOVED_FROM_HISTORY"
+HF_TOKEN = os.environ.get("HF_TOKEN")
+if not HF_TOKEN:
+    raise SystemExit(
+        "HF_TOKEN env var required. Set it in .env or export before running. "
+        "Get a token at https://huggingface.co/settings/tokens"
+    )
 
 
 def main() -> int:
