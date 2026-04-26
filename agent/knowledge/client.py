@@ -140,12 +140,28 @@ class KnowledgeClient:
         if self._vectors_failed or self._vec_tbl is not None:
             return
         lance_dir = self._data_dir / _LANCEDB_DIR
-        if not lance_dir.exists():
-            log.info(
-                f"Knowledge vectors not built yet at {lance_dir} — "
-                "metadata-only queries will work"
+        try:
+            import lancedb
+            need_build = (
+                not lance_dir.exists()
+                or _LANCEDB_TABLE not in lancedb.connect(str(lance_dir)).table_names()
+            )
+        except Exception as exc:
+            self._vectors_failed = True
+            log.warning(
+                f"Knowledge LanceDB probe failed — similarity disabled: {exc}"
             )
             return
+
+        if need_build:
+            built = self._try_build_vectors_from_parquet()
+            if not built:
+                log.info(
+                    f"Knowledge vectors not built yet at {lance_dir} — "
+                    "metadata-only queries will work"
+                )
+                return
+
         try:
             import lancedb
             db = lancedb.connect(str(lance_dir))
@@ -164,6 +180,60 @@ class KnowledgeClient:
             log.warning(
                 f"Knowledge LanceDB load failed — similarity disabled: {exc}"
             )
+
+    def _try_build_vectors_from_parquet(self) -> bool:
+        """If the parquet has a `vector` column and LanceDB has no `tracks`
+        table, build it once.
+
+        Returns True if a fresh table was created. Returns False if no vector
+        column is present (legacy v3 parquet) or build failed (logged).
+        """
+        try:
+            import polars as pl
+        except Exception:
+            return False
+        parquet_path = self._data_dir / _PARQUET_NAME
+        try:
+            schema = pl.scan_parquet(parquet_path).collect_schema()
+        except Exception as exc:
+            log.warning(f"Knowledge parquet schema probe failed: {exc}")
+            return False
+        if "vector" not in schema.names():
+            return False
+
+        log.info(
+            "Knowledge parquet has 'vector' column — "
+            "building LanceDB index (one-time, ~5 min)..."
+        )
+        try:
+            import lancedb
+            lance_dir = self._data_dir / _LANCEDB_DIR
+            lance_dir.mkdir(parents=True, exist_ok=True)
+            db = lancedb.connect(str(lance_dir))
+            df = (
+                pl.scan_parquet(parquet_path)
+                .select(["mbid", "vector"])
+                .collect()
+            )
+            tbl = db.create_table(
+                _LANCEDB_TABLE, data=df.to_arrow(), mode="create"
+            )
+            n = tbl.count_rows()
+            log.info(f"Knowledge LanceDB created: {n:,} rows; building IVF-PQ index...")
+            tbl.create_index(
+                metric="cosine",
+                num_partitions=512,
+                num_sub_vectors=48,
+                vector_column_name="vector",
+            )
+            log.info("Knowledge LanceDB IVF-PQ index built")
+            return True
+        except Exception as exc:
+            self._vectors_failed = True
+            log.warning(
+                f"Knowledge LanceDB build from parquet failed: {exc}"
+            )
+            return False
 
     # ── Accessors (for queries.py) ────────────────────────────────────
 
