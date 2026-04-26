@@ -1193,13 +1193,18 @@ class DJTretaApp(App):
                     del buf[:-30]
             if text and len(text.strip()) > 5:
                 display = text[:200]
-                tab.write(f"[{color}]  {agent}:[/{color}] [italic]{display}[/italic]")
+                line = f"[{color}]  {agent}:[/{color}] [italic]{display}[/italic]"
+                tab.write(line)
+                # Mirror to All tab so the user has a single chronological feed.
+                self.log_widget.write(line)
 
         elif think_type == "call":
             tool_name = tool or text or "?"
             args_short = args[:80] if args else ""
             line = f"[bold {color}]  {agent}:[/bold {color}] [cyan]{tool_name}({args_short})[/cyan]"
             tab.write(line)
+            # Mirror to All tab so the user has a single chronological feed.
+            self.log_widget.write(line)
 
         # Debug panel gets everything raw
         debug_visible = self.query_one("#debug-log").has_class("visible")
