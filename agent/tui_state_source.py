@@ -200,6 +200,9 @@ class WebSocketRemoteStateSource(StateSource):
         self._pending_thinking: deque = deque(maxlen=500)
         self._pending_logs: deque = deque(maxlen=500)
         self._pending_lock = threading.Lock()
+        # Mixxx HTTP proxy caches (filled by mixxx_status / mixxx_live events).
+        self._last_mixxx_status: dict | None = None
+        self._last_mixxx_live: dict | None = None
 
         # thread control
         self._shutdown = False
@@ -250,6 +253,45 @@ class WebSocketRemoteStateSource(StateSource):
 
     def read_billing(self) -> dict | None:
         return self._last_billing
+
+    def read_mixxx_status(self) -> dict | None:
+        """Return the latest /api/status snapshot proxied via WS, or None."""
+        return self._last_mixxx_status
+
+    def read_mixxx_live(self) -> dict | None:
+        """Return the latest /api/live snapshot proxied via WS, or None."""
+        return self._last_mixxx_live
+
+    def mixxx_proxy(self, path: str, method: str = "GET", data: dict | None = None,
+                    timeout: float = 5.0) -> dict | None:
+        """Synchronous Mixxx HTTP call routed through /ws/command.
+
+        Replaces direct httpx.get/post(MIXXX_URL/...) calls in the TUI so
+        nothing communicates with Mixxx outside the daemon. Returns the
+        Mixxx response JSON, or {"error": ...}.
+        """
+        try:
+            raw = self.send_command(
+                "mixxx_proxy",
+                {"path": path, "method": method, "data": data},
+                timeout=timeout,
+            )
+        except Exception as exc:
+            return {"error": f"{type(exc).__name__}: {exc}"}
+        # send_command returns the result string OR a dict (we send dict via mixxx_proxy)
+        # The server wraps the dict in {"result": <dict>}, send_command extracts result.
+        if isinstance(raw, dict):
+            return raw
+        # send_command may stringify dict → parse back if possible
+        if isinstance(raw, str):
+            raw = raw.strip()
+            if raw.startswith("{"):
+                try:
+                    return json.loads(raw)
+                except Exception:
+                    return {"text": raw}
+            return {"text": raw}
+        return None
 
     def read_scheduled_transition(self) -> dict | None:
         # Prefer the dedicated cache; fall back to the field embedded in state.
@@ -409,6 +451,10 @@ class WebSocketRemoteStateSource(StateSource):
                 self._last_billing = data if isinstance(data, dict) else None
             elif evt == "transition_scheduled":
                 self._last_scheduled_transition = data if isinstance(data, dict) else None
+            elif evt == "mixxx_status":
+                self._last_mixxx_status = data if isinstance(data, dict) else None
+            elif evt == "mixxx_live":
+                self._last_mixxx_live = data if isinstance(data, dict) else None
             elif evt == "thinking":
                 if isinstance(data, dict):
                     with self._pending_lock:

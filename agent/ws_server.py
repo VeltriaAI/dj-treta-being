@@ -50,6 +50,9 @@ class WSServerMixin:
         self._ws_thread = threading.Thread(target=self._ws_run_thread, daemon=True)
         self._ws_thread.start()
         log.info(f"WebSocket server starting on ws://localhost:{WS_PORT}")
+        # WS is the canonical protocol for daemon ↔ TUI. Start the Mixxx
+        # proxy loop so the TUI never has to hit Mixxx HTTP directly.
+        self._start_mixxx_proxy_loop()
 
     def _ws_run_thread(self):
         """Run WS server in a dedicated thread + event loop."""
@@ -145,6 +148,18 @@ class WSServerMixin:
                                 self._ws_handle_talk(websocket, msg_id, args),
                                 self._loop,
                             )
+                        elif cmd == "mixxx_proxy":
+                            # Synchronous Mixxx HTTP proxy — keeps the TUI
+                            # from talking to Mixxx HTTP directly.
+                            try:
+                                result = self._ws_handle_mixxx_proxy(args)
+                                await websocket.send(json.dumps({
+                                    "type": "response", "id": msg_id, "result": result
+                                }))
+                            except Exception as e:
+                                await websocket.send(json.dumps({
+                                    "type": "error", "id": msg_id, "error": str(e)
+                                }))
                         else:
                             # Sync commands — run directly
                             try:
@@ -246,3 +261,67 @@ class WSServerMixin:
                 asyncio.run_coroutine_threadsafe(ws.send(msg), self._loop)
             except Exception:
                 self._ws_clients.discard(ws)
+
+    # ── Mixxx HTTP → WS proxy ─────────────────────────────────────────────
+    # The TUI now consumes Mixxx state via WS only. The daemon polls Mixxx
+    # at 5 Hz and broadcasts the response shape unchanged. Commands flow
+    # the other direction via the `mixxx_proxy` /ws/command handler below.
+
+    def _start_mixxx_proxy_loop(self):
+        """Start a background thread that polls Mixxx and broadcasts /api/status
+        + /api/live to WS subscribers at 5 Hz. Does nothing if no clients are
+        connected (lazy fan-out)."""
+        if getattr(self, "_mixxx_proxy_running", False):
+            return
+        self._mixxx_proxy_running = True
+        threading.Thread(target=self._mixxx_proxy_loop, daemon=True).start()
+
+    def _mixxx_proxy_loop(self):
+        import httpx
+        url = self.config.mixxx.url
+        while not getattr(self, "_shutdown", False):
+            try:
+                # Skip the network round-trip if no one is subscribed.
+                if hasattr(self, "_ws_clients") and self._ws_clients:
+                    try:
+                        s = httpx.get(f"{url}/api/status", timeout=1.0)
+                        if s.status_code == 200:
+                            self._ws_broadcast("mixxx_status", s.json())
+                    except Exception:
+                        pass
+                    try:
+                        l = httpx.get(f"{url}/api/live", timeout=1.0)
+                        if l.status_code == 200:
+                            self._ws_broadcast("mixxx_live", l.json())
+                    except Exception:
+                        pass
+            except Exception as exc:
+                log.debug(f"mixxx proxy loop tick error: {exc}")
+            time.sleep(0.2)  # 5 Hz
+
+    def _ws_handle_mixxx_proxy(self, args: dict) -> dict:
+        """Synchronous proxy: forward an arbitrary Mixxx HTTP call.
+
+        Args shape: {"path": "/api/load", "method": "POST", "data": {...}}
+        Returns the parsed JSON response (or {error: ...}).
+        """
+        import httpx
+        path = args.get("path") or ""
+        method = (args.get("method") or "GET").upper()
+        data = args.get("data") or None
+        if not path.startswith("/"):
+            return {"error": "path must start with /"}
+        url = f"{self.config.mixxx.url}{path}"
+        try:
+            if method == "POST":
+                r = httpx.post(url, json=data, timeout=3.0)
+            else:
+                r = httpx.get(url, timeout=3.0)
+            if r.status_code == 200:
+                try:
+                    return r.json()
+                except Exception:
+                    return {"text": r.text}
+            return {"error": f"HTTP {r.status_code}", "text": r.text[:200]}
+        except Exception as exc:
+            return {"error": f"{type(exc).__name__}: {exc}"}

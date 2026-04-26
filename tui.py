@@ -100,13 +100,45 @@ _track_cache_path: dict[int, str] = {}
 
 # ── Helpers ───────────────────────────────────────────────────────────
 
+# WS is the canonical protocol — daemon proxies all Mixxx HTTP calls.
+# When the TUI app is up, it registers its state_source here so module-level
+# helpers (mixxx_get / mixxx_post / get_track_name) route through WS too.
+_active_state_source = None
+
+def set_active_state_source(src) -> None:
+    """Called by DJTretaTUI on mount so module-level helpers route via WS."""
+    global _active_state_source
+    _active_state_source = src
+
 def mixxx_get(path: str) -> dict | None:
+    """GET a Mixxx endpoint via the daemon's WS proxy.
+
+    /api/status and /api/live are pushed to the TUI at 5 Hz, so reads of
+    those return the cached snapshot — no round-trip. Other paths are
+    proxied synchronously through /ws/command (one round-trip per call).
+    """
+    src = _active_state_source
+    if src is not None:
+        if path == "/api/status":
+            cached = src.read_mixxx_status()
+            if cached is not None:
+                return cached
+        elif path == "/api/live":
+            cached = src.read_mixxx_live()
+            if cached is not None:
+                return cached
+        return src.mixxx_proxy(path, "GET")
+    # Fallback for tools that import this module before the app is mounted.
     try:
         return httpx.get(f"{MIXXX_URL}{path}", timeout=2).json()
     except Exception:
         return None
 
 def mixxx_post(path: str, data: dict) -> dict | None:
+    """POST to a Mixxx endpoint via the daemon's WS proxy."""
+    src = _active_state_source
+    if src is not None:
+        return src.mixxx_proxy(path, "POST", data)
     try:
         return httpx.post(f"{MIXXX_URL}{path}", json=data, timeout=2).json()
     except Exception:
@@ -1242,6 +1274,9 @@ class DJTretaApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        # Register the state source for module-level mixxx_get / mixxx_post
+        # so they route Mixxx HTTP through the daemon's WS proxy.
+        set_active_state_source(self.state_source)
         self.log_widget = self.query_one("#log-all", RichLog)
         self._log_dj = self.query_one("#log-dj", RichLog)
         self._log_planner = self.query_one("#log-planner", RichLog)
@@ -1309,6 +1344,7 @@ class DJTretaApp(App):
             except Exception:
                 pass
             self.state_source = WebSocketRemoteStateSource(url=DEFAULT_LOCAL_WS_URL)
+            set_active_state_source(self.state_source)
             self.log_widget.write(
                 f"[green]  → Switched to LOCAL ({DEFAULT_LOCAL_WS_URL})[/green]"
             )
@@ -1326,6 +1362,7 @@ class DJTretaApp(App):
                 self.state_source = WebSocketRemoteStateSource(
                     url=url, command_token=token
                 )
+                set_active_state_source(self.state_source)
                 self._remote_url = url
                 self._remote_token = token
                 self.log_widget.write(f"[cyan]  → Switched to REMOTE → {url}[/cyan]")
