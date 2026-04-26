@@ -200,11 +200,42 @@ def _migrate_tracks_canonical(db):
         "CREATE INDEX IF NOT EXISTS idx_tracks_canonical "
         "ON tracks(canonical_artist, canonical_song, canonical_version, remixer)"
     )
+    # Partial UNIQUE: only enforced for rows whose canonical fields are populated.
+    # Legacy rows with NULL canonicals stay valid; new canonicalized rows can't
+    # collide with each other. Prevents the ghost-row accumulation that
+    # happened during cross-machine library scans.
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_tracks_canonical_unique "
+        "ON tracks(canonical_artist, canonical_song, canonical_version, remixer) "
+        "WHERE canonical_artist IS NOT NULL AND canonical_song IS NOT NULL"
+    )
+
+
+def _normalize_track_path(path: str) -> str:
+    """Convert absolute path under library.music_dir to its relative form.
+
+    This keeps tracks.path portable across machines (Mac dev / Linux VM).
+    Paths outside music_dir, or paths with cross-machine prefixes the
+    migration script knows about, are left as-is — the migration script
+    handles those one-shot.
+    """
+    if not path or not path.startswith("/"):
+        return path
+    try:
+        from .config import load_config
+        music_dir = load_config().library.music_path.resolve()
+    except Exception:
+        return path
+    md_str = str(music_dir) + "/"
+    if path.startswith(md_str):
+        return path[len(md_str):]
+    return path
 
 
 def upsert_track(path: str, title: str = None, artist: str = None,
                  genre: str = None, **kwargs):
     """Insert or update a track. Extra kwargs stored as columns if they exist."""
+    path = _normalize_track_path(path)
     db = get_db()
     try:
         existing = db.execute("SELECT id FROM tracks WHERE path=?", (path,)).fetchone()
@@ -333,6 +364,12 @@ def find_compatible_tracks(bpm: float, key_camelot: str, energy: int,
 
 
 def get_track_by_path(path: str) -> dict | None:
+    """Look up track by path. Robust to absolute/relative + cross-machine paths.
+
+    DB stores paths relative to library.music_dir post-migration. Callers may
+    pass absolute paths from Mixxx (different machine) or relative paths from
+    session.playlist — both forms resolve here.
+    """
     import unicodedata
     db = get_db()
     try:
@@ -340,6 +377,14 @@ def get_track_by_path(path: str) -> dict | None:
         row = db.execute("SELECT * FROM tracks WHERE path=?", (path,)).fetchone()
         if row:
             return dict(row)
+
+        # Try the relativized form (handles caller passing absolute path
+        # when DB has relative-to-music_dir).
+        relative = _normalize_track_path(path)
+        if relative != path:
+            row = db.execute("SELECT * FROM tracks WHERE path=?", (relative,)).fetchone()
+            if row:
+                return dict(row)
 
         # Normalize unicode and try again (Mixxx vs Python encoding differences)
         normalized = unicodedata.normalize("NFC", path)
