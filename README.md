@@ -48,39 +48,70 @@ Built on the [Beings Protocol](https://github.com/VeltriaAI/beings-protocol).
 
 ### Prerequisites
 
-- Python 3.10+
-- [Mixxx fork](https://github.com/VeltriaAI/mixxx) (branch `feature/http-api`) — the audio engine
-- A Gemini API key ([free tier](https://aistudio.google.com/) works) or any LiteLLM-compatible model
-- macOS (Linux support planned)
+- Python 3.10+ (any OS — macOS, Linux, Docker)
+- [Mixxx fork](https://github.com/VeltriaAI/mixxx) on the `feature/http-rest-api` branch — the audio engine
+- A LiteLLM-compatible API key (Gemini Flash free tier is plenty — see [docs/LITELLM_VERTEX_SETUP.md](docs/LITELLM_VERTEX_SETUP.md))
 
-### Install
+### Install (any machine — fresh clone)
 
 ```bash
 git clone https://github.com/VeltriaAI/dj-treta-being.git
 cd dj-treta-being
+
+# 1. Configure secrets + endpoints (copy templates, edit values)
+cp .env.example .env                 # then edit DJTRETA_LLM_API_KEY etc.
+cp config.yaml.example config.local.yaml   # personal overrides; gitignored
+
+# 2. Install Python deps + create music dir
 ./install.sh
 
-# Set your LLM key
-export DJTRETA_LLM_API_KEY="your-gemini-key"
+# 3. Verify everything is wired up before starting the daemon
+djclaw validate-config
+# Expects:
+#   ✅ DJTRETA_LLM_API_KEY    set
+#   ✅ music_dir + audio      ~/Music/DJTreta (N files)
+#   ✅ mixxx reachable        http://localhost:7778
+#   ✅ litellm reachable      http://localhost:4000
+#   ✅ djtreta.db schema      relative paths, canonical UNIQUE
+# Any ❌ tells you exactly what to fix.
 
-# Create your DJ Being
+# 4. Create your DJ Being
 djclaw init
 # -> What should I call your DJ? DJ Priya
 # -> What kind of music? lo-fi hip hop, jazz fusion, ambient
-# -> LLM provider? 1. Gemini  2. OpenAI  3. Claude  4. Local
 
-# Start
+# 5. Start
 djclaw start
-
-# Talk to her (Being brain handles conversation + directives)
 djclaw talk "play something dreamy"
-djclaw talk "go darker"
-
-# Readonly mode for live web listeners (chat only, no deck control)
-djclaw talk --readonly "what's playing?"
-
-# Full terminal UI
 djclaw tui
+```
+
+### Migrating an existing DB to a new machine
+
+The DB stores track paths **relative to** `library.music_dir`, so the
+same `djtreta.db` works across Mac dev, Linux VM, and Docker. If you're
+upgrading a pre-portability DB that has absolute paths in `tracks.path`:
+
+```bash
+python scripts/migrate_paths_to_relative.py --dry-run   # plan
+python scripts/migrate_paths_to_relative.py             # apply
+```
+
+The script strips known absolute prefixes (`/Users/...`, `/home/...`,
+`/mnt/data/...`) and dedupes rows that collapse to the same relative
+path. Idempotent — safe to re-run.
+
+### Deploying to a Linux VM
+
+```bash
+cp .env.deploy.example .env.deploy   # then edit VM_USER, VM_HOST, etc.
+
+# First time on this VM only — installs systemd services from
+# bin/systemd/*.service.template:
+bash bin/install-vm.sh
+
+# Subsequent deploys (hot-swap, music never stops):
+bash bin/deploy-vm.sh
 ```
 
 > **Tip:** Gemini Flash free tier is enough. DJ Treta ran 30 hours on $0.04.

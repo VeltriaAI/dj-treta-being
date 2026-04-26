@@ -639,6 +639,9 @@ def main():
             from agent.init import run_init
             run_init()
             return
+        elif cmd in ("validate-config", "validate", "check"):
+            from agent.validate import main as validate_main
+            sys.exit(validate_main())
 
     # Interactive mode
     console.print(BANNER)
