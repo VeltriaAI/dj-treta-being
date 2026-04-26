@@ -81,8 +81,8 @@ class SetsConfig:
 @dataclass
 class RelayConfig:
     enabled: bool = False
-    server_url: str = "wss://dj.treta.life/ws/relay"
-    token: str = ""
+    server_url: str = ""  # wss://your-relay-host/ws/relay — required when enabled
+    token: str = ""  # set via env DJTRETA_RELAY_TOKEN
     push_hz: int = 3
 
 
@@ -101,8 +101,8 @@ class BroadcastConfig:
 class ProducerConfig:
     enabled: bool = True
     model: str = "lyria-3-pro-preview"
-    vertex_project: str = "fandorab2w3"
-    vertex_location: str = "global"
+    vertex_project: str = ""  # set in config.yaml or via DJTRETA_VERTEX_PROJECT
+    vertex_location: str = "us-central1"  # safe default region
     default_duration_seconds: int = 180
     genre_dir: str = "ai-generated"
     # v8 Phase 6: daily guardrails so an over-eager producer_need signal
@@ -114,7 +114,7 @@ class ProducerConfig:
 @dataclass
 class KnowledgeConfig:
     enabled: bool = False
-    data_dir: str = "~/workspace/music-intelligence/data/unified"
+    data_dir: str = "~/Music/DJTreta/knowledge"  # consistent with library.music_dir
 
 
 @dataclass
@@ -164,7 +164,12 @@ def load_config(path: str | Path | None = None) -> Config:
                 os.environ.setdefault(key.strip(), value.strip())
 
     if path is None:
-        path = Path(__file__).parent.parent / "config.yaml"
+        # Look for config.local.yaml first (gitignored, user-specific), fall
+        # back to config.yaml (tracked, repo default). Lets contributors
+        # override without diffing the canonical config.
+        repo_root = Path(__file__).parent.parent
+        local = repo_root / "config.local.yaml"
+        path = local if local.exists() else (repo_root / "config.yaml")
     path = Path(path)
 
     if not path.exists():
@@ -209,6 +214,7 @@ def load_config(path: str | Path | None = None) -> Config:
     if "evolution" in raw:
         cfg.evolution = EvolutionConfig(**_pick_fields(raw["evolution"], EvolutionConfig))
 
+    # Env-var overrides — keep secrets and machine-specific values out of code.
     env_key = os.environ.get("DJTRETA_LLM_API_KEY") or os.environ.get("LLM_API_KEY")
     if env_key:
         cfg.llm.api_key = env_key
@@ -216,5 +222,24 @@ def load_config(path: str | Path | None = None) -> Config:
     relay_token = os.environ.get("DJTRETA_RELAY_TOKEN")
     if relay_token:
         cfg.relay.token = relay_token
+
+    # Mixxx + LLM endpoints — let env override config.yaml so the same
+    # repo can run against localhost / Docker / a remote service.
+    mixxx_url = os.environ.get("DJTRETA_MIXXX_URL")
+    if mixxx_url:
+        cfg.mixxx.url = mixxx_url
+
+    llm_base = os.environ.get("DJTRETA_LLM_API_BASE")
+    if llm_base:
+        cfg.llm.api_base = llm_base
+
+    # GCP / Vertex AI — required for Producer (Lyria 3) + LiteLLM proxy backend.
+    vertex_project = os.environ.get("DJTRETA_VERTEX_PROJECT")
+    if vertex_project:
+        cfg.producer.vertex_project = vertex_project
+
+    vertex_location = os.environ.get("DJTRETA_VERTEX_LOCATION")
+    if vertex_location:
+        cfg.producer.vertex_location = vertex_location
 
     return cfg
