@@ -1180,10 +1180,9 @@ class DJTretaApp(App):
 
         if think_type == "think":
             if "dj_treta" in agent:
+                # Ring buffer entries kept short to keep /brain output scannable.
                 self._last_dj_decision = text[:300]
                 self._last_dj_decision_time = time.time()
-                # Maintain a small ring buffer for /brain — was previously
-                # rebuilt from THINKING_LOG file tail.
                 buf = getattr(self, "_recent_dj_thoughts", None)
                 if buf is None:
                     buf = []
@@ -1192,16 +1191,17 @@ class DJTretaApp(App):
                 if len(buf) > 30:
                     del buf[:-30]
             if text and len(text.strip()) > 5:
-                display = text[:200]
-                line = f"[{color}]  {agent}:[/{color}] [italic]{display}[/italic]"
+                # Full text — RichLog has wrap=True so it word-wraps naturally.
+                line = f"[{color}]  {agent}:[/{color}] [italic]{text}[/italic]"
                 tab.write(line)
                 # Mirror to All tab so the user has a single chronological feed.
                 self.log_widget.write(line)
 
         elif think_type == "call":
             tool_name = tool or text or "?"
-            args_short = args[:80] if args else ""
-            line = f"[bold {color}]  {agent}:[/bold {color}] [cyan]{tool_name}({args_short})[/cyan]"
+            # Full args — RichLog wraps. Truncating cut off important JSON
+            # context (planner reasoning summaries, schedule_transition params).
+            line = f"[bold {color}]  {agent}:[/bold {color}] [cyan]{tool_name}({args})[/cyan]"
             tab.write(line)
             # Mirror to All tab so the user has a single chronological feed.
             self.log_widget.write(line)
