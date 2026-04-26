@@ -98,7 +98,17 @@ class SessionMixin:
             if status and (status.get("deck1", {}).get("playing") or status.get("deck2", {}).get("playing")):
                 phase = "playing"
 
-            STATE_FILE.write_text(json.dumps({
+            # Pull scheduled transition into state so the TUI doesn't have to
+            # also poll scheduled-transition.json over the WebSocket transport.
+            sched_transition = None
+            try:
+                sf = runtime_path("scheduled-transition.json")
+                if sf.exists():
+                    sched_transition = json.loads(sf.read_text())
+            except Exception:
+                sched_transition = None
+
+            state_payload = {
                 "phase": phase,
                 "mood": self.mood,
                 "tracks_played": len(self.tracks_played),
@@ -117,31 +127,33 @@ class SessionMixin:
                 "last_command_id": self._last_command_id,
                 "last_command_result": self._last_result,
                 "billing": billing_str,
+                "scheduled_transition": sched_transition,
                 "sources": {
                     "youtube": self.config.sources.youtube,
                     "treta_originals": self.config.sources.treta_originals,
                 },
                 "producing": self._generation_status,
-            }, indent=2))
+            }
+            STATE_FILE.write_text(json.dumps(state_payload, indent=2))
 
-            # Broadcast state via WebSocket
+            # Broadcast state via WebSocket — same shape as STATE_FILE so the
+            # TUI's state-source can treat WS frames and disk reads identically.
             if hasattr(self, '_ws_broadcast'):
-                self._ws_broadcast("state", {
-                    "phase": phase,
-                    "mood": self.mood,
-                    "tracks_played": len(self.tracks_played),
-                    "current_track": current,
-                    "next_track": next_track,
-                    "set": set_data,
-                    "agent_busy": self._agent_busy,
-                    "planner_status": "busy" if self._planner_busy else "idle",
-                    "emergency_count": self._emergency_count,
-                    "billing": billing_str,
-                    "sources": {
-                        "youtube": self.config.sources.youtube,
-                        "treta_originals": self.config.sources.treta_originals,
-                    },
-                })
+                self._ws_broadcast("state", state_payload)
+                # Edge event: emit transition_scheduled exactly when a new
+                # schedule appears so consumers can react without diffing
+                # the periodic state stream.
+                last_sched = getattr(self, '_last_broadcast_sched_id', None)
+                cur_sched_id = None
+                if sched_transition:
+                    cur_sched_id = (
+                        sched_transition.get("toDeck"),
+                        sched_transition.get("atPosition"),
+                        sched_transition.get("technique"),
+                    )
+                if cur_sched_id and cur_sched_id != last_sched:
+                    self._ws_broadcast("transition_scheduled", sched_transition)
+                self._last_broadcast_sched_id = cur_sched_id
         except Exception:
             pass
 

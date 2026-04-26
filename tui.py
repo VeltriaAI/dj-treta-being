@@ -32,19 +32,19 @@ sys.path.insert(0, str(Path(__file__).parent))
 from agent.db import get_db, get_current_set, get_set_tracks, get_track_by_path
 from agent.runtime_paths import runtime_path
 from agent.tui_state_source import (
-    StateSource, LocalFileStateSource, WebSocketRemoteStateSource,
-    DEFAULT_REMOTE_WS_URL,
+    StateSource, WebSocketRemoteStateSource,
+    DEFAULT_LOCAL_WS_URL, DEFAULT_REMOTE_WS_URL,
 )
 
 # ── Config ────────────────────────────────────────────────────────────
 
 MIXXX_URL = "http://localhost:7778"
-STATE_FILE = runtime_path("state.json")
-COMMAND_FILE = runtime_path("command.json")
+# All TUI state comes from the daemon's WebSocket — no file IO. The daemon
+# still writes state.json/billing.json/etc. for offline debugging, but the
+# TUI never reads them. ``runtime_path`` is kept for the few side-effecting
+# helpers (e.g. ``start_brain`` rotating the daemon log).
 DAEMON_LOG = runtime_path("daemon.log")
-THINKING_LOG = runtime_path("thinking.log")
 MUSIC_DIR = Path.home() / "Music" / "DJTreta"
-WS_URL = "ws://localhost:7779"
 
 # Remote mode — human UI goes over WebSocket (public state + token-auth command).
 # MCP stays reserved for AI agents (Himani, Claude Desktop), not this TUI.
@@ -113,11 +113,9 @@ def mixxx_post(path: str, data: dict) -> dict | None:
         return None
 
 def read_state() -> dict | None:
-    try:
-        if STATE_FILE.exists():
-            return json.loads(STATE_FILE.read_text())
-    except Exception:
-        pass
+    """Deprecated: file-based read kept as a no-op shim for any third-party
+    helper still calling it. The TUI itself reads via ``state_source``.
+    """
     return None
 
 def fmt_time(s) -> str:
@@ -231,12 +229,11 @@ def _format_timeline_compact(timeline_json, current_pos: float) -> str:
 
 
 def _get_scheduled_transition() -> dict | None:
-    """Read scheduled transition data from temp file."""
-    try:
-        f = runtime_path("scheduled-transition.json")
-        return json.loads(f.read_text()) if f.exists() else None
-    except Exception:
-        return None
+    """Deprecated: file-based read kept as a shim. Real reads now go via
+    ``app.state_source.read_scheduled_transition()`` which is reachable
+    through the WebSocket state stream.
+    """
+    return None
 
 
 def _detect_config_value(section: str, key: str, default=False):
@@ -312,17 +309,15 @@ def _synthesize_mixxx_from_state(state: dict) -> tuple[dict, dict]:
 
 
 def send_command(command: str, args: dict = {}) -> str:
-    cmd_id = f"{time.time():.6f}"
-    payload = {"command": command, "args": args, "id": cmd_id}
-    COMMAND_FILE.write_text(json.dumps(payload))
-    for _ in range(600):  # 300s timeout (generation can take 2-3 min with Lyria + analysis)
-        time.sleep(0.5)
-        state = read_state()
-        if state and state.get("last_command_id") == cmd_id:
-            result = state.get("last_command_result", "")
-            if result and result != "processing...":
-                return result
-    return "No response (timeout)"
+    """Deprecated: file-based command dispatch. Use
+    ``app.state_source.send_command(command, args)`` instead — works
+    identically for local + remote daemons over /ws/command.
+    """
+    raise RuntimeError(
+        "send_command(file-based) removed in feat/tui-websocket-unified. "
+        "Use app.state_source.send_command(...) — it dispatches over "
+        "/ws/command for both local and remote daemons."
+    )
 
 
 # ── Widgets ───────────────────────────────────────────────────────────
@@ -374,7 +369,7 @@ class DeckWidget(Static):
             try:
                 state = self.app.state_source.read_state()
             except Exception:
-                state = read_state()
+                state = None
             if state:
                 ct = state.get("current_track", {})
                 if ct.get("title"):
@@ -850,9 +845,8 @@ class BrainWidget(Static):
 
         # ── Line 5: Billing ──
         try:
-            billing_file = runtime_path("billing.json")
-            if billing_file.exists():
-                b = json.loads(billing_file.read_text())
+            b = self.app.state_source.read_billing() if hasattr(self, 'app') else None
+            if b:
                 total_tokens = b.get("total_input_tokens", 0) + b.get("total_output_tokens", 0)
                 cost = b.get("total_cost_usd", 0)
                 calls = b.get("calls", 0)
@@ -999,7 +993,7 @@ class DJTretaApp(App):
 
     debug_mode = reactive(False)
 
-    # ── State source (LOCAL/REMOTE) ──────────────────────────────────
+    # ── State source (always WebSocket; URL distinguishes local vs remote) ──
     def __init__(
         self,
         state_source: StateSource | None = None,
@@ -1008,116 +1002,42 @@ class DJTretaApp(App):
         **kwargs,
     ):
         super().__init__(**kwargs)
-        self.state_source: StateSource = state_source or LocalFileStateSource()
-        # Stored so 'r' can toggle back to remote after going LOCAL.
+        # Default to a local-daemon WebSocket subscription. The same code
+        # path serves remote — only the URL differs.
+        self.state_source: StateSource = state_source or WebSocketRemoteStateSource(
+            url=DEFAULT_LOCAL_WS_URL
+        )
+        # Stored so Ctrl+R can toggle to a remote URL and back.
         self._remote_url = remote_url
         self._remote_token = remote_token
 
     def _is_remote(self) -> bool:
-        return isinstance(self.state_source, WebSocketRemoteStateSource)
+        """True iff state_source is connected to a non-localhost daemon.
 
-    # ── WebSocket real-time connection ───────────────────────────────
+        ``WebSocketRemoteStateSource._is_local`` is True for ws://localhost,
+        False for everything else (incl. wss://dj.treta.life).
+        """
+        ss = self.state_source
+        if isinstance(ss, WebSocketRemoteStateSource):
+            return not ss._is_local
+        # Future-proof: any other StateSource subclass is treated as remote
+        # (it isn't talking to localhost over our specific WS protocol).
+        return True
 
-    _ws_shutdown = False
-
-    def _start_ws_client(self):
-        """Connect to daemon WebSocket for real-time updates."""
-        self._ws = None
-        self._ws_connected = False
-        self._ws_event_loop = None
-        threading.Thread(target=self._ws_thread, daemon=True).start()
+    # ── State source consumption (single WebSocket via state_source) ──────
+    #
+    # The TUI no longer opens its own WebSocket connection. The state_source
+    # owns the only socket; we drain its buffers from periodic poll funcs
+    # already scheduled in on_mount(). _apply_ws_state / _apply_ws_log /
+    # _apply_ws_thinking remain — they're now invoked from drain_* polls.
 
     async def action_quit(self) -> None:
-        """Clean shutdown — stop WS before exit. Must be async for Textual."""
-        self._ws_shutdown = True
-        self._ws_connected = False
-        # Close WS socket so async loop unblocks
-        ws = getattr(self, "_ws", None)
-        el = getattr(self, "_ws_event_loop", None)
-        if ws is not None and el is not None and el.is_running():
-            try:
-                asyncio.run_coroutine_threadsafe(ws.close(), el).result(timeout=2.0)
-            except Exception:
-                pass
-        # Stop remote state source if any.
+        """Clean shutdown — close state source before exit."""
         try:
             self.state_source.close()
         except Exception:
             pass
         await super().action_quit()
-
-    def _ws_thread(self):
-        """WebSocket client thread — runs its own event loop."""
-        self._ws_event_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self._ws_event_loop)
-        self._ws_event_loop.run_until_complete(self._ws_loop())
-
-    async def _ws_loop(self):
-        """Connect to daemon WS and receive events. Auto-reconnects."""
-        while not self._ws_shutdown:
-            try:
-                async with websockets.connect(WS_URL, ping_interval=20, ping_timeout=10) as ws:
-                    self._ws = ws
-                    self._ws_connected = True
-                    try:
-                        self.call_from_thread(self._on_ws_connected)
-                    except Exception:
-                        pass
-                    async for raw in ws:
-                        if self._ws_shutdown:
-                            break
-                        try:
-                            msg = json.loads(raw)
-                            self._handle_ws_message(msg)
-                        except (json.JSONDecodeError, Exception):
-                            pass
-            except Exception:
-                pass
-            self._ws_connected = False
-            self._ws = None
-            if self._ws_shutdown:
-                break
-            await asyncio.sleep(3)
-
-    def _on_ws_connected(self):
-        """Called on main thread when WS connects."""
-        self.log_widget.write("[green]  ⚡ WebSocket connected — real-time mode[/green]")
-
-    def _on_ws_disconnected(self):
-        """Called on main thread when WS disconnects."""
-        pass  # Silent — file polling takes over as fallback
-
-    def _handle_ws_message(self, msg: dict):
-        """Route incoming WebSocket messages to handlers (called from WS thread)."""
-        if self._ws_shutdown:
-            return
-        msg_type = msg.get("type", "")
-
-        if msg_type == "event":
-            event = msg.get("event", "")
-            data = msg.get("data", {})
-
-            if event == "state":
-                self.call_from_thread(self._apply_ws_state, data)
-            elif event == "log":
-                text = data.get("text", "")
-                if text:
-                    self.call_from_thread(self._apply_ws_log, text)
-            elif event == "thinking":
-                self.call_from_thread(self._apply_ws_thinking, data)
-            elif event == "talk_response":
-                # Talk responses come back here when sent via WS
-                pass
-
-        elif msg_type == "response":
-            # Command responses — currently commands go via file, so this is future-use
-            pass
-
-        elif msg_type == "error":
-            error = msg.get("error", "Unknown error")
-            self.call_from_thread(
-                lambda e=error: self.log_widget.write(f"[red]  WS error: {e}[/red]")
-            )
 
     def _apply_ws_state(self, data: dict):
         """Apply state update from WebSocket event."""
@@ -1256,6 +1176,15 @@ class DJTretaApp(App):
             if "dj_treta" in agent:
                 self._last_dj_decision = text[:300]
                 self._last_dj_decision_time = time.time()
+                # Maintain a small ring buffer for /brain — was previously
+                # rebuilt from THINKING_LOG file tail.
+                buf = getattr(self, "_recent_dj_thoughts", None)
+                if buf is None:
+                    buf = []
+                    self._recent_dj_thoughts = buf
+                buf.append(text[:300])
+                if len(buf) > 30:
+                    del buf[:-30]
             if text and len(text.strip()) > 5:
                 display = text[:200]
                 tab.write(f"[{color}]  {agent}:[/{color}] [italic]{display}[/italic]")
@@ -1308,23 +1237,21 @@ class DJTretaApp(App):
         self._log_treta = self.query_one("#log-treta", RichLog)
         self.debug_widget = self.query_one("#debug-log", RichLog)
         self.log_widget.write("[dim]DJ Treta Console. Type anything to talk, /help for commands.[/dim]\n")
-        # Init WS state BEFORE any timers
+        self.log_widget.write(
+            f"[dim]  state: {self.state_source.label}[/dim]\n"
+        )
+        # Cached snapshots / mode flags consumed by render funcs
         self._ws_state = None
-        self._ws_connected = False
-        self._ws = None
-        self._log_pos = 0
-        self._log_mtime = 0.0
-        self._debug_log_pos = 0
-        self._thinking_pos = 0
         self._last_dj_decision = ""
         self._last_dj_decision_time = 0.0
-        # Start WebSocket client for real-time updates
-        self._start_ws_client()
-        # File-based polling as fallback
+        self._last_state_source_connected: bool | None = None
+        # Periodic UI refresh from the state source's caches (drained, not
+        # polled from disk). The state source itself runs a single WebSocket
+        # in its own thread.
         self.set_interval(1.0, self.refresh_status)
-        self.set_interval(3.0, self.poll_daemon_log)
-        self.set_interval(1.0, self.poll_debug_log)
-        self.set_interval(1.0, self.poll_thinking_log)
+        self.set_interval(0.5, self.drain_ws_logs)
+        self.set_interval(0.5, self.drain_ws_thinking)
+        self.set_interval(2.0, self.refresh_connection_status)
 
     def _switch_tab(self, tab_id: str):
         tabs = self.query_one("#log-tabs", TabbedContent)
@@ -1357,32 +1284,40 @@ class DJTretaApp(App):
             right.display = True
 
     def action_toggle_remote(self) -> None:
-        """Toggle between LOCAL file mode and REMOTE WebSocket mode.
+        """Toggle between LOCAL daemon and REMOTE relay — by swapping the
+        state-source URL. Same WebSocket code path either way.
 
         Read-side (/ws/state) is public and needs no auth. The optional token
         only authenticates write commands (mood/skip/talk/…) sent to the VM's
         /ws/command endpoint — read-only viewing works without it.
         """
         if self._is_remote():
-            # Switch to LOCAL.
+            # Switch to LOCAL daemon.
             try:
                 self.state_source.close()
             except Exception:
                 pass
-            self.state_source = LocalFileStateSource()
-            self.log_widget.write("[green]  → Switched to LOCAL mode[/green]")
-            if not STATE_FILE.exists():
-                self.log_widget.write("[yellow]  (no local daemon running — start one with /start)[/yellow]")
+            self.state_source = WebSocketRemoteStateSource(url=DEFAULT_LOCAL_WS_URL)
+            self.log_widget.write(
+                f"[green]  → Switched to LOCAL ({DEFAULT_LOCAL_WS_URL})[/green]"
+            )
+            self.log_widget.write(
+                "[dim]  (if no local daemon is running, start one with /start)[/dim]"
+            )
         else:
             url = self._remote_url or DEFAULT_REMOTE_URL
             token = self._remote_token or _load_remote_token()
             try:
+                try:
+                    self.state_source.close()
+                except Exception:
+                    pass
                 self.state_source = WebSocketRemoteStateSource(
                     url=url, command_token=token
                 )
                 self._remote_url = url
                 self._remote_token = token
-                self.log_widget.write(f"[cyan]  → Switched to REMOTE mode → {url}[/cyan]")
+                self.log_widget.write(f"[cyan]  → Switched to REMOTE → {url}[/cyan]")
                 if not token:
                     self.log_widget.write(
                         "[yellow]  (read-only: no command token. Set DJTRETA_COMMAND_TOKEN "
@@ -1402,69 +1337,44 @@ class DJTretaApp(App):
             self.debug_widget.write("[dim]Tool calls, API responses, timing, tokens[/dim]\n")
             self.log_widget.write("[yellow]Debug panel ON (Ctrl+D to toggle)[/yellow]")
 
-    def poll_debug_log(self) -> None:
-        """Raw unfiltered daemon log for debug panel."""
-        if not self.query_one("#debug-log").has_class("visible"):
-            return
-        if not DAEMON_LOG.exists():
-            return
+    def refresh_connection_status(self) -> None:
+        """Surface state-source connect/disconnect transitions in the log."""
         try:
-            content = DAEMON_LOG.read_text()
-            lines = content.split("\n")
-            new_lines = lines[self._debug_log_pos:]
-            self._debug_log_pos = len(lines)
-
-            for line in new_lines:
-                if not line.strip():
-                    continue
-                clean = line.strip()
-
-                # Color by type
-                if "Calling tool:" in clean:
-                    # Extract tool name and args
-                    self.debug_widget.write(f"[bold cyan]  {clean}[/bold cyan]")
-                elif "Observations:" in clean:
-                    # Truncate observations
-                    obs = clean[:150] + "..." if len(clean) > 150 else clean
-                    self.debug_widget.write(f"[dim green]  {obs}[/dim green]")
-                elif "Step " in clean and "Duration" in clean:
-                    self.debug_widget.write(f"[yellow]  {clean}[/yellow]")
-                elif "New run" in clean:
-                    self.debug_widget.write(f"[bold magenta]  {clean}[/bold magenta]")
-                elif "Final answer:" in clean:
-                    ans = clean[:200] + "..." if len(clean) > 200 else clean
-                    self.debug_widget.write(f"[bold green]  {ans}[/bold green]")
-                elif "Initial plan" in clean or "plan" in clean.lower():
-                    self.debug_widget.write(f"[bright_yellow]  {clean}[/bright_yellow]")
-                elif "ERROR" in clean or "error" in clean.lower():
-                    self.debug_widget.write(f"[bold red]  {clean}[/bold red]")
-                elif "WARNING" in clean:
-                    self.debug_widget.write(f"[red]  {clean}[/red]")
-                elif "LiteLLM" in clean or "completion()" in clean:
-                    self.debug_widget.write(f"[dim]  {clean}[/dim]")
-                elif "INFO" in clean:
-                    parts = clean.split("] ", 1)
-                    if len(parts) >= 2:
-                        self.debug_widget.write(f"[dim white]  {parts[1]}[/dim white]")
-                elif "─" in clean or "│" in clean or "╭" in clean or "╰" in clean:
-                    self.debug_widget.write(f"[dim]{clean}[/dim]")
-                else:
-                    if len(clean) > 200:
-                        clean = clean[:200] + "..."
-                    self.debug_widget.write(f"[dim]  {clean}[/dim]")
+            now = self.state_source.connected
         except Exception:
-            pass
+            now = False
+        prev = self._last_state_source_connected
+        if prev is None:
+            self._last_state_source_connected = now
+            if now:
+                self.log_widget.write(
+                    f"[green]  ⚡ {self.state_source.label} connected[/green]"
+                )
+            return
+        if now != prev:
+            self._last_state_source_connected = now
+            if now:
+                self.log_widget.write(
+                    f"[green]  ⚡ {self.state_source.label} reconnected[/green]"
+                )
+            else:
+                detail = self.state_source.status_detail or "disconnected"
+                self.log_widget.write(
+                    f"[yellow]  • {self.state_source.label}: {detail}[/yellow]"
+                )
 
     def refresh_status(self) -> None:
         remote = self._is_remote()
-        # In remote mode, the VM owns Mixxx — don't hit localhost.
+        # In remote mode, the VM owns Mixxx — don't hit localhost. Locally,
+        # we still query Mixxx directly for the rich live data (VU meters,
+        # beat phase) that isn't worth round-tripping through the WebSocket.
         status = None if remote else mixxx_get("/api/status")
         live = None if remote else mixxx_get("/api/live")
-        # Prefer WebSocket state when connected (local-only), else StateSource.
-        if not remote and self._ws_connected and self._ws_state:
-            state = self._ws_state
-        else:
-            state = self.state_source.read_state()
+        state = self.state_source.read_state()
+        # Update the cached agent_busy/planner_status flags from the latest
+        # WS state — preserves the old _apply_ws_state side effect cheaply.
+        if state:
+            self._apply_ws_state(state)
 
         # In remote mode, synthesize a minimal deck/live payload from
         # current_track so the deck widgets have something to render.
@@ -1506,46 +1416,17 @@ class DJTretaApp(App):
         playlist_w = self.query_one("#playlist", PlaylistWidget)
         playlist_w.update_playlist(state)
 
-    def poll_daemon_log(self) -> None:
-        """File-based log polling — only passes meaningful log lines to _apply_ws_log."""
-        if not DAEMON_LOG.exists():
-            if self._log_pos > 0:
-                self._log_pos = 0
-                self._log_mtime = 0.0
-            return
+    def drain_ws_logs(self) -> None:
+        """Pull buffered ``log`` events from the state source and render."""
         try:
-            content = DAEMON_LOG.read_text()
-            lines = content.split("\n")
-
-            if self._log_pos > len(lines):
-                self._log_pos = 0
-                self.log_widget.write("[yellow]— New daemon session —[/yellow]")
-
-            new_lines = lines[self._log_pos:]
-            self._log_pos = len(lines)
-
-            # Only pass lines that match meaningful daemon events
-            # Format: "HH:MM:SS [LEVEL] message"
-            import re
-            log_pattern = re.compile(r'^\d{2}:\d{2}:\d{2} \[(INFO|WARNING|ERROR)\] .+')
-
-            skip = {"LiteLLM", "Wrapper:", "completion()", "utils.py:", "HTTP Request:",
-                     "Retrying request", "server listening", "server clos",
-                     "Task was destroyed", "Unmapped finish_reason", "malformed_function_call"}
-
-            for line in new_lines:
-                line = line.strip()
-                if not line:
-                    continue
-                # Must match timestamp [LEVEL] format
-                if not log_pattern.match(line):
-                    continue
-                # Skip noise
-                if any(s in line for s in skip):
-                    continue
-                self._apply_ws_log(line)
+            lines = self.state_source.drain_logs()
         except Exception:
-            pass
+            lines = []
+        for line in lines:
+            try:
+                self._apply_ws_log(line)
+            except Exception:
+                pass
 
     def _route_to_agent_tab(self, agent: str):
         """Get the right tab log for an agent name."""
@@ -1557,61 +1438,24 @@ class DJTretaApp(App):
             return self._log_treta, "bright_cyan"
         return self._log_treta, "dim"
 
-    def poll_thinking_log(self) -> None:
-        """Agent thinking → agent tabs + BrainWidget + debug panel."""
-        debug_visible = self.query_one("#debug-log").has_class("visible")
-
-        if not THINKING_LOG.exists():
-            return
+    def drain_ws_thinking(self) -> None:
+        """Pull buffered ``thinking`` events from the state source and render."""
         try:
-            content = THINKING_LOG.read_text()
-            lines = content.split("\n")
-            new_lines = lines[self._thinking_pos:]
-            self._thinking_pos = len(lines)
-
-            for line in new_lines:
-                if not line.strip():
-                    continue
-
-                if line.startswith("[THINK:"):
-                    agent = line.split("]")[0].split(":")[1]
-                    thought = line.split("] ", 1)[1] if "] " in line else line
-                    if not thought.strip() or len(thought.strip()) < 5:
-                        continue
-
-                    # BrainWidget DJ decisions
-                    if "dj_treta" in agent:
-                        self._last_dj_decision = thought[:300]
-                        self._last_dj_decision_time = time.time()
-
-                    # Route to agent tab
-                    tab, color = self._route_to_agent_tab(agent)
-                    display = thought[:200]
-                    tab.write(f"[{color}]  {agent}:[/{color}] [italic]{display}[/italic]")
-
-                    # Debug panel
-                    if debug_visible:
-                        self.debug_widget.write(f"[bold bright_white]  {agent}:[/bold bright_white] [italic]{thought[:300]}[/italic]")
-
-                elif line.startswith("[CALL:"):
-                    agent = line.split("]")[0].split(":")[1]
-                    call = line.split("] ", 1)[1] if "] " in line else line
-
-                    # Route to agent tab
-                    tab, color = self._route_to_agent_tab(agent)
-                    tab.write(f"[bold {color}]  {agent}:[/bold {color}] [cyan]{call[:100]}[/cyan]")
-
-                    # Debug panel
-                    if debug_visible:
-                        self.debug_widget.write(f"[cyan]  {agent} -> {call}[/cyan]")
-
-                elif line.startswith("[OBS:"):
-                    if debug_visible:
-                        agent = line.split("]")[0].split(":")[1]
-                        obs = line.split("] ", 1)[1] if "] " in line else line
-                        self.debug_widget.write(f"[dim green]  {agent} <- {obs[:150]}[/dim green]")
+            events = self.state_source.drain_thinking()
         except Exception:
-            pass
+            events = []
+        for evt in events:
+            try:
+                self._apply_ws_thinking(evt)
+            except Exception:
+                pass
+
+    def poll_thinking_log(self) -> None:
+        """Deprecated: agent thinking now arrives via the WebSocket
+        ``thinking`` event drained by ``drain_ws_thinking``. Kept as a
+        no-op stub for any external caller still referencing it.
+        """
+        return
 
     @on(Input.Submitted, "#prompt-input")
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -1808,31 +1652,27 @@ class DJTretaApp(App):
     def handle_talk(self, message: str) -> None:
         self.log_widget.write(f"\n[bold cyan]You:[/bold cyan] {message}")
         self.log_widget.write("[dim]  thinking...[/dim]")
-        if self._is_remote():
-            try:
-                response = self.state_source.send_command(
-                    "talk", {"message": message}, timeout=30.0
-                )
-            except Exception as exc:
-                response = f"[remote error] {exc}"
-        else:
-            response = send_command("talk", {"message": message})
+        try:
+            response = self.state_source.send_command(
+                "talk", {"message": message}, timeout=300.0
+            )
+        except Exception as exc:
+            response = f"[error] {exc}"
         self.log_widget.write(f"[bold magenta]DJ Treta:[/bold magenta] {response}\n")
 
     @work(thread=True)
     def run_brain_command(self, cmd: str, args: dict) -> None:
-        if self._is_remote():
-            if cmd in BRAIN_CMD_LOCAL_ONLY:
-                self.log_widget.write(
-                    f"[yellow]  /{cmd} not available in REMOTE mode (local-only)[/yellow]"
-                )
-                return
-            try:
-                response = self.state_source.send_command(cmd, args)
-            except Exception as exc:
-                response = f"[remote error] {exc}"
-        else:
-            response = send_command(cmd, args)
+        # play / stop / reset target a daemon lifecycle, only meaningful
+        # against the local daemon that ``start_brain`` controls.
+        if self._is_remote() and cmd in BRAIN_CMD_LOCAL_ONLY:
+            self.log_widget.write(
+                f"[yellow]  /{cmd} not available against remote daemon (local-only)[/yellow]"
+            )
+            return
+        try:
+            response = self.state_source.send_command(cmd, args)
+        except Exception as exc:
+            response = f"[error] {exc}"
         self.log_widget.write(f"[green]  {response}[/green]")
 
     def _dispatch_mixxx(self, path: str, payload: dict) -> dict:
@@ -2018,13 +1858,12 @@ class DJTretaApp(App):
 
     def show_cost(self):
         """Show billing — tokens used, cost, per-agent breakdown."""
-        billing_file = runtime_path("billing.json")
-        if not billing_file.exists():
+        b = self.state_source.read_billing()
+        if not b:
             self.log_widget.write("[dim]No billing data yet[/dim]")
             return
 
         try:
-            b = json.loads(billing_file.read_text())
             elapsed = time.time() - b.get("session_start", time.time())
             mins = elapsed / 60
 
@@ -2126,42 +1965,33 @@ class DJTretaApp(App):
             else:
                 lines.append("  [dim]No track on idle deck[/dim]")
 
-        # Planner output from playlist file
-        playlist_file = runtime_path("playlist.json")
-        if playlist_file.exists():
-            try:
-                playlist = json.loads(playlist_file.read_text())
-                output = playlist.get("planner_output", "")
-                if output:
-                    lines.append(f"\n  [bold]Planner Plan:[/bold]")
-                    for pline in output.split("\n")[:15]:
-                        if pline.strip():
-                            lines.append(f"  [dim]{pline.strip()[:80]}[/dim]")
-            except Exception:
-                pass
+        # Planner output: surfaced via WS state when the planner publishes
+        # one. (Legacy ``playlist.json`` file was never written by the
+        # current daemon; removed to keep the TUI WebSocket-only.)
+        st = self.state_source.read_state() or {}
+        plan_output = (st.get("planner") or {}).get("output", "")
+        if plan_output:
+            lines.append("\n  [bold]Planner Plan:[/bold]")
+            for pline in plan_output.split("\n")[:15]:
+                if pline.strip():
+                    lines.append(f"  [dim]{pline.strip()[:80]}[/dim]")
         else:
             lines.append("  [dim]No planner output yet[/dim]")
         lines.append("")
         self.log_widget.write("\n".join(lines))
 
     def show_brain_decisions(self):
-        """Show last DJ decisions from thinking log."""
+        """Show last DJ decisions captured from the WebSocket ``thinking``
+        stream. We keep a small ring buffer in ``_recent_dj_thoughts``
+        populated by ``_apply_ws_thinking``."""
         lines = ["\n[bold]DJ DECISIONS[/bold]"]
-        if THINKING_LOG.exists():
-            try:
-                content = THINKING_LOG.read_text()
-                think_lines = [l for l in content.split("\n") if l.startswith("[THINK:dj_treta]")]
-                for tl in think_lines[-10:]:
-                    thought = tl.split("] ", 1)[1] if "] " in tl else tl
-                    if len(thought) > 120:
-                        thought = thought[:120] + "..."
-                    lines.append(f"  [italic]{thought}[/italic]")
-                if not think_lines:
-                    lines.append("  [dim]No decisions yet[/dim]")
-            except Exception:
-                lines.append("  [dim]Cannot read thinking log[/dim]")
+        thoughts = getattr(self, "_recent_dj_thoughts", [])
+        if thoughts:
+            for t in thoughts[-10:]:
+                snippet = t if len(t) <= 120 else t[:120] + "..."
+                lines.append(f"  [italic]{snippet}[/italic]")
         else:
-            lines.append("  [dim]No thinking log[/dim]")
+            lines.append("  [dim]No decisions yet[/dim]")
         lines.append("")
         self.log_widget.write("\n".join(lines))
 
@@ -2215,15 +2045,16 @@ class DJTretaApp(App):
         self.log_widget.write("\n".join(lines))
 
     def _show_planner_plan(self):
-        """Read and display the full planner plan from playlist file."""
-        playlist_file = runtime_path("playlist.json")
-        if not playlist_file.exists():
+        """Render the planner plan if state has surfaced one. Local
+        ``playlist.json`` is no longer consulted — planner_output, when
+        produced, is broadcast via the WebSocket ``state`` event under
+        ``state.planner.output``.
+        """
+        st = self.state_source.read_state() or {}
+        output = (st.get("planner") or {}).get("output", "")
+        if not output:
             return
         try:
-            playlist = json.loads(playlist_file.read_text())
-            output = playlist.get("planner_output", "")
-            if not output:
-                return
             for pline in output.strip().split("\n"):
                 pline = pline.strip()
                 if not pline:
@@ -2306,19 +2137,25 @@ class DJTretaApp(App):
 def main(*, remote: bool = False, remote_url: str | None = None, remote_token: str | None = None):
     """Launch the TUI.
 
-    Args:
-        remote: if True, start in REMOTE mode using ``remote_url``/``remote_token``.
-        remote_url: WebSocket state URL (defaults to ``DEFAULT_REMOTE_URL``,
-            i.e. ``wss://dj.treta.life/ws/state``).
-        remote_token: optional command token (falls back to env/file via
-            ``_load_remote_token``). Read-side works without it; writes require it.
-    """
-    state_source: StateSource
-    url = remote_url or DEFAULT_REMOTE_URL
-    token = remote_token or _load_remote_token()
+    All TUI data flows over WebSocket — same code path locally and remotely;
+    only the URL changes.
 
+    Args:
+        remote: if True, connect to the public relay (defaults to
+            ``DEFAULT_REMOTE_URL`` = ``wss://dj.treta.life/ws/state``).
+            If False, connect to the local daemon's own ws_server at
+            ``DEFAULT_LOCAL_WS_URL`` = ``ws://localhost:7779/ws/state``.
+        remote_url: explicit WS state URL to use when ``remote`` is True
+            (or anytime the user passed ``--remote URL``).
+        remote_token: optional command token for the /ws/command auth.
+            Falls back to env (DJTRETA_COMMAND_TOKEN / DJTRETA_RELAY_TOKEN /
+            DJTRETA_MCP_TOKEN) or ~/.djtreta-command-token. Read-side works
+            without it; writes require it on the public relay. Locally the
+            daemon's ws_server currently doesn't enforce a token.
+    """
+    token = remote_token or _load_remote_token()
     if remote:
-        state_source = WebSocketRemoteStateSource(url=url, command_token=token)
+        url = remote_url or DEFAULT_REMOTE_URL
         if not token:
             print(
                 "info: remote read-only (no command token set).\n"
@@ -2327,11 +2164,16 @@ def main(*, remote: bool = False, remote_url: str | None = None, remote_token: s
                 file=sys.stderr,
             )
     else:
-        state_source = LocalFileStateSource()
+        # Local daemon — ws_server.py listens at ws://localhost:7779/ws/state.
+        url = remote_url or DEFAULT_LOCAL_WS_URL
+
+    state_source: StateSource = WebSocketRemoteStateSource(
+        url=url, command_token=token
+    )
 
     app = DJTretaApp(
         state_source=state_source,
-        remote_url=url,
+        remote_url=remote_url or DEFAULT_REMOTE_URL,  # ctrl+R will fall back to this
         remote_token=token,
     )
     app.run()

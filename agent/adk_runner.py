@@ -256,7 +256,12 @@ class ADKRunnerMixin:
             pass
 
     def _update_billing(self, agent_name: str, inp: int, out: int):
-        """Update billing JSON file with token counts."""
+        """Update billing JSON file with token counts.
+
+        Also broadcasts a ``billing`` WS event so the TUI can render the cost
+        line without polling the file. The file is still written for offline
+        debugging + future observability tools.
+        """
         try:
             billing = json.loads(BILLING_FILE.read_text()) if BILLING_FILE.exists() else {
                 "total_input_tokens": 0, "total_output_tokens": 0, "total_cost_usd": 0.0,
@@ -274,5 +279,8 @@ class ADKRunnerMixin:
             billing["by_agent"][agent_name]["cost"] += cost
             billing["by_agent"][agent_name]["calls"] += 1
             BILLING_FILE.write_text(json.dumps(billing, indent=2))
+            # Broadcast updated billing snapshot to TUI clients.
+            if hasattr(self, '_ws_broadcast'):
+                self._ws_broadcast("billing", billing)
         except Exception:
             pass

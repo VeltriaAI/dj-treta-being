@@ -1,28 +1,42 @@
-"""TUI state source abstraction — local files vs remote WebSocket.
+"""TUI state source abstraction — WebSocket-only.
 
-The DJ Treta TUI historically reads state from two local files:
-    /tmp/dj-treta-state.json           (mixxx + set + current/next track)
-    ~/beings/dj-treta/.beings/session.json   (mood profile, playlist, history)
+The DJ Treta TUI used to read state from local disk files
+(/tmp/dj-treta-state.json, billing.json, thinking.log, …) when running
+against the local daemon, and from a public WebSocket relay when running
+against the VM. That split caused two code paths, two shapes, and a
+translator between them.
 
-To allow the TUI (a human UI) to connect to a remote daemon (e.g. the VM
-running live on dj.treta.life), we abstract "where state comes from" behind
-StateSource.
+Now: the TUI ALWAYS speaks WebSocket. Default URL is
+``ws://localhost:7779/ws/state`` (same machine — points at the daemon's
+own ws_server). With ``--remote`` the URL becomes
+``wss://dj.treta.life/ws/state`` (or whatever ``relay.server_url``
+resolves to). Same code path, only the URL differs.
 
-Transport split:
+Local daemon still writes ``state.json`` etc. to disk for offline
+debugging and other tools, but this module no longer reads them.
+
+Frame envelopes accepted (so the same source works against both
+``ws_server.py`` and the public relay):
+
+  1. ``ws_server.py`` (local daemon):
+       {"type": "event", "event": "state"|"billing"|"thinking"|"log"|
+                                   "transition_scheduled"|"talk_response",
+        "data": {…}}
+     Data for ``state`` is the snake_case ``state.json`` shape
+     (so no remapping needed when consumers want state.json keys).
+
+  2. Public relay (``wss://dj.treta.life/ws/state``):
+       Raw, no envelope, camelCase frame from ``agent/relay.py``.
+     The source detects this shape (no ``type`` field, but ``phase`` /
+     ``activeDeck`` keys present) and caches a translated state.
+
+Transport split (unchanged):
     - AI agents (Himani, Claude Desktop) use MCP (mcp_server/*) — tools + SSE.
-    - Human UIs (this TUI, the web listener) use WebSocket — real-time,
-      public-readable state + authenticated command channel.
+    - Human UIs (this TUI, the web listener) use WebSocket — public-readable
+      state + token-authenticated command channel.
 
-Two implementations:
-    LocalFileStateSource        — reads the files directly (default, zero overhead)
-    WebSocketRemoteStateSource  — runs a background asyncio thread that opens
-                                  a persistent wss:// connection to the public
-                                  state broadcaster and caches the latest frame.
-                                  Writes go through a separate /ws/command
-                                  endpoint (token-authenticated).
-
-The TUI does not need to know the difference past calling read_state() /
-read_session() and looking at .label / .connected.
+The TUI calls read_state(), read_billing(), iter_new_thinking(), etc.,
+plus send_command() for writes.
 """
 from __future__ import annotations
 
@@ -31,12 +45,13 @@ import json
 import os
 import threading
 import time
+from collections import deque
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 from .runtime_paths import runtime_path
 
-# ─── Local file paths (kept in sync with tui.py) ────────────────────────
+# ─── Local file paths (kept for legacy reference — TUI no longer reads) ─
 
 STATE_FILE = runtime_path("state.json")
 SESSION_FILE = Path.home() / "beings" / "dj-treta" / ".beings" / "session.json"
@@ -45,28 +60,32 @@ SESSION_FILE = Path.home() / "beings" / "dj-treta" / ".beings" / "session.json"
 # ─── Base class ─────────────────────────────────────────────────────────
 
 class StateSource:
-    """Abstract state source. Subclasses implement read_state/read_session
-    (and, for remote, send_command).
+    """Abstract state source. The only concrete implementation is
+    ``WebSocketRemoteStateSource`` — the TUI always speaks WebSocket.
 
     Contract:
-        read_state()   — returns dict shaped like /tmp/dj-treta-state.json, or None
-        read_session() — returns dict shaped like .beings/session.json, or None
-        label          — short human-readable "LOCAL" / "REMOTE host"
-        connected      — True if the source is currently reachable
-        status_detail  — short extra string ("" for local, host+state for remote)
+        read_state()        — returns dict in /tmp/dj-treta-state.json shape, or None
+        read_session()      — returns dict in .beings/session.json shape, or None
+                              (best-effort — full planner state isn't on /ws/state)
+        read_billing()      — returns billing.json-shaped dict, or None
+        read_scheduled_transition() — current scheduled transition or None
+        drain_thinking()    — pop accumulated [THINK]/[CALL] events as a list
+        drain_logs()        — pop accumulated log lines as a list of strings
+        label               — short human-readable "LOCAL ws://…" / "REMOTE host"
+        connected           — True if the source is currently reachable
+        status_detail       — short extra string
 
-    Write-side (remote only — local dispatch goes through the Being's
-    command file as before):
+    Write-side:
         send_command(name, args) — dispatch a DJ command (talk, mood, skip,
-                                   etc.) to the remote daemon. Returns a short
-                                   result string. Raises if not connected.
+                                   etc.) to the daemon. Returns a short result
+                                   string. Raises if not connected.
     """
 
-    label: str = "LOCAL"
+    label: str = "WS"
 
     @property
     def connected(self) -> bool:
-        return True
+        return False
 
     @property
     def status_detail(self) -> str:
@@ -78,20 +97,27 @@ class StateSource:
     def read_session(self) -> dict | None:
         raise NotImplementedError
 
+    def read_billing(self) -> dict | None:
+        return None
+
+    def read_scheduled_transition(self) -> dict | None:
+        return None
+
+    def drain_thinking(self) -> list[dict]:
+        """Return and clear accumulated thinking events ([THINK]/[CALL])."""
+        return []
+
+    def drain_logs(self) -> list[str]:
+        """Return and clear accumulated log lines."""
+        return []
+
     def send_command(self, name: str, args: dict | None = None, timeout: float = 10.0) -> str:
-        """Dispatch a command to the daemon. Local source cannot — remote source overrides."""
         raise RuntimeError(
             f"send_command('{name}') not supported on {type(self).__name__}"
         )
 
     def call_tool(self, name: str, args: dict | None = None, timeout: float = 10.0) -> dict:
-        """Compat shim: the TUI was originally written against an MCP SSE
-        transport that exposed call_tool(). The current transport is WebSocket
-        (see subclass) — so we delegate to send_command() and reshape the
-        string response into the ``{"ok", "message"}`` dict the TUI expects.
-
-        Subclasses that speak true JSON-RPC (MCP) can override this directly.
-        """
+        """Compat shim: TUI/legacy code expects ``{"ok", "message"}``."""
         try:
             out = self.send_command(name, args, timeout=timeout)
         except Exception as exc:
@@ -105,44 +131,9 @@ class StateSource:
         pass
 
 
-# ─── Local file source (original behavior) ──────────────────────────────
-
-class LocalFileStateSource(StateSource):
-    """Reads state directly from /tmp/dj-treta-state.json and session.json.
-
-    This is the original behavior — no network, no threads.
-    """
-
-    label = "LOCAL"
-
-    @property
-    def connected(self) -> bool:
-        # Consider "connected" iff the state file exists (daemon is running).
-        return STATE_FILE.exists()
-
-    @property
-    def status_detail(self) -> str:
-        return "" if STATE_FILE.exists() else "daemon off"
-
-    def read_state(self) -> dict | None:
-        try:
-            if STATE_FILE.exists():
-                return json.loads(STATE_FILE.read_text())
-        except Exception:
-            pass
-        return None
-
-    def read_session(self) -> dict | None:
-        try:
-            if SESSION_FILE.exists():
-                return json.loads(SESSION_FILE.read_text())
-        except Exception:
-            pass
-        return None
-
-
 # ─── Remote WebSocket source ────────────────────────────────────────────
 
+DEFAULT_LOCAL_WS_URL = "ws://localhost:7779/ws/state"
 DEFAULT_REMOTE_WS_URL = "wss://dj.treta.life/ws/state"
 DEFAULT_REMOTE_CMD_URL = "wss://dj.treta.life/ws/command"
 
@@ -164,7 +155,7 @@ class WebSocketRemoteStateSource(StateSource):
 
     def __init__(
         self,
-        url: str = DEFAULT_REMOTE_WS_URL,
+        url: str = DEFAULT_LOCAL_WS_URL,
         command_url: str | None = None,
         command_token: str | None = None,
         token: str | None = None,
@@ -187,10 +178,28 @@ class WebSocketRemoteStateSource(StateSource):
         self._host = parsed.hostname or url
         if parsed.port:
             self._host = f"{self._host}:{parsed.port}"
+        # Local mode = ws:// to localhost — distinguish in the badge so the
+        # operator instantly knows which daemon they're driving.
+        scheme = (parsed.scheme or "").lower()
+        host_lower = (parsed.hostname or "").lower()
+        self._is_local = scheme == "ws" and host_lower in ("localhost", "127.0.0.1", "::1")
 
-        # caches — TUI reads these (thread-safe: reference-replaced only)
-        self._last_frame: dict | None = None
+        # caches — TUI reads these (thread-safe: reference-replaced only,
+        # never mutated in-place from the WS thread).
+        self._last_state: dict | None = None
+        self._last_session: dict | None = None
+        self._last_billing: dict | None = None
+        self._last_scheduled_transition: dict | None = None
+        # camelCase relay frame retained for widgets (decks/vu/harmonicMap)
+        # that prefer the rich shape from agent/relay.py.
+        self._last_relay_frame: dict | None = None
         self._last_ok_ts: float = 0.0
+
+        # Streaming buffers — drained periodically by the TUI poll loops.
+        # Bounded to prevent unbounded growth if the TUI ever stops draining.
+        self._pending_thinking: deque = deque(maxlen=500)
+        self._pending_logs: deque = deque(maxlen=500)
+        self._pending_lock = threading.Lock()
 
         # thread control
         self._shutdown = False
@@ -204,6 +213,8 @@ class WebSocketRemoteStateSource(StateSource):
 
     @property
     def label(self) -> str:
+        if self._is_local:
+            return f"LOCAL {self._host}"
         return f"REMOTE {self._host}"
 
     @property
@@ -220,19 +231,45 @@ class WebSocketRemoteStateSource(StateSource):
         return self._last_error or "disconnected"
 
     def read_state(self) -> dict | None:
-        """Return state.json-shaped dict synthesized from the last WS frame."""
-        if not self._last_frame:
-            return None
-        return _ws_frame_to_state(self._last_frame)
+        """Return current state.json-shaped dict, or None if no frames yet."""
+        return self._last_state
 
     def read_session(self) -> dict | None:
-        """WS /ws/state doesn't push session.json — return a minimal synthesised
-        version so session-driven widgets don't blank out. Full planner history
-        isn't available in remote mode (would need /ws/session, future work).
+        """Return a session.json-ish dict if we've got any history.
+
+        Local daemon doesn't push session.json over WS yet — we synthesise a
+        minimal one from state so session-driven widgets don't blank out.
         """
-        if not self._last_frame:
-            return None
-        return _ws_frame_to_session(self._last_frame)
+        if self._last_session is not None:
+            return self._last_session
+        if self._last_state:
+            return _state_to_session(self._last_state)
+        if self._last_relay_frame:
+            return _ws_frame_to_session(self._last_relay_frame)
+        return None
+
+    def read_billing(self) -> dict | None:
+        return self._last_billing
+
+    def read_scheduled_transition(self) -> dict | None:
+        # Prefer the dedicated cache; fall back to the field embedded in state.
+        if self._last_scheduled_transition is not None:
+            return self._last_scheduled_transition
+        if self._last_state:
+            return self._last_state.get("scheduled_transition")
+        return None
+
+    def drain_thinking(self) -> list[dict]:
+        with self._pending_lock:
+            out = list(self._pending_thinking)
+            self._pending_thinking.clear()
+        return out
+
+    def drain_logs(self) -> list[str]:
+        with self._pending_lock:
+            out = list(self._pending_logs)
+            self._pending_logs.clear()
+        return out
 
     def send_command(self, name: str, args: dict | None = None, timeout: float = 10.0) -> str:
         """Dispatch a DJ command over /ws/command. Short-lived WS: open,
@@ -338,8 +375,77 @@ class WebSocketRemoteStateSource(StateSource):
                 except Exception:
                     continue
                 if isinstance(frame, dict):
-                    self._last_frame = frame
+                    self._ingest_frame(frame)
                     self._last_ok_ts = time.time()
+
+    def _ingest_frame(self, frame: dict) -> None:
+        """Apply one incoming WS frame to the appropriate cache.
+
+        Two envelope styles are supported:
+          1. ``{"type":"event","event":"NAME","data":{…}}`` — the
+             ws_server.py envelope (local daemon). Data shape matches the
+             corresponding *.json file (snake_case) or, for thinking, the
+             {agent,type,text|tool,args} dict from adk_runner.
+          2. Raw camelCase frame from ``agent/relay.py`` (public relay) —
+             no ``type`` field but ``phase`` / ``activeDeck`` / ``decks``
+             present. Translated via ``_ws_frame_to_state``.
+        """
+        msg_type = frame.get("type")
+
+        if msg_type == "event":
+            evt = frame.get("event") or ""
+            data = frame.get("data") or {}
+            if evt == "state":
+                self._last_state = data if isinstance(data, dict) else None
+                # If the state payload carried a scheduled_transition, mirror it.
+                if isinstance(data, dict):
+                    sched = data.get("scheduled_transition")
+                    if sched is not None:
+                        self._last_scheduled_transition = sched
+                    elif "scheduled_transition" in data:
+                        # Explicit null clears it.
+                        self._last_scheduled_transition = None
+            elif evt == "billing":
+                self._last_billing = data if isinstance(data, dict) else None
+            elif evt == "transition_scheduled":
+                self._last_scheduled_transition = data if isinstance(data, dict) else None
+            elif evt == "thinking":
+                if isinstance(data, dict):
+                    with self._pending_lock:
+                        self._pending_thinking.append(data)
+            elif evt == "log":
+                text = ""
+                if isinstance(data, dict):
+                    text = data.get("text") or ""
+                elif isinstance(data, str):
+                    text = data
+                if text:
+                    with self._pending_lock:
+                        self._pending_logs.append(text)
+            elif evt == "talk_response":
+                # Surface as a log line so the TUI's existing log handlers
+                # display the chatter without a dedicated channel.
+                if isinstance(data, dict):
+                    msg = data.get("text") or data.get("result") or ""
+                    if msg:
+                        with self._pending_lock:
+                            self._pending_logs.append(f"DJ Treta said: {msg[:300]}")
+            return
+
+        # Raw relay frame — produced by agent/relay.py against the public
+        # endpoint (wss://dj.treta.life). Translate to local-shape state.
+        if msg_type is None and ("phase" in frame or "activeDeck" in frame):
+            self._last_relay_frame = frame
+            self._last_state = _ws_frame_to_state(frame)
+            self._last_session = _ws_frame_to_session(frame)
+            # Public relay embeds scheduled transition under transition.scheduled
+            try:
+                tr = frame.get("transition") or {}
+                sched = tr.get("scheduled")
+                if sched is not None:
+                    self._last_scheduled_transition = sched
+            except Exception:
+                pass
 
 
 # ─── helpers ────────────────────────────────────────────────────────────
@@ -423,11 +529,7 @@ def _ws_frame_to_state(frame: dict) -> dict:
 
 
 def _ws_frame_to_session(frame: dict) -> dict:
-    """Minimal session.json synthesis. The remote server doesn't expose the
-    daemon's full session (planner playlist, directives, feedback history)
-    over /ws/state. We populate just enough so the TUI doesn't crash on
-    missing keys.
-    """
+    """Minimal session.json synthesis from a relay (camelCase) frame."""
     history = frame.get("history") or []
     current = frame.get("currentTrack") or {}
     return {
@@ -448,8 +550,27 @@ def _ws_frame_to_session(frame: dict) -> dict:
     }
 
 
+def _state_to_session(state: dict) -> dict:
+    """Synthesise a session.json-ish dict from a snake_case state.json
+    payload — local daemon doesn't push session.json directly."""
+    history = (state.get("set") or {}).get("history") or []
+    return {
+        "mood": state.get("mood") or "",
+        "phase": state.get("phase") or "?",
+        "current_track": state.get("current_track") or {},
+        "tracks_played": history,
+        "planner": {},
+        "directives": [],
+        "feedback_history": [],
+    }
+
+
 # ─── Backwards-compat alias ─────────────────────────────────────────────
-# tui.py imports MCPRemoteStateSource under that name. Keep it pointed at
-# the WebSocket impl so any stale import paths still resolve to the correct
-# transport. (Deprecated — will be removed once TUI is fully migrated.)
+# Older imports (mcp_server, web listener) referenced this name; keep
+# it pointed at the unified WebSocket source so external callers keep
+# working without touching their imports. The previous LocalFile-based
+# source has been removed — file mode no longer exists. If you see a
+# NameError on the old name, switch to
+#     WebSocketRemoteStateSource(url="ws://localhost:7779/ws/state")
+# for local subscriptions.
 MCPRemoteStateSource = WebSocketRemoteStateSource
