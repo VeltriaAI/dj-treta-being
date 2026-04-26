@@ -347,7 +347,13 @@ class DeckWidget(Static):
         remaining = deck.get("remaining_seconds", 0)
         synced = deck.get("sync_enabled", False)
         vol = deck.get("volume", 1.0)
-        rate = deck.get("rate", 0) * 100  # as percentage
+        # Derive rate% from bpm vs file_bpm — Mixxx's `rate` field has
+        # ambiguous semantics across versions (sometimes slider position,
+        # sometimes offset ratio). The bpm/file_bpm delta is always honest.
+        if file_bpm > 0 and bpm > 0:
+            rate = (bpm - file_bpm) / file_bpm * 100
+        else:
+            rate = 0.0
         loop = deck.get("loop_enabled", False)
 
         # EQ
