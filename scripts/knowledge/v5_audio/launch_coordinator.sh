@@ -23,8 +23,7 @@ GCP_ZONE="${GCP_ZONE:-us-central1-a}"
 DATASET_VERSION="${DATASET_VERSION:-v5}"
 COORDINATOR_MACHINE_TYPE="${COORDINATOR_MACHINE_TYPE:-e2-standard-2}"
 COORD_NAME="v5-coordinator-${RUN_ID//_/-}"
-COORD_NAME="${COORD_NAME,,}"
-COORD_NAME="${COORD_NAME:0:62}"
+COORD_NAME=$(echo "$COORD_NAME" | tr '[:upper:]' '[:lower:]' | cut -c1-62)
 
 echo "=== v5 launch (run_id=$RUN_ID, coord=$COORD_NAME) ==="
 
@@ -60,13 +59,25 @@ META_PARTS=(
 META=$(IFS=,; echo "${META_PARTS[*]}")
 
 # ── Create coordinator VM ─────────────────────────────────────────────
+# Use the prebuilt v5 image when available — boots in ~30s with all deps
+# already installed and ML models cached. Falls back to vanilla debian-12
+# (slow apt+pip install per VM) if the image hasn't been built yet.
+V5_IMAGE_NAME="${V5_IMAGE_NAME:-dj-treta-v5-worker-1}"
+if gcloud compute images describe "$V5_IMAGE_NAME" --project="$GCP_PROJECT" >/dev/null 2>&1; then
+    IMAGE_FLAGS="--image=$V5_IMAGE_NAME --image-project=$GCP_PROJECT"
+    echo "using prebuilt image: $V5_IMAGE_NAME"
+else
+    IMAGE_FLAGS="--image-family=debian-12 --image-project=debian-cloud"
+    echo "WARN: image $V5_IMAGE_NAME not found — using vanilla debian-12 (slow first boot)"
+    echo "      run ./build_image.sh once to make all future runs ~20 min faster per VM"
+fi
+
 gcloud compute instances create "$COORD_NAME" \
     --project="$GCP_PROJECT" \
     --zone="$GCP_ZONE" \
     --machine-type="$COORDINATOR_MACHINE_TYPE" \
     --boot-disk-size=50GB \
-    --image-family=debian-12 \
-    --image-project=debian-cloud \
+    $IMAGE_FLAGS \
     --scopes=cloud-platform \
     --metadata="$META" \
     --metadata-from-file=startup-script=startup_coordinator.sh

@@ -135,6 +135,19 @@ def spawn_workers():
     log.info(f"spawning {WORKER_COUNT} worker VMs...")
     spot_flag = "--provisioning-model=SPOT --instance-termination-action=DELETE" if USE_SPOT_WORKERS else ""
 
+    # Use prebuilt v5 image if it exists (boots ~30s vs ~20min vanilla debian).
+    v5_image = os.environ.get("V5_IMAGE_NAME", "dj-treta-v5-worker-1")
+    image_check = subprocess.run(
+        f"gcloud compute images describe {v5_image} --project={GCP_PROJECT}",
+        shell=True, capture_output=True,
+    )
+    if image_check.returncode == 0:
+        image_flags = f"--image={v5_image} --image-project={GCP_PROJECT}"
+        log.info(f"workers will boot from prebuilt image: {v5_image}")
+    else:
+        image_flags = "--image-family=debian-12 --image-project=debian-cloud"
+        log.info(f"WARN: image {v5_image} not found — using vanilla debian-12")
+
     for i in range(WORKER_COUNT):
         name = f"v5w-{RUN_ID.lower().replace('_', '-')}-{i:03d}"[:62]
         metadata = (
@@ -150,7 +163,7 @@ def spawn_workers():
             f"gcloud compute instances create {name} "
             f"--project={GCP_PROJECT} --zone={GCP_ZONE} "
             f"--machine-type={WORKER_MACHINE_TYPE} --boot-disk-size=50GB "
-            f"--image-family=debian-12 --image-project=debian-cloud "
+            f"{image_flags} "
             f"--scopes=cloud-platform "
             f"{spot_flag} "
             f"--metadata={shlex.quote(metadata)} "
