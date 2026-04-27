@@ -658,6 +658,17 @@ def main():
     # deadlocks the child workers. This is a known C-extension+fork issue.
     mp.set_start_method("spawn", force=True)
 
+    # Smoke-test critical binaries on startup. Fail loud rather than
+    # silently mark every track as download_failed.
+    for bin_path in (YT_DLP, FFMPEG):
+        if subprocess.run(
+            ["which", bin_path] if "/" not in bin_path else [bin_path, "--version"],
+            capture_output=True,
+        ).returncode != 0:
+            log.error(f"FATAL: binary missing: {bin_path}")
+            sys.exit(1)
+    log.info(f"binaries OK: {YT_DLP}, {FFMPEG}")
+
     log.info(f"shard {SHARD_ID} starting (workers={WORKERS_PER_VM})")
     shard_path = LOCAL_TMP / "shard.parquet"
     gcs().blob(queue_blob(SHARD_ID)).download_to_filename(str(shard_path))
