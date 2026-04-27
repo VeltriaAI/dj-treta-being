@@ -134,9 +134,27 @@ class StateSource:
 
 # ─── Remote WebSocket source ────────────────────────────────────────────
 
+
+def _read_token_file() -> str:
+    """Read ~/.config/dj-treta/token if present (chmod 600 expected)."""
+    try:
+        p = Path.home() / ".config" / "dj-treta" / "token"
+        if p.exists():
+            return p.read_text().strip()
+    except Exception:
+        pass
+    return ""
+
+
 DEFAULT_LOCAL_WS_URL = "ws://localhost:7779/ws/state"
-DEFAULT_REMOTE_WS_URL = "wss://dj.treta.life/ws/state"
-DEFAULT_REMOTE_CMD_URL = "wss://dj.treta.life/ws/command"
+# Remote points at the daemon's own WS server via nginx proxy
+# (/ws/agent/* → 127.0.0.1:7779 on the VM). Token-gated at the nginx
+# layer; same event protocol as local — full state + thinking + log +
+# transition + billing + talk_response. The legacy /ws/state on the
+# relay container is state-only and stays public for the web listener
+# page.
+DEFAULT_REMOTE_WS_URL = "wss://dj.treta.life/ws/agent/state"
+DEFAULT_REMOTE_CMD_URL = "wss://dj.treta.life/ws/agent/command"
 
 
 class WebSocketRemoteStateSource(StateSource):
@@ -173,7 +191,20 @@ class WebSocketRemoteStateSource(StateSource):
             cmd_parsed = parsed._replace(path="/ws/command", query="", fragment="")
             command_url = urlunparse(cmd_parsed)
         self.command_url = command_url
-        self.command_token = command_token or os.environ.get("DJTRETA_COMMAND_TOKEN") or os.environ.get("DJTRETA_RELAY_TOKEN") or ""
+        # Token resolution order:
+        #   1. Explicit constructor arg (CLI --token / direct caller)
+        #   2. DJTRETA_REMOTE_TOKEN env (new, canonical name for /ws/agent/*)
+        #   3. ~/.config/dj-treta/token  (chmod-600 file)
+        #   4. Legacy DJTRETA_COMMAND_TOKEN / DJTRETA_RELAY_TOKEN env vars
+        #      (kept for back-compat with the old relay's /ws/command)
+        self.command_token = (
+            command_token
+            or os.environ.get("DJTRETA_REMOTE_TOKEN")
+            or _read_token_file()
+            or os.environ.get("DJTRETA_COMMAND_TOKEN")
+            or os.environ.get("DJTRETA_RELAY_TOKEN")
+            or ""
+        )
 
         parsed = urlparse(url)
         self._host = parsed.hostname or url
@@ -423,13 +454,27 @@ class WebSocketRemoteStateSource(StateSource):
                     return
                 await asyncio.sleep(0.1)
 
+    def _state_url_with_auth(self) -> str:
+        """Return ``self.url`` with ``?token=`` appended when a token is set.
+
+        The relay's public ``/ws/state`` ignores the token (read is unauthed
+        there), and the local daemon doesn't check it either, so it's safe
+        to always append. The new ``/ws/agent/*`` path REQUIRES it (nginx
+        gate), so this is what makes the remote remote-full mode work.
+        """
+        if not self.command_token:
+            return self.url
+        parsed = urlparse(self.url)
+        sep = "&" if parsed.query else "?"
+        return f"{self.url}{sep}token={self.command_token}"
+
     async def _session_run(self):
         """One WebSocket session — connect, read frames until failure."""
         # Local import — only remote users need websockets on the import path.
         import websockets
 
         async with websockets.connect(
-            self.url,
+            self._state_url_with_auth(),
             open_timeout=10.0,
             ping_interval=20,
             ping_timeout=10,
