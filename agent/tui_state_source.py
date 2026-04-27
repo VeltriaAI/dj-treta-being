@@ -185,10 +185,19 @@ class WebSocketRemoteStateSource(StateSource):
         if command_token is None and token is not None:
             command_token = token
         self.url = url
-        # Derive default command URL from the state URL (same host, /ws/command).
+        # Derive default command URL from the state URL by swapping the last
+        # path segment from /state → /command. Preserves any prefix —
+        # critical for the /ws/agent/* path where the old hardcoded
+        # /ws/command would land on the relay container (different auth
+        # token) and return 403 to a TUI carrying the daemon-proxy token.
         if command_url is None:
             parsed = urlparse(url)
-            cmd_parsed = parsed._replace(path="/ws/command", query="", fragment="")
+            state_path = parsed.path
+            if state_path.endswith("/state"):
+                cmd_path = state_path[: -len("/state")] + "/command"
+            else:
+                cmd_path = "/ws/command"  # legacy / non-standard URLs
+            cmd_parsed = parsed._replace(path=cmd_path, query="", fragment="")
             command_url = urlunparse(cmd_parsed)
         self.command_url = command_url
         # Token resolution order:
