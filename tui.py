@@ -49,7 +49,9 @@ MUSIC_DIR = Path.home() / "Music" / "DJTreta"
 # Remote mode — human UI goes over WebSocket (public state + token-auth command).
 # MCP stays reserved for AI agents (Himani, Claude Desktop), not this TUI.
 DEFAULT_REMOTE_URL = DEFAULT_REMOTE_WS_URL  # wss://dj.treta.life/ws/state
-REMOTE_TOKEN_FILE = Path.home() / ".djtreta-command-token"
+REMOTE_TOKEN_FILE = Path.home() / ".config" / "dj-treta" / "token"
+# Legacy path — kept for back-compat with existing setups.
+LEGACY_REMOTE_TOKEN_FILE = Path.home() / ".djtreta-command-token"
 
 
 def _load_remote_token() -> str | None:
@@ -61,16 +63,28 @@ def _load_remote_token() -> str | None:
     Read-side (/ws/state) is public and needs no token; the token only
     authenticates the write channel.
     """
-    # DJTRETA_MCP_TOKEN is checked as a fallback for users who configured
-    # the original MCP-bearer token scheme (from the task spec). On the
-    # public WebSocket, the token is used on /ws/command only.
+    # Resolution order (highest priority first):
+    #   1. DJTRETA_REMOTE_TOKEN — canonical env name for the /ws/agent/* gate
+    #   2. ~/.config/dj-treta/token — canonical token file (chmod 600)
+    #   3. Legacy: DJTRETA_COMMAND_TOKEN, DJTRETA_RELAY_TOKEN, DJTRETA_MCP_TOKEN
+    #   4. Legacy file: ~/.djtreta-command-token
+    tok = os.environ.get("DJTRETA_REMOTE_TOKEN", "").strip()
+    if tok:
+        return tok
+    try:
+        if REMOTE_TOKEN_FILE.exists():
+            text = REMOTE_TOKEN_FILE.read_text().strip()
+            if text:
+                return text
+    except Exception:
+        pass
     for envvar in ("DJTRETA_COMMAND_TOKEN", "DJTRETA_RELAY_TOKEN", "DJTRETA_MCP_TOKEN"):
         tok = os.environ.get(envvar, "").strip()
         if tok:
             return tok
     try:
-        if REMOTE_TOKEN_FILE.exists():
-            text = REMOTE_TOKEN_FILE.read_text().strip()
+        if LEGACY_REMOTE_TOKEN_FILE.exists():
+            text = LEGACY_REMOTE_TOKEN_FILE.read_text().strip()
             return text or None
     except Exception:
         pass
