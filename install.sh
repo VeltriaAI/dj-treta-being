@@ -42,7 +42,7 @@ set -eu
 # ─── Defaults (override via env before piping to sh) ───────────────────
 
 DJCLAW_VERSION="${DJCLAW_VERSION:-9.1.2}"
-MIXXX_VERSION="${MIXXX_VERSION:-v2.6.0-treta-3}"
+MIXXX_VERSION="${MIXXX_VERSION:-v2.6.0-treta-4}"
 
 DJCLAW_REPO="${DJCLAW_REPO:-VeltriaAI/dj-treta-being}"
 MIXXX_REPO="${MIXXX_REPO:-VeltriaAI/mixxx}"
