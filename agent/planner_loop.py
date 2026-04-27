@@ -298,22 +298,35 @@ class PlannerMixin:
                         for i, t in enumerate(validated["tracks"]):
                             t["rank"] = i + 1
             else:
+                # v8 path validation — relaxed.
+                #
+                # Flash sometimes returns real-world track names from training
+                # data ("Massano - The Lights" exists; we don't have it). The
+                # old code dropped every such candidate, leaving the planner
+                # with an EMPTY playlist whenever Flash hallucinated more than
+                # 4 of its 5 picks (observed on VM: 0-track playlists →
+                # emergency_load every minute).
+                #
+                # New behavior: keep the candidate but flag it. If the path
+                # isn't in the library we mark `downloaded=False` so the
+                # library_loop can try to fetch it via the title (Flash often
+                # picks real tracks YouTube can resolve), and so DJ knows to
+                # try the next candidate via load_track's fuzzy resolver
+                # rather than treating it as a guaranteed-good local file.
                 library_paths = {t.get("path", "") for t in library}
                 library_paths.discard("")
                 if library_paths and validated.get("tracks"):
-                    before = len(validated["tracks"])
-                    validated["tracks"] = [
-                        t for t in validated["tracks"]
-                        if t.get("path") in library_paths
-                    ]
-                    invalid = before - len(validated["tracks"])
-                    if invalid:
+                    flagged = 0
+                    for t in validated["tracks"]:
+                        if t.get("path") not in library_paths:
+                            t["downloaded"] = False
+                            flagged += 1
+                    if flagged:
                         log.info(
-                            f"Planner path-validation filter: dropped {invalid} "
-                            f"invalid-path candidate(s) from playlist"
+                            f"Planner v8 validation: {flagged} candidate(s) "
+                            f"with unknown paths flagged downloaded=False "
+                            f"(library_loop will fetch / DJ will skip)"
                         )
-                        for i, t in enumerate(validated["tracks"]):
-                            t["rank"] = i + 1
             # BUG-6 fix (Phase A2 dry run #2 2026-04-19): planner's
             # played-title exclusion uses the YouTube display title
             # while the library uses a canonical title — Flash can't
