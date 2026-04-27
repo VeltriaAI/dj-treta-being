@@ -21,12 +21,19 @@ done
 
 echo "=== v5 coordinator (run_id=$RUN_ID) ==="
 
+# Force SSL libs to use system CA bundle (fixes "unable to get local issuer
+# certificate" in venv on fresh Debian 12 GCE images).
+export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+
 # ── Install deps ──────────────────────────────────────────────────────
 if [ ! -f /var/lib/v5_coord_setup_done ]; then
     apt-get update -qq
-    apt-get install -y -qq python3-pip python3-venv
+    apt-get install -y -qq python3-pip python3-venv ca-certificates
+    update-ca-certificates
     python3 -m venv /opt/venv
     /opt/venv/bin/pip install -q --upgrade pip
+    /opt/venv/bin/pip install -q certifi
     /opt/venv/bin/pip install -q polars pyarrow google-cloud-storage huggingface_hub
     touch /var/lib/v5_coord_setup_done
 fi
