@@ -1,15 +1,47 @@
 """SQLite database for DJ Treta — tracks, history, learnings.
 
-Single file: djtreta.db in repo root.
+DB path resolution order:
+  1. ``$DJCLAW_DB_PATH`` — explicit override (tests, alt installs)
+  2. Repo-local ``djtreta.db`` if running inside a checkout (dev flow)
+  3. ``~/.local/share/djclaw/db/djtreta.db`` — XDG end-user install,
+     created by the installer.
+
 Replaces: .analysis/*.txt, learnings.json, session.json playlist caches.
 """
 
 import json
+import os
 import sqlite3
 import time
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent.parent / "djtreta.db"
+
+def _resolve_db_path() -> Path:
+    """Return the SQLite path. Resolution order:
+
+      1. ``$DJCLAW_DB_PATH`` env — explicit override
+      2. Repo-local ``djtreta.db`` if it exists at the checkout root —
+         keeps existing dev workflow stable; never auto-migrates a dev's
+         data into XDG behind their back
+      3. ``~/.local/share/djclaw/db/djtreta.db`` — installer-managed,
+         created on first init_db() if it doesn't already exist
+    """
+    env = os.environ.get("DJCLAW_DB_PATH")
+    if env:
+        p = Path(env).expanduser()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
+
+    repo_db = Path(__file__).parent.parent / "djtreta.db"
+    if repo_db.exists():
+        return repo_db
+
+    xdg = Path("~/.local/share/djclaw/db/djtreta.db").expanduser()
+    xdg.parent.mkdir(parents=True, exist_ok=True)
+    return xdg
+
+
+DB_PATH = _resolve_db_path()
 
 
 def get_db() -> sqlite3.Connection:

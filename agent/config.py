@@ -156,24 +156,66 @@ def _pick_fields(d: dict, cls: type) -> dict:
     return {k: v for k, v in d.items() if k in fields}
 
 
-def load_config(path: str | Path | None = None) -> Config:
-    """Load config from YAML file. Also loads .env if present."""
-    # Load .env file if it exists (before anything else)
-    env_file = Path(__file__).parent.parent / ".env"
-    if env_file.exists():
+def _resolve_config_path() -> Path:
+    """Pick the config file path with end-user installs in mind.
+
+    Search order (first hit wins):
+      1. ``$DJCLAW_CONFIG`` — explicit override, used by tests and CI
+      2. ``~/.config/djclaw/config.yaml`` — XDG home, written by the
+         installer's first-run wizard. This is where end-user installs
+         (`curl … | sh`) keep their config.
+      3. Repo-local ``config.local.yaml`` — dev convenience, gitignored
+      4. Repo-local ``config.yaml``                   — tracked default
+
+    The repo-local fallbacks let `djclaw` keep working when run from a
+    git checkout (the developer flow) without forcing every dev to
+    populate ~/.config/djclaw.
+    """
+    env_path = os.environ.get("DJCLAW_CONFIG")
+    if env_path:
+        return Path(env_path).expanduser()
+
+    xdg = Path("~/.config/djclaw/config.yaml").expanduser()
+    if xdg.exists():
+        return xdg
+
+    repo_root = Path(__file__).parent.parent
+    local = repo_root / "config.local.yaml"
+    if local.exists():
+        return local
+    return repo_root / "config.yaml"
+
+
+def _load_secrets_env() -> None:
+    """Populate ``os.environ`` from the user's secrets file(s).
+
+    Loads in this order so XDG (end-user install) wins over repo-local
+    (dev), but neither overrides shell env vars already set:
+      1. ``~/.config/djclaw/secrets.env``  (chmod 600, installer-managed)
+      2. Repo-local ``.env``                (dev fallback, gitignored)
+    """
+    candidates = [
+        Path("~/.config/djclaw/secrets.env").expanduser(),
+        Path(__file__).parent.parent / ".env",
+    ]
+    for env_file in candidates:
+        if not env_file.exists():
+            continue
         for line in env_file.read_text().strip().split("\n"):
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 key, _, value = line.partition("=")
+                # setdefault → never override an already-set var, so
+                # later candidates can fill in gaps from earlier ones
                 os.environ.setdefault(key.strip(), value.strip())
 
+
+def load_config(path: str | Path | None = None) -> Config:
+    """Load config from YAML file. Also loads secrets / .env if present."""
+    _load_secrets_env()
+
     if path is None:
-        # Look for config.local.yaml first (gitignored, user-specific), fall
-        # back to config.yaml (tracked, repo default). Lets contributors
-        # override without diffing the canonical config.
-        repo_root = Path(__file__).parent.parent
-        local = repo_root / "config.local.yaml"
-        path = local if local.exists() else (repo_root / "config.yaml")
+        path = _resolve_config_path()
     path = Path(path)
 
     if not path.exists():
