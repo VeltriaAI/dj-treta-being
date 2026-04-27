@@ -10,24 +10,27 @@ specific paths. All runtime state goes through env vars.
 
 ## What it produces
 
-`v5/dj_treta_library.parquet` on HuggingFace — v4 schema + new columns:
+`v5/dj_treta_library.parquet` on HuggingFace — v4 schema + Anyma-tier
+columns from a 12-tier analysis pipeline:
 
-```
-bpm_exact            float    — Essentia RhythmExtractor2013
-bpm_confidence       float    — 0.0-1.0
-key_detected         str      — "Am", "F#m"
-key_camelot          str      — "8A", "3B"
-beat_grid_json       str      — JSON [{"t_ms": 1234, "beat_num": 0}, …] (first 128 beats)
-energy_profile_json  str      — JSON [rms_0..N] at 10s windows
-cue_point_ms         int      — first clean downbeat
-lufs_integrated      float    — for deck volume normalization
-waveform_rms_json    str      — JSON [rms] at 1s resolution
-spectral_centroid    float    — brightness fingerprint
-duration_ms_exact    int      — actual duration from audio (vs metadata)
-analysis_version     str      — e.g. "essentia-2.1_librosa-0.10"
-analyzed_at          str      — ISO timestamp
-audio_path           str      — relative GCS path "audio/{mbid}.m4a", null if not retained
-```
+| Tier | Library | Columns added |
+|------|---------|---------------|
+| 1 | yt-dlp | (downloads audio to GCS) |
+| 2 | Essentia | `bpm_exact`, `bpm_confidence`, `key_detected`, `key_camelot`, `key_strength`, `lufs_integrated`, `duration_ms_exact`, `waveform_rms_json` (1s res), `energy_profile_json` (10s res) |
+| 3 | madmom | `downbeats_json` (capped 512), `phrases_json` (8/16/32 bar groupings), `bar_count` |
+| 4 | (heuristic) | `drops_json`, `build_ups_json`, `breakdowns_json`, `hot_cues_json` (8 anchors: first_downbeat, intro_end, build_1, drop_1, drop_2, break_1, outro_start, last_beat) |
+| 5 | silero-vad | `vocal_segments_json` (start_ms/end_ms list) |
+| 6 | laion-CLAP | `clap_embedding` (512-dim vibe vector) |
+| 7 | musicnn | `musicnn_tags_json` (top-10 mood/genre tags) |
+| 8 | htdemucs | uploads `stems/{mbid}/{drums,bass,vocals,other}.opus`, sets `stem_*_path` |
+| 9 | (per stem) | `stem_drums_rms`, `stem_bass_rms`, `stem_vocals_rms`, `stem_other_rms`, durations |
+| 10 | basic-pitch | uploads `midi/{mbid}.mid`, sets `midi_path` |
+| 11 | faster-whisper | uploads `lyrics/{mbid}.json` (vocal-stem transcription, time-aligned), sets `lyrics_path`, `lyrics_language` |
+| 12 | librosa | uploads `mel/{mbid}.npy` (128-bin mel spectrogram, fp16), sets `mel_path` |
+| Final | — | `audio_path` = `audio/{mbid}.m4a`, `analyzed_at`, `analysis_version`, `analysis_error` (null on success) |
+
+All `*_path` columns store **relative paths** (no bucket name embedded).
+Construct full URI at runtime: `f"gs://{GCS_BUCKET}/{row.audio_path}"`.
 
 ## Architecture
 
@@ -59,14 +62,21 @@ launch_coordinator → coordinator.py
 
 Mac just runs `launch_coordinator.sh` once and can sleep.
 
-## Cost estimate
+## Cost estimate (Mumbai, asia-south1)
 
-- Coordinator VM: e2-standard-2, ~$0.07/hr × 24h ≈ **$2**
-- Workers: 32 × e2-standard-4 spot, ~$0.08/hr × 18h × 32 ≈ **$46**
-- GCS storage during run: ~negligible (queue+results parquets)
-- GCS storage if `KEEP_AUDIO_HOT=true` (~5K hot tracks ≈ 30GB) ≈ **$0.60/mo**
-- HF upload bandwidth: free
-- **Total one-time: ~$50** for ~200K tracks analyzed
+| Run scope | Compute | Storage (Standard, Mumbai) |
+|---|---|---|
+| Test (3 VMs × 600 tracks) | ~$0.50 | ~$0.50/mo |
+| Priority (32 VMs × 200K) | ~$220 | ~$160/mo (7 TB) |
+| **Full (128 VMs × 2.94M)** | **~$4,000** | **~$1,200/mo blended** (103 TB) |
+
+Per-track: ~150-180s at full pipeline (download 30s + Essentia 3s +
+madmom 5s + structure 1s + VAD 5s + CLAP 2s + musicnn 3s + htdemucs 120s
++ per-stem 5s + basic-pitch 10s + Whisper 15s + mel 5s).
+
+Privacy: audio + stems + MIDI + lyrics + mels stay in **private GCS**.
+Only metadata (BPM/key/embeddings/phrases/cues/segments/etc.) is published
+to HuggingFace.
 
 ## Files
 

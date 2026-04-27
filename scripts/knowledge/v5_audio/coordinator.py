@@ -143,6 +143,7 @@ def spawn_workers():
             f"DATASET_VERSION={DATASET_VERSION},"
             f"RUN_ID={RUN_ID},"
             f"SHARD_ID={i},"
+            f"WORKERS_PER_VM={os.environ.get('WORKERS_PER_VM', '3')},"
             f"KEEP_AUDIO_HOT={'true' if KEEP_AUDIO_HOT else 'false'}"
         )
         cmd = (
