@@ -18,8 +18,10 @@ export WORKERS_PER_VM=$(get_meta WORKERS_PER_VM 2>/dev/null || echo 3)
 
 echo "=== v5 worker shard=$SHARD_ID ==="
 
-# Force SSL libs to use system CA bundle (fixes "unable to get local issuer
-# certificate" in venv on fresh Debian 12 GCE images).
+# Mumbai's GCE metadata endpoint negotiates HTTPS first. Newer google-auth
+# tries https://metadata.google.internal:443 and fails on the internal CA.
+# Force the legacy HTTP path + pin older google-auth.
+export GCE_METADATA_HOST_USE_HTTPS=False
 export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 
@@ -37,10 +39,12 @@ if [ ! -f /var/lib/v5_setup_done ]; then
     /opt/venv/bin/pip install -q --upgrade pip wheel setuptools
     # numpy<2 first to lock it
     /opt/venv/bin/pip install -q "numpy<2.0"
+    # Pin urllib3<2 and older google-auth to avoid Mumbai HTTPS metadata bug
+    /opt/venv/bin/pip install -q "urllib3<2" certifi
+    /opt/venv/bin/pip install -q "google-auth==2.29.0" "google-cloud-storage==2.18.0"
     # Core libs
     /opt/venv/bin/pip install -q \
         polars pyarrow scipy soundfile \
-        google-cloud-storage \
         yt-dlp librosa
     # Essentia (binary wheel for x86_64 Linux)
     /opt/venv/bin/pip install -q essentia || /opt/venv/bin/pip install -q essentia-tensorflow
