@@ -645,6 +645,11 @@ def _flush(worker_id: int, rows: list[dict]):
 
 
 def main():
+    # Use spawn (fresh interpreter) instead of fork — fork inherits parent's
+    # locked threadpool state from polars/numpy/google-cloud-storage and
+    # deadlocks the child workers. This is a known C-extension+fork issue.
+    mp.set_start_method("spawn", force=True)
+
     log.info(f"shard {SHARD_ID} starting (workers={WORKERS_PER_VM})")
     shard_path = LOCAL_TMP / "shard.parquet"
     gcs().blob(queue_blob(SHARD_ID)).download_to_filename(str(shard_path))
