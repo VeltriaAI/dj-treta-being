@@ -102,11 +102,19 @@ def asset_paths(mbid: str) -> dict:
     }
 
 
+# Resolve binaries from venv (PATH doesn't include /opt/venv/bin by default
+# when worker.py is invoked as `/opt/venv/bin/python worker.py`).
+VENV_BIN = "/opt/venv/bin"
+YT_DLP = f"{VENV_BIN}/yt-dlp"
+DEMUCS_PY = f"{VENV_BIN}/python3"  # for `python -m demucs.separate`
+FFMPEG = "ffmpeg"  # system binary, always in PATH
+
+
 # ── Tier 1: Download ──────────────────────────────────────────────────
 def download_audio(video_id: str, dest: Path) -> bool:
     url = f"https://music.youtube.com/watch?v={video_id}"
     cmd = [
-        "yt-dlp",
+        YT_DLP,
         "-f",
         "bestaudio[ext=m4a]/bestaudio",
         "--no-playlist",
@@ -354,7 +362,7 @@ def separate_stems(audio_path: Path, mbid: str) -> dict:
     out_dir = LOCAL_TMP / f"stems_{mbid}"
     out_dir.mkdir(exist_ok=True)
     cmd = [
-        "python3", "-m", "demucs.separate",
+        DEMUCS_PY, "-m", "demucs.separate",
         "-n", "htdemucs",
         "-o", str(out_dir),
         "--mp3",  # closer to opus and demucs supports it natively; we re-encode to opus after
@@ -378,7 +386,7 @@ def separate_stems(audio_path: Path, mbid: str) -> dict:
         opus_path = out_dir / f"{stem_name}.opus"
         try:
             subprocess.run(
-                ["ffmpeg", "-y", "-i", str(src), "-c:a", "libopus", "-b:a", "192k",
+                [FFMPEG, "-y", "-i", str(src), "-c:a", "libopus", "-b:a", "192k",
                  "-vn", str(opus_path)],
                 capture_output=True, check=True, timeout=120,
             )
