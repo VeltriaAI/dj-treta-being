@@ -42,7 +42,7 @@ set -eu
 # ─── Defaults (override via env before piping to sh) ───────────────────
 
 DJCLAW_VERSION="${DJCLAW_VERSION:-9.1.2}"
-MIXXX_VERSION="${MIXXX_VERSION:-v2.6.0-treta-4}"
+MIXXX_VERSION="${MIXXX_VERSION:-v2.6.0-treta-5}"
 
 DJCLAW_REPO="${DJCLAW_REPO:-VeltriaAI/dj-treta-being}"
 MIXXX_REPO="${MIXXX_REPO:-VeltriaAI/mixxx}"
@@ -174,10 +174,13 @@ fetch_mixxx_for_platform() {
     say "Fetching Mixxx-Treta $MIXXX_VERSION for $PLATFORM…"
     mkdir -p "$mixxx_dir"
 
+    # Asset filenames are set by release-treta.yml — DMGs are
+    # disambiguated by arch (-arm64 / -x64) because CPack outputs
+    # collide on basename.
     local pattern
     case "$PLATFORM" in
-      macos-arm64) pattern='macosarm\.dmg$' ;;
-      macos-x64)   pattern='macosintel\.dmg$' ;;
+      macos-arm64) pattern='macos-arm64\.dmg$' ;;
+      macos-x64)   pattern='macos-x64\.dmg$' ;;
       linux-x64)   pattern='\.deb$' ;;
     esac
 
