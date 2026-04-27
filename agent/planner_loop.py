@@ -277,26 +277,31 @@ class PlannerMixin:
                     for c in v9_merged if not c.get("downloaded")
                 }
                 dataset_refs.discard(("", ""))
+                # Same relaxation as v8 (see comment below): drop nothing,
+                # mark mismatches as downloaded=False so library_loop fetches
+                # them and DJ falls through via load_track's fuzzy resolver.
+                # When v9_merged is small (e.g. LanceDB unavailable) Flash
+                # picks from training-data memory; the strict drop emptied
+                # the playlist and burned to emergency_load.
                 if validated.get("tracks"):
-                    before = len(validated["tracks"])
-                    kept = []
+                    flagged = 0
                     for t in validated["tracks"]:
                         if t.get("downloaded", True):
-                            if t.get("path") in local_paths:
-                                kept.append(t)
+                            if t.get("path") not in local_paths:
+                                t["downloaded"] = False
+                                flagged += 1
                         else:
                             ref = (t.get("mbid", ""), t.get("video_id", ""))
-                            if ref in dataset_refs:
-                                kept.append(t)
-                    validated["tracks"] = kept
-                    invalid = before - len(kept)
-                    if invalid:
+                            if ref not in dataset_refs:
+                                # Already undownloaded; nothing to flip,
+                                # but keep the candidate — library_loop
+                                # will try fetching by title.
+                                flagged += 1
+                    if flagged:
                         log.info(
-                            f"Planner v9 ref-validation: dropped {invalid} "
-                            f"unknown-ref candidate(s) from playlist"
+                            f"Planner v9 validation: {flagged} candidate(s) "
+                            f"with unknown refs flagged for fetch / fuzzy load"
                         )
-                        for i, t in enumerate(validated["tracks"]):
-                            t["rank"] = i + 1
             else:
                 # v8 path validation — relaxed.
                 #

@@ -67,7 +67,7 @@ sources:
   treta_originals: false
 
 knowledge:
-  enabled: true  # v9 NaturNestAI/electronic-music-knowledge v3 — 3.5M tracks
+  enabled: false  # LanceDB rebuild pending. With vectors gone, v9 surfacing returns a thin candidate set and Flash hallucinates around it — flip back to true once vectors are restored.
   data_dir: "~/Music/DJTreta/knowledge"
   embedding_model: "text-embedding-005"  # used for online query embedding (similar_to_text)
   embedding_dim: 384                     # Matryoshka-truncated from 768
