@@ -159,6 +159,9 @@ def spawn_workers():
             f"WORKERS_PER_VM={os.environ.get('WORKERS_PER_VM', '3')},"
             f"KEEP_AUDIO_HOT={'true' if KEEP_AUDIO_HOT else 'false'}"
         )
+        # Each worker gets its own ephemeral public IP — diverse source
+        # IPs reduce yt-dlp rate-limiting risk vs sharing one Cloud NAT IP.
+        # Requires IN_USE_ADDRESSES quota >= WORKER_COUNT in the region.
         cmd = (
             f"gcloud compute instances create {name} "
             f"--project={GCP_PROJECT} --zone={GCP_ZONE} "
@@ -170,10 +173,13 @@ def spawn_workers():
             f"--metadata-from-file=startup-script={THIS_DIR / 'startup_worker.sh'} "
             f"--no-restart-on-failure"
         )
-        subprocess.run(cmd, shell=True, check=False, capture_output=True)
-        log.info(f"worker {i:03d} created")
+        r = subprocess.run(cmd, shell=True, check=False, capture_output=True, text=True)
+        if r.returncode != 0:
+            log.error(f"worker {i:03d} create FAILED: {r.stderr[-400:]}")
+        else:
+            log.info(f"worker {i:03d} created")
         time.sleep(0.2)
-    log.info(f"all {WORKER_COUNT} workers spawned")
+    log.info(f"workers spawn loop done — verify with `gcloud compute instances list`")
 
 
 # ── Phase 3: monitor + merge ──────────────────────────────────────────
