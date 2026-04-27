@@ -639,9 +639,12 @@ def main():
             from agent.init import run_init
             run_init()
             return
-        elif cmd in ("validate-config", "validate", "check"):
+        elif cmd in ("doctor", "validate-config", "validate", "check"):
             from agent.validate import main as validate_main
             sys.exit(validate_main())
+        elif cmd == "setup":
+            from agent.setup_wizard import main as setup_main
+            sys.exit(setup_main())
 
     # Interactive mode
     console.print(BANNER)
