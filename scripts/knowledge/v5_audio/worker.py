@@ -1,4 +1,4 @@
-"""v5 audio worker — full Anyma-tier analysis pipeline.
+"""v5 audio worker — DJ-essential analysis pipeline (trimmed from full v5).
 
 Per track, in order (each tier wrapped in try/except — failure of one tier
 doesn't kill the rest, partial data is better than no data):
@@ -8,16 +8,19 @@ doesn't kill the rest, partial data is better than no data):
   Tier 3: Madmom (downbeats, bars, phrase boundaries, sections)
   Tier 4: Structure (drops, build-ups, breakdowns, 8 hot cues — heuristic
           on phrase + energy + spectral flux)
-  Tier 5: silero-vad on full mix (vocal segments)
+  Tier 5: silero-vad on full mix (vocal segments — where vocals start/stop)
   Tier 6: CLAP embedding (512-dim, vibe similarity)
-  Tier 7: musicnn genre/mood tags
-  Tier 8: htdemucs stems (drums/bass/vocals/other) → upload Opus 192kbps
-  Tier 9: Per-stem features (drum-only beat, bass-only key, etc.)
-  Tier 10: basic-pitch MIDI extraction → upload .mid
-  Tier 11: Whisper on vocals stem → lyrics + alignment
-  Tier 12: Multi-res mel spectrograms → upload .npy
-  Final: Upload audio + stems + midi + mel + lyrics to GCS, write parquet
-         row, delete /tmp files, checkpoint.
+  Tier 7: htdemucs stems (drums/bass/vocals/other) → upload Opus 192kbps
+  Tier 8: Per-stem features (RMS, durations)
+  Tier 9: Multi-res mel spectrograms → upload .npy (training-time use)
+  Final: Upload audio + stems + mel to GCS, write parquet row,
+         delete /tmp files, checkpoint.
+
+DROPPED (not essential for DJ runtime, can re-process audio later if needed):
+  - Whisper on vocals stem (silero-vad already gives vocal timestamps;
+    DJ rarely needs the actual lyrics text to mix)
+  - musicnn genre/mood tags (v4 already filtered electronic via Discogs styles)
+  - basic-pitch MIDI extraction (no live MIDI use case)
 
 Spawns N parallel processes per VM (configured via WORKERS_PER_VM).
 
@@ -96,9 +99,7 @@ def asset_paths(mbid: str) -> dict:
         "stem_bass": f"stems/{mbid}/bass.opus",
         "stem_vocals": f"stems/{mbid}/vocals.opus",
         "stem_other": f"stems/{mbid}/other.opus",
-        "midi": f"midi/{mbid}.mid",
         "mel": f"mel/{mbid}.npy",
-        "lyrics": f"lyrics/{mbid}.json",
     }
 
 
@@ -346,17 +347,7 @@ def embed_clap(audio_path: Path) -> dict:
         return {"clap_embedding": None, "_clap_error": str(e)[:80]}
 
 
-# ── Tier 7: musicnn genre/mood tags ───────────────────────────────────
-def analyze_musicnn(audio_path: Path) -> dict:
-    try:
-        from musicnn.tagger import top_tags
-        tags = top_tags(str(audio_path), model="MTT_musicnn", topN=10)
-        return {"musicnn_tags_json": json.dumps(list(tags))}
-    except Exception as e:
-        return {"musicnn_tags_json": None, "_musicnn_error": str(e)[:80]}
-
-
-# ── Tier 8: Stems (htdemucs) ──────────────────────────────────────────
+# ── Tier 7: Stems (htdemucs) ──────────────────────────────────────────
 def separate_stems(audio_path: Path, mbid: str) -> dict:
     """Run htdemucs, return paths to {drums,bass,vocals,other}.opus locally."""
     out_dir = LOCAL_TMP / f"stems_{mbid}"
@@ -397,7 +388,7 @@ def separate_stems(audio_path: Path, mbid: str) -> dict:
     return {"stems_paths": stems}
 
 
-# ── Tier 9: Per-stem features ─────────────────────────────────────────
+# ── Tier 8: Per-stem features ─────────────────────────────────────────
 def analyze_stems(stems_paths: dict, sr: int = 44100) -> dict:
     if not stems_paths:
         return {}
@@ -414,42 +405,7 @@ def analyze_stems(stems_paths: dict, sr: int = 44100) -> dict:
     return out
 
 
-# ── Tier 10: basic-pitch MIDI ─────────────────────────────────────────
-def extract_midi(audio_path: Path, mbid: str) -> Path | None:
-    try:
-        from basic_pitch.inference import predict_and_save
-        out_dir = LOCAL_TMP / f"midi_{mbid}"
-        out_dir.mkdir(exist_ok=True)
-        predict_and_save(
-            [str(audio_path)],
-            output_directory=str(out_dir),
-            save_midi=True,
-            sonify_midi=False,
-            save_model_outputs=False,
-            save_notes=False,
-        )
-        midi_files = list(out_dir.glob("*.mid")) + list(out_dir.glob("*.midi"))
-        return midi_files[0] if midi_files else None
-    except Exception:
-        return None
-
-
-# ── Tier 11: Whisper on vocals stem ───────────────────────────────────
-def transcribe_vocals(vocals_path: Path) -> dict | None:
-    try:
-        from faster_whisper import WhisperModel
-        global _WHISPER_MODEL
-        if "_WHISPER_MODEL" not in globals():
-            _WHISPER_MODEL = WhisperModel("tiny", device="cpu", compute_type="int8")
-        segments, info = _WHISPER_MODEL.transcribe(str(vocals_path), beam_size=1)
-        segs = [{"start_ms": int(s.start * 1000), "end_ms": int(s.end * 1000), "text": s.text.strip()}
-                for s in segments]
-        return {"language": info.language, "segments": segs}
-    except Exception:
-        return None
-
-
-# ── Tier 12: Multi-res mel spectrograms ───────────────────────────────
+# ── Tier 9: Multi-res mel spectrograms ────────────────────────────────
 def compute_mel(audio: np.ndarray, sr: int = 44100) -> np.ndarray | None:
     try:
         import librosa
@@ -524,13 +480,7 @@ def process_one(row: dict) -> dict | None:
         except Exception as e:
             log.warning(f"{mbid} clap: {e}")
 
-        # Tier 7
-        try:
-            result.update(analyze_musicnn(audio_path))
-        except Exception as e:
-            log.warning(f"{mbid} musicnn: {e}")
-
-        # Tier 8
+        # Tier 7 — stems
         stems_data = separate_stems(audio_path, mbid)
         stems_paths = stems_data.get("stems_paths") or {}
 
@@ -543,36 +493,13 @@ def process_one(row: dict) -> dict | None:
             except Exception as e:
                 log.warning(f"{mbid} upload stem {stem_name}: {e}")
 
-        # Tier 9
+        # Tier 8 — per-stem features
         try:
             result.update(analyze_stems(stems_paths))
         except Exception as e:
             log.warning(f"{mbid} stems analyze: {e}")
 
-        # Tier 10
-        midi_path = extract_midi(audio_path, mbid)
-        if midi_path and midi_path.exists():
-            try:
-                bucket.blob(paths["midi"]).upload_from_filename(str(midi_path))
-                result["midi_path"] = paths["midi"]
-            except Exception:
-                pass
-
-        # Tier 11 — Whisper on vocals stem
-        if "vocals" in stems_paths:
-            tx = transcribe_vocals(stems_paths["vocals"])
-            if tx:
-                lyrics_local = LOCAL_TMP / f"{mbid}_lyrics.json"
-                lyrics_local.write_text(json.dumps(tx))
-                try:
-                    bucket.blob(paths["lyrics"]).upload_from_filename(str(lyrics_local))
-                    result["lyrics_path"] = paths["lyrics"]
-                    result["lyrics_language"] = tx.get("language")
-                    lyrics_local.unlink()
-                except Exception:
-                    pass
-
-        # Tier 12 — mel spectrogram
+        # Tier 9 — mel spectrogram
         if audio_arr is not None:
             mel = compute_mel(audio_arr)
             if mel is not None:
@@ -606,8 +533,6 @@ def process_one(row: dict) -> dict | None:
             if audio_path.exists():
                 audio_path.unlink()
             for d in LOCAL_TMP.glob(f"stems_{mbid}*"):
-                shutil.rmtree(d, ignore_errors=True)
-            for d in LOCAL_TMP.glob(f"midi_{mbid}*"):
                 shutil.rmtree(d, ignore_errors=True)
         except Exception:
             pass
