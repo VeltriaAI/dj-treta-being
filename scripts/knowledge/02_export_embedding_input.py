@@ -1,5 +1,4 @@
 """K0 step 2 — Export JSONL of embedding inputs to GCS.
-import os
 
 Reads the v3 parquet, builds a short embedding-text per row, writes a JSONL
 file per 500k rows directly to gs://${DJTRETA_GCS_BUCKET}/embeddings/input/
@@ -12,6 +11,8 @@ Vertex AI batch-prediction input schema for text-embedding-005:
     {"content": "...", "task_type": "RETRIEVAL_DOCUMENT"}
 """
 from __future__ import annotations
+
+import os
 
 import json
 import sys

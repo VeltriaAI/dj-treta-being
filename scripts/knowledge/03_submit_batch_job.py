@@ -1,5 +1,4 @@
 """K0 step 3 — Submit Vertex AI batch-prediction jobs for text embeddings.
-import os
 
 Vertex batch prediction caps at 1M instances per job. We have 3.5M rows split
 into 8 × 500k chunks, so submit 4 jobs of 2 chunks each (= 1M per job) in
@@ -9,6 +8,8 @@ Model: publishers/google/models/text-embedding-005 (multilingual, 768-dim)
 Output: gs://${DJTRETA_GCS_BUCKET}/embeddings/output/<job_id>/
 """
 from __future__ import annotations
+
+import os
 
 import sys
 import time

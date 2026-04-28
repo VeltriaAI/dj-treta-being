@@ -1,5 +1,4 @@
 """K0 step 4 — Wait for all batch jobs then stream outputs into LanceDB.
-import os
 
 Reads `scripts/knowledge/.job_ids` (one resource name per line). Polls each
 every 30s until all complete. Streams predictions from every SUCCEEDED job's
@@ -12,6 +11,8 @@ Vectors are Matryoshka-truncated from 768 → 384 dims. After ingestion, builds
 an IVF-PQ index.
 """
 from __future__ import annotations
+
+import os
 
 import json
 import sys
