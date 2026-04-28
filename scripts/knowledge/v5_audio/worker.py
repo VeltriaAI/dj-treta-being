@@ -164,8 +164,12 @@ def analyze_essentia(audio_path: Path, sr: int = 44100) -> dict:
     key_detected = f"{key_root}{'m' if key_scale == 'minor' else ''}"
     key_camelot = KEY_TO_CAMELOT.get((key_root, key_scale), "")
 
+    # Essentia's EBUR128 needs stereo; we have mono. Use pyloudnorm instead
+    # (pure-Python ITU-R BS.1770 LUFS, works on mono/stereo).
     try:
-        lufs_int = float(es.LoudnessEBUR128()(audio)[2])
+        import pyloudnorm as pyln
+        meter = pyln.Meter(sr)
+        lufs_int = float(meter.integrated_loudness(audio))
     except Exception:
         lufs_int = float("nan")
 
@@ -198,25 +202,34 @@ def analyze_essentia(audio_path: Path, sr: int = 44100) -> dict:
     }
 
 
-# ── Tier 3: Allin1 (downbeats, bars, phrases, segment labels) ─────────
-# Replaced madmom (abandoned, broken on Python 3.11) with allin1 (Sony CSI
-# 2024). Bonus: allin1 also detects segment-level structure (intro/verse/
-# chorus/bridge/outro) which madmom couldn't do.
+# ── Tier 3: BeatNet (downbeats, bars, phrases) ────────────────────────
+# Replaced allin1 → which transitively imports madmom → which doesn't
+# install on Python 3.11. BeatNet is pure-PyTorch, no madmom dependency,
+# maintained 2024, gives beats + downbeats for any genre.
+# Section labels (intro/verse/chorus) are not produced — we keep using
+# the heuristic structure tier (drops/builds/breakdowns/hot_cues) which
+# already covers the DJ use case.
+_BEATNET_MODEL = None
+
+
 def analyze_madmom(audio_path: Path, beat_times: list[float]) -> dict:
-    """Downbeats + bar grid + phrases + section labels via allin1."""
+    """Downbeats + bar grid + phrase groupings via BeatNet."""
     try:
-        import allin1  # noqa: F401
+        global _BEATNET_MODEL
+        if _BEATNET_MODEL is None:
+            from BeatNet.BeatNet import BeatNet
+            _BEATNET_MODEL = BeatNet(1, mode="offline", inference_model="DBN", plot=[], thread=False)
     except Exception as e:
         return {"downbeats_json": None, "phrases_json": None, "_madmom_error": f"import: {str(e)[:80]}"}
 
     try:
-        result = allin1.analyze(str(audio_path), keep_byproducts=False, overwrite=True)
+        # BeatNet returns (n, 2): [time_s, beat_position 1..N]
+        out = _BEATNET_MODEL.process(str(audio_path))
     except Exception as e:
-        return {"downbeats_json": None, "phrases_json": None, "_madmom_error": f"analyze: {str(e)[:80]}"}
+        return {"downbeats_json": None, "phrases_json": None, "_madmom_error": f"process: {str(e)[:80]}"}
 
-    db_raw = list(getattr(result, "downbeats", []) or [])
-    downbeats = [{"t_ms": int(t * 1000), "beat_in_bar": 1} for t in db_raw]
-    bars = downbeats
+    downbeats = [{"t_ms": int(t * 1000), "beat_in_bar": int(b)} for t, b in out]
+    bars = [d for d in downbeats if d["beat_in_bar"] == 1]
 
     # Phrase groupings (every N bars)
     phrases = []
@@ -229,19 +242,9 @@ def analyze_madmom(audio_path: Path, beat_times: list[float]) -> dict:
                 "end_ms": bars[min(i + size, len(bars) - 1)]["t_ms"] if i + size < len(bars) else (bars[-1]["t_ms"] if bars else 0),
             })
 
-    # Segment-level labels (intro/verse/chorus/etc.) — allin1's superpower
-    segments = []
-    for s in (getattr(result, "segments", []) or []):
-        segments.append({
-            "label": getattr(s, "label", ""),
-            "start_ms": int(getattr(s, "start", 0.0) * 1000),
-            "end_ms": int(getattr(s, "end", 0.0) * 1000),
-        })
-
     return {
         "downbeats_json": json.dumps(downbeats[:512]),
         "phrases_json": json.dumps(phrases),
-        "segments_json": json.dumps(segments) if segments else None,
         "bar_count": len(bars),
     }
 

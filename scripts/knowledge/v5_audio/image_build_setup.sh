@@ -42,14 +42,18 @@ $PIP install -q silero-vad
 $PIP install -q faster-whisper
 $PIP install -q laion-clap || echo "laion-clap failed"
 
-# Replacements for the 3 dead packages from earlier image:
-#   madmom   → allin1   (Sony CSI 2024, downbeats + bars + segment labels)
+# Replacements for dead packages:
+#   madmom   → BeatNet  (pure PyTorch, no madmom dep, maintained 2024)
+#                (allin1 looked promising but it transitively imports madmom)
 #   musicnn  → panns_inference (AudioSet 527-class genre/mood/instrument tags)
-#   basic-pitch (still used, but with lower-level predict() API in worker.py
+#   basic-pitch (kept; using lower-level predict() API in worker.py
 #                to bypass predict_and_save TF loader issues)
-$PIP install -q allin1 || echo "allin1 failed — phrase/segment detection disabled"
+#   pyloudnorm — pure-Python ITU-R BS.1770 LUFS (mono-friendly, replaces
+#                Essentia's LoudnessEBUR128 which needs stereo + segfaults)
+$PIP install -q BeatNet || echo "BeatNet failed — downbeat detection disabled"
 $PIP install -q panns_inference || echo "panns_inference failed — tags disabled"
 $PIP install -q basic-pitch || echo "basic-pitch failed"
+$PIP install -q pyloudnorm
 
 # ── Pre-cache ML model weights ───────────────────────────────────────
 mkdir -p /opt/models /opt/models/torch /opt/models/hf /opt/models/cache
@@ -96,10 +100,17 @@ import os
 print(f"basic-pitch model path: {ICASSP_2022_MODEL_PATH}, exists: {os.path.exists(ICASSP_2022_MODEL_PATH)}")
 PY
 
-# allin1 model (madmom replacement)
-/opt/venv/bin/python - <<'PY' || echo "allin1 cache failed"
-import allin1  # noqa
-print("allin1 ready")
+# BeatNet model (allin1 replacement, no madmom dep)
+/opt/venv/bin/python - <<'PY' || echo "BeatNet cache failed"
+from BeatNet.BeatNet import BeatNet
+m = BeatNet(1, mode="offline", inference_model="DBN", plot=[], thread=False)
+print("BeatNet ready")
+PY
+
+# pyloudnorm has no models to cache — pure-Python
+/opt/venv/bin/python - <<'PY' || echo "pyloudnorm cache failed"
+import pyloudnorm  # noqa
+print("pyloudnorm ready")
 PY
 
 # PANNs model (musicnn replacement) — downloads ~600MB checkpoint on first use
