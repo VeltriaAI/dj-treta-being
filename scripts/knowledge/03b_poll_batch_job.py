@@ -1,4 +1,5 @@
 """K0 step 3b — Poll existing batch-prediction job.
+import os
 
 Reads scripts/knowledge/.job_id for the resource name, polls every 60s,
 exits 0 on success / 1 on failure.
@@ -11,7 +12,7 @@ from pathlib import Path
 
 from google.cloud import aiplatform
 
-PROJECT = "fandorab2w3"
+PROJECT = os.environ.get("DJTRETA_VERTEX_PROJECT") or sys.exit("DJTRETA_VERTEX_PROJECT required")
 LOCATION = "us-central1"
 
 JOB_ID_FILE = Path(__file__).parent / ".job_id"

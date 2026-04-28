@@ -57,7 +57,7 @@ broadcast:
 producer:
   enabled: false
   model: "lyria-3-pro-preview"
-  vertex_project: "fandorab2w3"
+  vertex_project: ""  # set via DJTRETA_VERTEX_PROJECT env var
   vertex_location: "global"
   default_duration_seconds: 180
   genre_dir: "ai-generated"

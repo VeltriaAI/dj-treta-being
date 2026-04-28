@@ -1,34 +1,47 @@
+# LiteLLM proxy config.
+#
+# All secrets + machine-specific values come from env vars at startup.
+# This file is safe to commit. Set in .env (or your shell):
+#
+#   DJTRETA_LLM_API_KEY=...        # also acts as the proxy's master_key
+#   DJTRETA_VERTEX_PROJECT=...     # GCP project for Vertex AI
+#
+# `os.environ/VAR_NAME` is LiteLLM's runtime-substitution syntax — the
+# value is read when the proxy boots, never persisted.
+
 model_list:
   - model_name: gemini-3-flash
     litellm_params:
       model: vertex_ai/gemini-2.0-flash
-      vertex_project: fandorab2w3
+      vertex_project: os.environ/DJTRETA_VERTEX_PROJECT
       vertex_location: us-central1
 
   - model_name: gemini-3.1-pro
     litellm_params:
       model: vertex_ai/gemini-2.5-pro
-      vertex_project: fandorab2w3
+      vertex_project: os.environ/DJTRETA_VERTEX_PROJECT
       vertex_location: us-central1
 
   - model_name: gemini-3-flash-25
     litellm_params:
       model: vertex_ai/gemini-2.5-flash
-      vertex_project: fandorab2w3
+      vertex_project: os.environ/DJTRETA_VERTEX_PROJECT
       vertex_location: us-central1
 
   - model_name: gemini-3-flash-preview
     litellm_params:
       model: vertex_ai/gemini-3-flash-preview
-      vertex_project: fandorab2w3
+      vertex_project: os.environ/DJTRETA_VERTEX_PROJECT
       vertex_location: global
 
   - model_name: gemma-4
     litellm_params:
       model: vertex_ai_beta/gemma-4-26b-a4b-it-maas
-      vertex_project: fandorab2w3
+      vertex_project: os.environ/DJTRETA_VERTEX_PROJECT
       vertex_location: global
       base_model: gemini
 
 general_settings:
-  master_key: sk-litellm-vertex-serra-2026
+  # Same value as DJTRETA_LLM_API_KEY — agent sends it as the bearer
+  # token, proxy validates it. Single secret, single env var.
+  master_key: os.environ/DJTRETA_LLM_API_KEY
