@@ -101,7 +101,7 @@ dj_generate_track(
 
 ### Authentication
 - Uses Vertex AI via `google-genai` SDK
-- Project: `fandorab2w3` (GCP)
+- Project: `${DJTRETA_VERTEX_PROJECT}` (GCP)
 - Location: `global` (required for Lyria 3 — won't work with regional endpoints)
 - Auth: Application Default Credentials (gcloud auth)
 
@@ -141,7 +141,7 @@ In `~/beings/dj-treta/config.yaml`:
 producer:
   enabled: true
   model: "lyria-3-pro-preview"
-  vertex_project: "fandorab2w3"
+  vertex_project: "${DJTRETA_VERTEX_PROJECT}"
   vertex_location: "global"
   default_duration_seconds: 180
   genre_dir: "ai-generated"

@@ -5,9 +5,11 @@ into 8 × 500k chunks, so submit 4 jobs of 2 chunks each (= 1M per job) in
 parallel. Record all resource names to .job_ids for the polling + ingest steps.
 
 Model: publishers/google/models/text-embedding-005 (multilingual, 768-dim)
-Output: gs://fandorab2w3-music-data/embeddings/output/<job_id>/
+Output: gs://${DJTRETA_GCS_BUCKET}/embeddings/output/<job_id>/
 """
 from __future__ import annotations
+
+import os
 
 import sys
 import time
@@ -15,10 +17,10 @@ from pathlib import Path
 
 from google.cloud import aiplatform
 
-PROJECT = "fandorab2w3"
+PROJECT = os.environ.get("DJTRETA_VERTEX_PROJECT") or sys.exit("DJTRETA_VERTEX_PROJECT required")
 LOCATION = "us-central1"
 MODEL = "publishers/google/models/text-embedding-005"
-BUCKET = "fandorab2w3-music-data"
+BUCKET = os.environ.get("DJTRETA_GCS_BUCKET") or sys.exit("DJTRETA_GCS_BUCKET required")
 INPUT_PREFIX = f"gs://{BUCKET}/embeddings/input/"
 OUTPUT_PREFIX = f"gs://{BUCKET}/embeddings/output/"
 

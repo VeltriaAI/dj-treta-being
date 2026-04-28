@@ -11,18 +11,18 @@ This document describes how **DJ Treta** (DJClaw) talks to **Google Vertex AI** 
 
 | Item                                   | Value                                                                            |
 | -------------------------------------- | -------------------------------------------------------------------------------- |
-| **GCP project ID**                     | `fandorab2w3`                                                                    |
+| **GCP project ID**                     | `${DJTRETA_VERTEX_PROJECT}`                                                                    |
 | **Vertex region (Gemini via LiteLLM)** | `us-central1`                                                                    |
 | **Vertex region (Lyria / producer)**   | `global`                                                                         |
-| **LiteLLM `master_key`**               | `sk-litellm-vertex-serra-2026`                                                   |
+| **LiteLLM `master_key`**               | `${DJTRETA_LLM_API_KEY}`                                                   |
 | **LiteLLM URL**                        | `http://localhost:4000`                                                          |
-| **Env var for DJ Treta**               | `DJTRETA_LLM_API_KEY=sk-litellm-vertex-serra-2026` (same string as `master_key`) |
+| **Env var for DJ Treta**               | `DJTRETA_LLM_API_KEY=${DJTRETA_LLM_API_KEY}` (same string as `master_key`) |
 
 
 **One-line env (LLM + optional relay token if you use one):**
 
 ```bash
-export DJTRETA_LLM_API_KEY=sk-litellm-vertex-serra-2026
+export DJTRETA_LLM_API_KEY=${DJTRETA_LLM_API_KEY}
 # Optional — only if you use relay; get value from team lead / vault:
 # export DJTRETA_RELAY_TOKEN=
 ```
@@ -34,17 +34,17 @@ model_list:
   - model_name: gemini-3-flash
     litellm_params:
       model: vertex_ai/gemini-2.0-flash
-      vertex_project: fandorab2w3
+      vertex_project: ${DJTRETA_VERTEX_PROJECT}
       vertex_location: us-central1
 
   - model_name: gemini-3.1-pro
     litellm_params:
       model: vertex_ai/gemini-2.5-pro-preview-05-06
-      vertex_project: fandorab2w3
+      vertex_project: ${DJTRETA_VERTEX_PROJECT}
       vertex_location: us-central1
 
 general_settings:
-  master_key: sk-litellm-vertex-serra-2026
+  master_key: ${DJTRETA_LLM_API_KEY}
 ```
 
 `**config.yaml` snippets that match this setup:**
@@ -62,16 +62,16 @@ llm:
 producer:
   enabled: true
   model: "lyria-3-pro-preview"
-  vertex_project: "fandorab2w3"
+  vertex_project: "${DJTRETA_VERTEX_PROJECT}"
   vertex_location: "global"
   default_duration_seconds: 180
   genre_dir: "ai-generated"
 ```
 
-**Google auth (each developer still needs Vertex access on `fandorab2w3`):**
+**Google auth (each developer still needs Vertex access on `${DJTRETA_VERTEX_PROJECT}`):**
 
 ```bash
-gcloud config set project fandorab2w3
+gcloud config set project ${DJTRETA_VERTEX_PROJECT}
 gcloud auth application-default login
 ```
 
@@ -84,18 +84,18 @@ Vertex does **not** use a separate “API key” string. Access is always:
 - **User:** Application Default Credentials after `gcloud auth application-default login`, or  
 - **Machine/CI:** `GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json`
 
-Everything below is for project `**fandorab2w3`** (same as `litellm_config.yaml` and `config.yaml` `producer`).
+Everything below is for project `**${DJTRETA_VERTEX_PROJECT}`** (same as `litellm_config.yaml` and `config.yaml` `producer`).
 
 ### Project & console (bookmark for the team)
 
 
 | What                  | Value / link                                                                                                            |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| **GCP project ID**    | `fandorab2w3`                                                                                                           |
-| **Project dashboard** | [console.cloud.google.com — project `fandorab2w3](https://console.cloud.google.com/home/dashboard?project=fandorab2w3)` |
-| **Vertex AI**         | [Vertex AI — `fandorab2w3](https://console.cloud.google.com/vertex-ai?project=fandorab2w3)`                             |
-| **IAM**               | [IAM — `fandorab2w3](https://console.cloud.google.com/iam-admin/iam?project=fandorab2w3)`                               |
-| **APIs & services**   | [Enabled APIs — `fandorab2w3](https://console.cloud.google.com/apis/dashboard?project=fandorab2w3)`                     |
+| **GCP project ID**    | `${DJTRETA_VERTEX_PROJECT}`                                                                                                           |
+| **Project dashboard** | [console.cloud.google.com — project `${DJTRETA_VERTEX_PROJECT}](https://console.cloud.google.com/home/dashboard?project=${DJTRETA_VERTEX_PROJECT})` |
+| **Vertex AI**         | [Vertex AI — `${DJTRETA_VERTEX_PROJECT}](https://console.cloud.google.com/vertex-ai?project=${DJTRETA_VERTEX_PROJECT})`                             |
+| **IAM**               | [IAM — `${DJTRETA_VERTEX_PROJECT}](https://console.cloud.google.com/iam-admin/iam?project=${DJTRETA_VERTEX_PROJECT})`                               |
+| **APIs & services**   | [Enabled APIs — `${DJTRETA_VERTEX_PROJECT}](https://console.cloud.google.com/apis/dashboard?project=${DJTRETA_VERTEX_PROJECT})`                     |
 
 
 ### Regions we use (don’t mix these up)
@@ -103,15 +103,15 @@ Everything below is for project `**fandorab2w3`** (same as `litellm_config.yaml`
 
 | Use case                                      | Config file                | `vertex_project` | **Region / location** | Vertex model IDs (examples)                        |
 | --------------------------------------------- | -------------------------- | ---------------- | --------------------- | -------------------------------------------------- |
-| **Chat / DJ / Being / Planner** (via LiteLLM) | `litellm_config.yaml`      | `fandorab2w3`    | `**us-central1`**     | `gemini-2.0-flash`, `gemini-2.5-pro-preview-05-06` |
-| **Lyria music generation**                    | `config.yaml` → `producer` | `fandorab2w3`    | `**global`**          | `lyria-3-pro-preview`, `lyria-3-clip-preview`      |
+| **Chat / DJ / Being / Planner** (via LiteLLM) | `litellm_config.yaml`      | `${DJTRETA_VERTEX_PROJECT}`    | `**us-central1`**     | `gemini-2.0-flash`, `gemini-2.5-pro-preview-05-06` |
+| **Lyria music generation**                    | `config.yaml` → `producer` | `${DJTRETA_VERTEX_PROJECT}`    | `**global`**          | `lyria-3-pro-preview`, `lyria-3-clip-preview`      |
 
 
 LiteLLM passes `vertex_location` per model; Lyria uses `producer.vertex_location` in code (`agent/tools/generation.py`).
 
 ### APIs to enable (admin / once per project)
 
-Someone with **Owner** or **Service Usage Admin** should ensure these are **enabled** on `fandorab2w3`:
+Someone with **Owner** or **Service Usage Admin** should ensure these are **enabled** on `${DJTRETA_VERTEX_PROJECT}`:
 
 
 | API                                             | Purpose                               |
@@ -122,19 +122,19 @@ Someone with **Owner** or **Service Usage Admin** should ensure these are **enab
 **Enable from CLI (copy-paste):**
 
 ```bash
-gcloud config set project fandorab2w3
-gcloud services enable aiplatform.googleapis.com --project=fandorab2w3
+gcloud config set project ${DJTRETA_VERTEX_PROJECT}
+gcloud services enable aiplatform.googleapis.com --project=${DJTRETA_VERTEX_PROJECT}
 ```
 
-If Lyria / media APIs fail with “API not enabled”, open [API Library](https://console.cloud.google.com/apis/library?project=fandorab2w3) and enable anything Google’s error message names (often still under the same project’s Vertex / Generative AI surface).
+If Lyria / media APIs fail with “API not enabled”, open [API Library](https://console.cloud.google.com/apis/library?project=${DJTRETA_VERTEX_PROJECT}) and enable anything Google’s error message names (often still under the same project’s Vertex / Generative AI surface).
 
 ### Billing
 
-Vertex Gemini and Lyria are **paid** once free tiers are exceeded. **Billing must be linked** to `fandorab2w3` for production-style use: [Billing](https://console.cloud.google.com/billing/linkedaccount?project=fandorab2w3).
+Vertex Gemini and Lyria are **paid** once free tiers are exceeded. **Billing must be linked** to `${DJTRETA_VERTEX_PROJECT}` for production-style use: [Billing](https://console.cloud.google.com/billing/linkedaccount?project=${DJTRETA_VERTEX_PROJECT}).
 
 ### IAM — what each developer needs
 
-Ask an admin to grant your **Google account** (or a **service account** you use) on project `fandorab2w3`:
+Ask an admin to grant your **Google account** (or a **service account** you use) on project `${DJTRETA_VERTEX_PROJECT}`:
 
 
 | Role               | ID                      | Why                                                                                      |
@@ -150,21 +150,21 @@ Optional stricter setups: custom role with `aiplatform.endpoints.predict` only �
 
 ```bash
 # Replace TEAM_MEMBER@company.com
-gcloud projects add-iam-policy-binding fandorab2w3 \
+gcloud projects add-iam-policy-binding ${DJTRETA_VERTEX_PROJECT} \
   --member="user:TEAM_MEMBER@company.com" \
   --role="roles/aiplatform.user"
 ```
 
 ### Service account (for servers / CI / headless)
 
-1. Create SA: e.g. `dj-treta-vertex@fandorab2w3.iam.gserviceaccount.com`
-2. Grant `roles/aiplatform.user` on `fandorab2w3`
+1. Create SA: e.g. `dj-treta-vertex@${DJTRETA_VERTEX_PROJECT}.iam.gserviceaccount.com`
+2. Grant `roles/aiplatform.user` on `${DJTRETA_VERTEX_PROJECT}`
 3. Create JSON key (or use Workload Identity on GKE) — **store JSON in vault, not in git**
 4. On the machine:
 
 ```bash
 export GOOGLE_APPLICATION_CREDENTIALS=/path/to/dj-treta-vertex-sa.json
-export GOOGLE_CLOUD_PROJECT=fandorab2w3   # optional; project is also in YAML
+export GOOGLE_CLOUD_PROJECT=${DJTRETA_VERTEX_PROJECT}   # optional; project is also in YAML
 ```
 
 LiteLLM (when run locally) and DJ Treta both read **the same** ADC / JSON for Vertex.
@@ -172,14 +172,14 @@ LiteLLM (when run locally) and DJ Treta both read **the same** ADC / JSON for Ve
 ### Quick sanity checks
 
 ```bash
-gcloud config set project fandorab2w3
+gcloud config set project ${DJTRETA_VERTEX_PROJECT}
 gcloud auth application-default login
 
 # Vertex AI API enabled on the project?
-gcloud services list --enabled --project=fandorab2w3 --filter="name:aiplatform.googleapis.com"
+gcloud services list --enabled --project=${DJTRETA_VERTEX_PROJECT} --filter="name:aiplatform.googleapis.com"
 
 # Can you read the project? (403 = no access)
-gcloud projects describe fandorab2w3 --format="value(projectId)"
+gcloud projects describe ${DJTRETA_VERTEX_PROJECT} --format="value(projectId)"
 ```
 
 If you get **403** or **API not enabled** → fix IAM (`roles/aiplatform.user`) and run `gcloud services enable aiplatform.googleapis.com` as above.
@@ -192,7 +192,7 @@ If you get **403** or **API not enabled** → fix IAM (`roles/aiplatform.user`) 
 | Variable                         | Required?             | Meaning                                                               |
 | -------------------------------- | --------------------- | --------------------------------------------------------------------- |
 | `GOOGLE_APPLICATION_CREDENTIALS` | If not using user ADC | Path to service-account JSON                                          |
-| `GOOGLE_CLOUD_PROJECT`           | Optional              | Defaults often inferred; our YAML already sets `fandorab2w3` per call |
+| `GOOGLE_CLOUD_PROJECT`           | Optional              | Defaults often inferred; our YAML already sets `${DJTRETA_VERTEX_PROJECT}` per call |
 
 
 There is **no** `VERTEX_API_KEY` in this repo — authentication is always GCP identity (user or SA).
@@ -225,7 +225,7 @@ There is **no** `VERTEX_API_KEY` in this repo — authentication is always GCP i
 
 **Separate path — Lyria / music generation (not via LiteLLM for the main call):**
 
-The `generate_track` tool uses `google.genai` with `vertexai=True` and `config.producer.vertex_*` from `config.yaml`. For this team that is project `**fandorab2w3`**, location `**global**` for Lyria. Auth is **Application Default Credentials** (not the LiteLLM `master_key`).
+The `generate_track` tool uses `google.genai` with `vertexai=True` and `config.producer.vertex_*` from `config.yaml`. For this team that is project `**${DJTRETA_VERTEX_PROJECT}`**, location `**global**` for Lyria. Auth is **Application Default Credentials** (not the LiteLLM `master_key`).
 
 ---
 
@@ -264,17 +264,17 @@ model_list:
   - model_name: gemini-3-flash
     litellm_params:
       model: vertex_ai/gemini-2.0-flash
-      vertex_project: fandorab2w3
+      vertex_project: ${DJTRETA_VERTEX_PROJECT}
       vertex_location: us-central1
 
   - model_name: gemini-3.1-pro
     litellm_params:
       model: vertex_ai/gemini-2.5-pro-preview-05-06
-      vertex_project: fandorab2w3
+      vertex_project: ${DJTRETA_VERTEX_PROJECT}
       vertex_location: us-central1
 
 general_settings:
-  master_key: sk-litellm-vertex-serra-2026
+  master_key: ${DJTRETA_LLM_API_KEY}
 ```
 
 **Fields:**
@@ -346,7 +346,7 @@ Used by `agent/tools/generation.py` (`google.genai` + `vertexai=True`), **not** 
 producer:
   enabled: true
   model: "lyria-3-pro-preview"
-  vertex_project: "fandorab2w3"
+  vertex_project: "${DJTRETA_VERTEX_PROJECT}"
   vertex_location: "global"
   default_duration_seconds: 180
   genre_dir: "ai-generated"
@@ -371,13 +371,13 @@ Requires the same **Application Default Credentials** as Vertex (service account
 
 ```bash
 # LiteLLM — must match general_settings.master_key in litellm_config.yaml
-DJTRETA_LLM_API_KEY=sk-litellm-vertex-serra-2026
+DJTRETA_LLM_API_KEY=${DJTRETA_LLM_API_KEY}
 
 # Optional: relay to dj.treta.life (value from team — not in committed config.yaml)
 # DJTRETA_RELAY_TOKEN=
 
 # Optional: service account instead of gcloud user ADC
-# GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa-fandorab2w3.json
+# GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa-${DJTRETA_VERTEX_PROJECT}.json
 ```
 
 Do **not** commit `.env` to a public repo; keep it local or in an internal vault.
@@ -400,7 +400,7 @@ LiteLLM’s Vertex backend uses **Google auth from the environment**:
 
 1. **Development (common):**
   ```bash
-   gcloud config set project fandorab2w3
+   gcloud config set project ${DJTRETA_VERTEX_PROJECT}
    gcloud auth application-default login
   ```
 2. **CI / headless:** Create a service account with Vertex permissions, download JSON, set:
@@ -448,9 +448,9 @@ djclaw kill   # kills daemon, Mixxx, and litellm processes (see cli.py)
 ## 7. Security checklist for teams
 
 - This doc contains **live team secrets** (§0). Store the file in **internal** channels only; do not publish publicly.
-- Rotate `**master_key`** (`sk-litellm-vertex-serra-2026`) if it leaks outside the team.
-- Prefer **per-developer** ADC on `fandorab2w3` or a **team service account** with least-privilege Vertex roles.
-- Restrict GCP IAM so only needed people can use project `fandorab2w3`.
+- Rotate `**master_key`** (`${DJTRETA_LLM_API_KEY}`) if it leaks outside the team.
+- Prefer **per-developer** ADC on `${DJTRETA_VERTEX_PROJECT}` or a **team service account** with least-privilege Vertex roles.
+- Restrict GCP IAM so only needed people can use project `${DJTRETA_VERTEX_PROJECT}`.
 
 ---
 
@@ -505,7 +505,7 @@ djclaw kill   # kills daemon, Mixxx, and litellm processes (see cli.py)
 ```bash
 # On the VM — service account JSON at /opt/djtreta/vertex-sa.json
 export GOOGLE_APPLICATION_CREDENTIALS=/opt/djtreta/vertex-sa.json
-export GOOGLE_CLOUD_PROJECT=fandorab2w3
+export GOOGLE_CLOUD_PROJECT=${DJTRETA_VERTEX_PROJECT}
 
 litellm --config /opt/djtreta/litellm_config.yaml --host 0.0.0.0 --port 4000
 ```
@@ -531,10 +531,10 @@ Use `**--host 0.0.0.0**` only if clients other than `localhost` se connect karen
 ## 10. Example: minimal end-to-end env
 
 ```bash
-gcloud config set project fandorab2w3
+gcloud config set project ${DJTRETA_VERTEX_PROJECT}
 gcloud auth application-default login
 
-export DJTRETA_LLM_API_KEY=sk-litellm-vertex-serra-2026
+export DJTRETA_LLM_API_KEY=${DJTRETA_LLM_API_KEY}
 
 cd /path/to/dj-treta
 uv sync

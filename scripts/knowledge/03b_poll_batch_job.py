@@ -5,13 +5,15 @@ exits 0 on success / 1 on failure.
 """
 from __future__ import annotations
 
+import os
+
 import sys
 import time
 from pathlib import Path
 
 from google.cloud import aiplatform
 
-PROJECT = "fandorab2w3"
+PROJECT = os.environ.get("DJTRETA_VERTEX_PROJECT") or sys.exit("DJTRETA_VERTEX_PROJECT required")
 LOCATION = "us-central1"
 
 JOB_ID_FILE = Path(__file__).parent / ".job_id"

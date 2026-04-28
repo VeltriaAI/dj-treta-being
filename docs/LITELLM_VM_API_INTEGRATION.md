@@ -8,14 +8,14 @@
 
 | Item | Value |
 |------|--------|
-| **Base URL (no path)** | `http://35.232.215.157:4000` |
-| **OpenAI-compatible API root** | `http://35.232.215.157:4000/v1` |
-| **Health** | `GET http://35.232.215.157:4000/health` |
+| **Base URL (no path)** | `http://<your-vm-host>:4000` |
+| **OpenAI-compatible API root** | `http://<your-vm-host>:4000/v1` |
+| **Health** | `GET http://<your-vm-host>:4000/health` |
 
 **Authentication:** every request needs:
 
 ```http
-Authorization: Bearer sk-litellm-vertex-serra-2026
+Authorization: Bearer ${DJTRETA_LLM_API_KEY}
 ```
 
 (This is the LiteLLM `master_key`, not a Google API key. Vertex auth is handled **on the server** via the VM’s GCP service account.)
@@ -31,7 +31,7 @@ Use these **exact** `model` strings in the request body:
 | `gemini-3-flash` | `vertex_ai/gemini-2.0-flash` @ `us-central1` |
 | `gemini-3.1-pro` | `vertex_ai/gemini-2.5-pro-preview-05-06` @ `us-central1` |
 
-GCP project on the server: `fandorab2w3`.
+GCP project on the server: `${DJTRETA_VERTEX_PROJECT}`.
 
 ---
 
@@ -42,8 +42,8 @@ GCP project on the server: `fandorab2w3`.
 ### cURL
 
 ```bash
-export LITELLM_URL="http://35.232.215.157:4000"
-export LITELLM_KEY="sk-litellm-vertex-serra-2026"
+export LITELLM_URL="http://<your-vm-host>:4000"
+export LITELLM_KEY="${DJTRETA_LLM_API_KEY}"
 
 curl -s "$LITELLM_URL/v1/chat/completions" \
   -H "Authorization: Bearer $LITELLM_KEY" \
@@ -61,8 +61,8 @@ curl -s "$LITELLM_URL/v1/chat/completions" \
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://35.232.215.157:4000/v1",
-    api_key="sk-litellm-vertex-serra-2026",
+    base_url="http://<your-vm-host>:4000/v1",
+    api_key="${DJTRETA_LLM_API_KEY}",
 )
 
 r = client.chat.completions.create(
@@ -78,8 +78,8 @@ print(r.choices[0].message.content)
 import OpenAI from "openai";
 
 const client = new OpenAI({
-  baseURL: "http://35.232.215.157:4000/v1",
-  apiKey: "sk-litellm-vertex-serra-2026",
+  baseURL: "http://<your-vm-host>:4000/v1",
+  apiKey: "${DJTRETA_LLM_API_KEY}",
 });
 
 const r = await client.chat.completions.create({
@@ -90,15 +90,15 @@ const r = await client.chat.completions.create({
 
 ### Anything “OpenAI-compatible”
 
-Point **`base_url`** to `http://35.232.215.157:4000/v1` and **`api_key`** to `sk-litellm-vertex-serra-2026`.
+Point **`base_url`** to `http://<your-vm-host>:4000/v1` and **`api_key`** to `${DJTRETA_LLM_API_KEY}`.
 
 ---
 
 ## 4. Health check
 
 ```bash
-curl -s -H "Authorization: Bearer sk-litellm-vertex-serra-2026" \
-  "http://35.232.215.157:4000/health"
+curl -s -H "Authorization: Bearer ${DJTRETA_LLM_API_KEY}" \
+  "http://<your-vm-host>:4000/health"
 ```
 
 Expect HTTP **200** when the proxy is up.
@@ -112,7 +112,7 @@ The VM listens on **0.0.0.0:4000** and a firewall rule allows **tcp:4000** for i
 - Corporate network blocking non-standard ports → try another network or VPN.
 - Ask a GCP admin to confirm firewall **`allow-djtreta-litellm-4000`** and your source IP / VPC path.
 - As a fallback, use **SSH tunnel**:  
-  `gcloud compute ssh djtreta-litellm --zone=us-central1-a --project=fandorab2w3 -- -L 4000:127.0.0.1:4000`  
+  `gcloud compute ssh djtreta-litellm --zone=us-central1-a --project=${DJTRETA_VERTEX_PROJECT} -- -L 4000:127.0.0.1:4000`  
   then call `http://127.0.0.1:4000` locally.
 
 ---
@@ -130,7 +130,7 @@ The VM listens on **0.0.0.0:4000** and a firewall rule allows **tcp:4000** for i
 |----------|--------|
 | GCE VM name | `djtreta-litellm` |
 | Zone | `us-central1-a` |
-| Project | `fandorab2w3` |
+| Project | `${DJTRETA_VERTEX_PROJECT}` |
 
 ---
 
