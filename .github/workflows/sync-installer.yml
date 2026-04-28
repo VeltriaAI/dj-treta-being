@@ -1,0 +1,65 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow
+#
+# Auto-sync install.sh from dj-treta-being:main into the dj-treta-live
+# web container's public/ directory. The web app serves static files
+# from public/ verbatim, so this lands the script at
+# https://dj.treta.life/install.sh on the next deploy of dj-treta-live.
+#
+# Trigger: any push to main in dj-treta-being that touches install.sh.
+# Action: opens a PR in dj-treta-live updating the file. We deliberately
+# don't push directly to dj-treta-live's main — going through PR keeps
+# the deploy pipeline auditable and lets a human eye-check the install.sh
+# diff before it goes live.
+#
+# Required secret: TRETA_LIVE_PAT — a PAT with `repo` scope on
+# VeltriaAI/dj-treta-live. Set under Settings → Secrets → Actions.
+
+name: Sync install.sh → dj-treta-live
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "install.sh"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out dj-treta-being
+        uses: actions/checkout@v4
+        with:
+          path: being
+
+      - name: Check out dj-treta-live
+        uses: actions/checkout@v4
+        with:
+          repository: VeltriaAI/dj-treta-live
+          token: ${{ secrets.TRETA_LIVE_PAT }}
+          path: live
+
+      - name: Copy install.sh into web/public/
+        run: |
+          cp being/install.sh live/web/public/install.sh
+          chmod +x live/web/public/install.sh
+
+      - name: Commit + open PR if changed
+        uses: peter-evans/create-pull-request@v6
+        with:
+          path: live
+          token: ${{ secrets.TRETA_LIVE_PAT }}
+          branch: chore/sync-install-sh
+          title: "chore: sync install.sh from dj-treta-being"
+          commit-message: "chore: sync install.sh from dj-treta-being@${{ github.sha }}"
+          body: |
+            Automated sync from `VeltriaAI/dj-treta-being@${{ github.sha }}`.
+            Picks up the latest install.sh and lands it under
+            `web/public/install.sh` so it's served at
+            `https://dj.treta.life/install.sh` on the next deploy.
+
+            Source commit: https://github.com/VeltriaAI/dj-treta-being/commit/${{ github.sha }}
+          delete-branch: true

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "djclaw"
-version = "5.0.0"
+version = "9.1.2"
 description = "Install your own AI DJ Being — powered by Google ADK"
 readme = "README.md"
 license = "MIT"
@@ -19,6 +19,8 @@ dependencies = [
     "google-genai",
     "mutagen",
     "librosa",
+    "websockets",
+    "anyio",
 ]
 
 [project.scripts]
@@ -28,7 +30,15 @@ djclaw = "cli:main"
 py-modules = ["cli", "tui"]
 
 [tool.setuptools.packages.find]
-include = ["agent*"]
+include = ["agent*", "mcp_server*"]
+
+[tool.setuptools.package-data]
+# Templates use a `.tpl` suffix in agent/templates/ (config.yaml.tpl,
+# secrets.env.tpl, litellm.yaml.tpl). The setup wizard reads them at
+# runtime via `Path(__file__).parent / "templates" / "..."`, so they
+# MUST be packaged into the sdist — otherwise the first end-user
+# install hits FileNotFoundError. (Caught by code review on PR #79.)
+agent = ["templates/*.tpl"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

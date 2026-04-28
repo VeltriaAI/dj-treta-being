@@ -83,18 +83,58 @@ def _litellm_reachable(base_url: str, api_key: str = "") -> bool:
         return False
 
 
+def _resolve_litellm_config() -> Path | None:
+    """Find the LiteLLM proxy config in priority order.
+
+      1. $DJCLAW_LITELLM_CONFIG    — explicit override
+      2. ~/.config/djclaw/litellm.yaml — XDG (installer-managed)
+      3. <repo>/litellm_config.yaml    — dev fallback (legacy name)
+    """
+    env = os.environ.get("DJCLAW_LITELLM_CONFIG")
+    if env:
+        return Path(env).expanduser()
+    xdg = Path("~/.config/djclaw/litellm.yaml").expanduser()
+    if xdg.exists():
+        return xdg
+    repo = Path(__file__).parent.parent / "litellm_config.yaml"
+    if repo.exists():
+        return repo
+    return None
+
+
+def _resolve_litellm_binary() -> Path | None:
+    """Find the litellm proxy binary — repo .venv first (dev), then the
+    XDG installer venv. Returns None if neither has it.
+    """
+    repo_venv = Path(__file__).parent.parent / ".venv" / "bin" / "litellm"
+    if repo_venv.exists():
+        return repo_venv
+    xdg_venv = Path("~/.local/share/djclaw/venv/bin/litellm").expanduser()
+    if xdg_venv.exists():
+        return xdg_venv
+    return None
+
+
 def _ensure_litellm(config):
     """Start local LiteLLM if not running."""
     if _litellm_reachable(config.llm.api_base, config.llm.api_key):
         return  # already running
 
     log.info("LiteLLM not running — starting locally")
-    config_file = Path(__file__).parent.parent / "litellm_config.yaml"
-    if not config_file.exists():
-        log.warning("No litellm_config.yaml found — skipping LiteLLM auto-start")
+    config_file = _resolve_litellm_config()
+    if config_file is None or not config_file.exists():
+        log.warning(
+            "No litellm config found at $DJCLAW_LITELLM_CONFIG, "
+            "~/.config/djclaw/litellm.yaml, or repo litellm_config.yaml — "
+            "skipping LiteLLM auto-start. Run `djclaw setup` to generate one."
+        )
         return
 
-    venv_python = Path(__file__).parent.parent / ".venv" / "bin" / "litellm"
+    venv_python = _resolve_litellm_binary()
+    if venv_python is None:
+        log.warning("litellm binary not found in any venv; skipping auto-start")
+        return
+
     subprocess.Popen(
         [str(venv_python), "--config", str(config_file), "--port", "4000"],
         stdout=open("/tmp/litellm-local.log", "w"),

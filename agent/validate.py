@@ -127,6 +127,83 @@ def _check_vertex(cfg) -> Check:
     )
 
 
+def _check_mixxx_binary(cfg) -> Check:
+    """When auto_start is on, the agent needs a binary it can launch.
+
+    On end-user installs that's ~/.local/share/djclaw/mixxx/current/...,
+    populated by install.sh. On dev installs the user typically has
+    their own Mixxx checkout and points cfg.mixxx.binary at it. Either
+    way: if auto_start is true and we can't find an executable, the
+    agent will silently fail to start Mixxx and the user gets cryptic
+    'unreachable' errors downstream.
+    """
+    if not cfg.mixxx.auto_start:
+        return Check("mixxx binary", True, "skipped — auto_start=false")
+
+    candidates = []
+    if cfg.mixxx.binary:
+        candidates.append(Path(cfg.mixxx.binary).expanduser())
+    # Installer-managed paths (mac .app + linux DEB extraction).
+    base = Path("~/.local/share/djclaw/mixxx/current").expanduser()
+    candidates.extend([
+        base / "Mixxx.app" / "Contents" / "MacOS" / "mixxx",
+        base / "usr" / "bin" / "mixxx",
+    ])
+
+    for c in candidates:
+        if c.exists() and os.access(c, os.X_OK):
+            return Check("mixxx binary", True, str(c))
+
+    return Check(
+        "mixxx binary",
+        False,
+        "no executable mixxx found. Run "
+        "`curl -fsSL https://dj.treta.life/install.sh | sh` to install, "
+        "or set mixxx.binary in config.yaml.",
+    )
+
+
+def _check_mixxx_port(cfg) -> Check:
+    """Check whether port 7778 is free or already taken by our Mixxx.
+
+    A foreign process on 7778 would block auto_start; we want to flag
+    that distinctly from 'mixxx not running yet'.
+    """
+    import socket
+    try:
+        host = cfg.mixxx.url.split("://", 1)[-1].split("/", 1)[0]
+        host, _, port_s = host.partition(":")
+        port = int(port_s) if port_s else 7778
+    except Exception:
+        return Check("mixxx port", True, "skipped — could not parse mixxx.url")
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(0.5)
+    try:
+        result = sock.connect_ex((host, port))
+        sock.close()
+    except Exception:
+        return Check("mixxx port", True, f"skipped — {host}:{port} probe failed")
+
+    if result != 0:
+        return Check("mixxx port", True, f"{host}:{port} free")
+
+    # Something IS listening on the port. Determine if it's ours by
+    # hitting the Mixxx HTTP API surface.
+    try:
+        r = httpx.get(f"{cfg.mixxx.url}/api/status", timeout=1)
+        if r.status_code == 200 and r.headers.get("content-type", "").startswith("application/json"):
+            return Check("mixxx port", True, f"{host}:{port} (held by Mixxx-Treta)")
+    except Exception:
+        pass
+    return Check(
+        "mixxx port",
+        False,
+        f"{host}:{port} occupied by a non-Mixxx process. Free it or "
+        f"change mixxx.url in config.yaml.",
+    )
+
+
 def _check_db_schema() -> Check:
     db_path = Path(__file__).parent.parent / "djtreta.db"
     if not db_path.exists():
@@ -175,6 +252,8 @@ def run_checks() -> list[Check]:
     return [
         _check_llm_api_key(cfg),
         _check_music_dir(cfg),
+        _check_mixxx_binary(cfg),
+        _check_mixxx_port(cfg),
         _check_mixxx(cfg),
         _check_litellm(cfg),
         _check_vertex(cfg),

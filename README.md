@@ -44,15 +44,81 @@ This is not a playlist shuffler. There is zero hardcoded DJ logic. A Being agent
 
 Built on the [Beings Protocol](https://github.com/VeltriaAI/beings-protocol).
 
-## Quick Start
+## Install (one line)
+
+```bash
+curl -fsSL https://dj.treta.life/install.sh | sh
+```
+
+That's it. The installer fetches a Mixxx-Treta binary for your platform, builds a Python venv, drops a `djclaw` CLI under `~/.local/bin/`, and walks you through a 4-question setup (LLM provider + API key + music dir + default mood). Re-run any time to upgrade — your config + music + DB are preserved.
+
+Supported platforms: macOS arm64 (Apple Silicon), macOS x64 (Intel), Linux x64.
+
+After the install finishes:
+
+```bash
+djclaw doctor    # confirm everything is wired up
+djclaw start     # bring up Mixxx + agent; music starts playing
+djclaw tui       # attach the live TUI
+djclaw talk "play something dreamy"
+```
+
+### What gets installed
+
+Everything lives under your home directory. No sudo.
+
+```
+~/.local/share/djclaw/
+├── venv/                       Python virtualenv         (replaceable)
+├── mixxx/<version>/            Mixxx-Treta binary        (replaceable)
+├── mixxx/current → ...         active-version symlink
+├── db/djtreta.db               SQLite library            (preserved)
+├── runtime/                    IPC files                 (state.json, ...)
+└── version.txt                 installed agent version
+
+~/.config/djclaw/
+├── config.yaml                 user-editable             (preserved)
+├── secrets.env                 API keys, chmod 600       (preserved)
+├── litellm.yaml                provider routes           (preserved)
+└── token                       /ws/agent/* gate          (preserved)
+
+~/.local/bin/djclaw             CLI symlink               (replaceable)
+~/Music/DJTreta/                music library             (preserved)
+```
+
+### LLM providers
+
+`djclaw setup` lets you pick:
+
+| Provider | Best for | Get a key |
+|---|---|---|
+| **Gemini 2.5 Flash** *(default)* | Fastest, cheapest. Free tier is enough for a 30-hour set. | https://aistudio.google.com/apikey |
+| **Gemini Enterprise** *(formerly Vertex AI)* | Already in GCP. Enables Lyria 3 music generation too. | `gcloud auth application-default login` |
+| **Anthropic** | Claude Haiku / Sonnet for the agent voice. | https://console.anthropic.com/settings/keys |
+| **OpenAI** | GPT-4o-mini fallback. | https://platform.openai.com/api-keys |
+
+To switch later: edit `~/.config/djclaw/litellm.yaml` (commented blocks for the other providers are pre-rendered) and `djclaw restart`.
+
+### Troubleshooting
+
+- **`djclaw: command not found`** — your shell hasn't picked up `~/.local/bin/`. The installer prints the exact `export PATH=…` line for your shell. Re-run after that.
+- **macOS Gatekeeper blocks Mixxx** — the binary is unsigned at v1. Right-click the .app in Finder → Open, confirm once, and macOS remembers the choice.
+- **`Mixxx port 7778 occupied by a non-Mixxx process`** — `djclaw doctor` reports this when something else holds the port. Free it (`lsof -i :7778`) or change `mixxx.url` in config.yaml.
+- **Stuck during `pip install` on first run** — it's installing librosa + Google ADK + LiteLLM, all heavy. ~5 minutes is normal.
+
+---
+
+## Developing on DJClaw
+
+If you want to hack on the Python agent itself rather than just install + use it:
 
 ### Prerequisites
 
-- Python 3.10+ (any OS — macOS, Linux, Docker)
-- [Mixxx fork](https://github.com/VeltriaAI/mixxx) on the `feature/http-rest-api` branch — the audio engine
+- Python 3.10+
+- [Mixxx fork](https://github.com/VeltriaAI/mixxx) on the `treta` branch — the audio engine
 - A LiteLLM-compatible API key (Gemini Flash free tier is plenty — see [docs/LITELLM_VERTEX_SETUP.md](docs/LITELLM_VERTEX_SETUP.md))
 
-### Install (any machine — fresh clone)
+### Dev flow — fresh clone
 
 ```bash
 git clone https://github.com/VeltriaAI/dj-treta-being.git
@@ -66,13 +132,7 @@ cp config.yaml.example config.local.yaml   # personal overrides; gitignored
 ./install.sh
 
 # 3. Verify everything is wired up before starting the daemon
-djclaw validate-config
-# Expects:
-#   ✅ DJTRETA_LLM_API_KEY    set
-#   ✅ music_dir + audio      ~/Music/DJTreta (N files)
-#   ✅ mixxx reachable        http://localhost:7778
-#   ✅ litellm reachable      http://localhost:4000
-#   ✅ djtreta.db schema      relative paths, canonical UNIQUE
+djclaw doctor
 # Any ❌ tells you exactly what to fix.
 
 # 4. Create your DJ Being
@@ -85,6 +145,8 @@ djclaw start
 djclaw talk "play something dreamy"
 djclaw tui
 ```
+
+The dev install keeps everything inside the checkout (repo-local `.venv`, repo-local `djtreta.db`, repo-local `config.yaml` / `.env`). The end-user XDG layout above is not used in dev mode.
 
 ### Migrating an existing DB to a new machine
 
