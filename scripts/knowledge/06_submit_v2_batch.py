@@ -1,6 +1,6 @@
 """K0 v2 step 2 — Submit a single Vertex AI batch-prediction job for v2 input.
 
-Reads every *.jsonl blob under gs://fandorab2w3-music-data/embeddings/v2-input/
+Reads every *.jsonl blob under gs://${DJTRETA_GCS_BUCKET}/embeddings/v2-input/
 and submits one BatchPredictionJob pointing at all of them. Vertex accepts
 multiple GCS sources per job so one job handles all shards.
 
@@ -8,16 +8,18 @@ Saves the resource_name to scripts/knowledge/.job_id_v2 for step 07.
 """
 from __future__ import annotations
 
+import os
+
 import sys
 import time
 from pathlib import Path
 
 from google.cloud import aiplatform, storage
 
-PROJECT = "fandorab2w3"
+PROJECT = os.environ.get("DJTRETA_VERTEX_PROJECT") or sys.exit("DJTRETA_VERTEX_PROJECT required")
 LOCATION = "us-central1"
 MODEL = "publishers/google/models/text-embedding-005"
-BUCKET = "fandorab2w3-music-data"
+BUCKET = os.environ.get("DJTRETA_GCS_BUCKET") or sys.exit("DJTRETA_GCS_BUCKET required")
 V2_INPUT_PREFIX = "embeddings/v2-input/"
 V2_OUTPUT_PREFIX = f"gs://{BUCKET}/embeddings/v2-output/"
 

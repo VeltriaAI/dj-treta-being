@@ -26,7 +26,7 @@ This script:
   2. Opens LanceDB and collects all existing `mbid` values (which, going
      forward, hold either real mbids or `sp:...` pseudo-ids).
   3. Writes one JSONL line per missing row to
-     gs://fandorab2w3-music-data/embeddings/v2-input/missed.jsonl
+     gs://${DJTRETA_GCS_BUCKET}/embeddings/v2-input/missed.jsonl
      with {"content": "...", "task_type": "RETRIEVAL_DOCUMENT",
             "metadata": {"mbid": "<track_id>"}}.
   4. Splits across multiple files if count exceeds 900k (keeps a margin
@@ -36,6 +36,8 @@ Vertex passes `metadata` through verbatim on each prediction row, so the
 ingest step reads `instance.metadata.mbid` — no string matching needed.
 """
 from __future__ import annotations
+
+import os
 
 import json
 import sys
@@ -50,7 +52,7 @@ PARQUET = Path.home() / "Music" / "DJTreta" / "knowledge" / "dj_treta_library.pa
 LANCE_DIR = Path.home() / "Music" / "DJTreta" / "knowledge" / "lancedb"
 LANCE_TABLE = "tracks"
 
-BUCKET = "fandorab2w3-music-data"
+BUCKET = os.environ.get("DJTRETA_GCS_BUCKET") or sys.exit("DJTRETA_GCS_BUCKET required")
 V2_INPUT_PREFIX = "embeddings/v2-input/"
 V2_INPUT_BASENAME = "missed"  # → missed.jsonl, or missed_part_0000.jsonl etc.
 
@@ -152,7 +154,7 @@ def main() -> int:
     existing = load_existing_ids(LANCE_DIR, LANCE_TABLE)
     df = scan_parquet()
 
-    client = storage.Client(project="fandorab2w3")
+    client = storage.Client(project=PROJECT)
     bucket = client.bucket(BUCKET)
 
     # Rolling shards
