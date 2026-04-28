@@ -18,22 +18,29 @@ export WORKERS_PER_VM=$(get_meta WORKERS_PER_VM 2>/dev/null || echo 3)
 
 echo "=== v5 worker shard=$SHARD_ID ==="
 
+# Force HTTP path for GCE metadata + system CA bundle for venv SSL.
+export GCE_METADATA_HOST_USE_HTTPS=False
+export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+
 # ── Install OS deps + python (idempotent) ────────────────────────────
 if [ ! -f /var/lib/v5_setup_done ]; then
     apt-get update -qq
     apt-get install -y -qq \
         python3-pip python3-venv python3-dev build-essential \
         ffmpeg libsndfile1 git pkg-config \
-        libssl-dev libffi-dev cmake
+        libssl-dev libffi-dev cmake \
+        ca-certificates
+    update-ca-certificates
 
     python3 -m venv /opt/venv
     /opt/venv/bin/pip install -q --upgrade pip wheel setuptools
-    # numpy<2 first to lock it
-    /opt/venv/bin/pip install -q "numpy<2.0"
+    # numpy<2 + urllib3<2 + pinned google-auth (Mumbai metadata HTTPS bug)
+    /opt/venv/bin/pip install -q "numpy<2.0" "urllib3<2" certifi
+    /opt/venv/bin/pip install -q "google-auth==2.29.0" "google-cloud-storage==2.18.0"
     # Core libs
     /opt/venv/bin/pip install -q \
         polars pyarrow scipy soundfile \
-        google-cloud-storage \
         yt-dlp librosa
     # Essentia (binary wheel for x86_64 Linux)
     /opt/venv/bin/pip install -q essentia || /opt/venv/bin/pip install -q essentia-tensorflow
@@ -45,8 +52,12 @@ if [ ! -f /var/lib/v5_setup_done ]; then
     # basic-pitch (MIDI extraction)
     /opt/venv/bin/pip install -q basic-pitch || echo "basic-pitch failed"
     # silero-vad
-    /opt/venv/bin/pip install -q silero-vad torch torchaudio --index-url https://download.pytorch.org/whl/cpu || \
-        /opt/venv/bin/pip install -q silero-vad torch torchaudio
+    # torchaudio<2.9 to keep silero-vad working w/o torchcodec; torchvision
+    # required transitively by laion-clap.
+    /opt/venv/bin/pip install -q "torch<2.9" "torchaudio<2.9" "torchvision<0.24" \
+        --index-url https://download.pytorch.org/whl/cpu || \
+        /opt/venv/bin/pip install -q "torch<2.9" "torchaudio<2.9" "torchvision<0.24"
+    /opt/venv/bin/pip install -q silero-vad
     # faster-whisper (CPU-friendly, lighter than openai-whisper)
     /opt/venv/bin/pip install -q faster-whisper
     # CLAP audio embedding

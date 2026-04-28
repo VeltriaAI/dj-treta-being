@@ -31,15 +31,25 @@ $PIP install -q "numpy<2.0" "urllib3<2" certifi
 $PIP install -q "google-auth==2.29.0" "google-cloud-storage==2.18.0" huggingface_hub
 $PIP install -q polars pyarrow scipy soundfile yt-dlp librosa
 $PIP install -q essentia || $PIP install -q essentia-tensorflow
-$PIP install -q "cython<3.0"
-$PIP install -q madmom || echo "madmom failed — phrase detection disabled"
+
+# torchaudio<2.9 keeps silero-vad working without torchcodec; torchvision
+# is required transitively by laion-clap.
+$PIP install -q "torch<2.9" "torchaudio<2.9" "torchvision<0.24" \
+    --index-url https://download.pytorch.org/whl/cpu
+
 $PIP install -q demucs
-$PIP install -q basic-pitch || echo "basic-pitch failed"
 $PIP install -q silero-vad
-$PIP install -q torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 $PIP install -q faster-whisper
 $PIP install -q laion-clap || echo "laion-clap failed"
-$PIP install -q musicnn || echo "musicnn failed"
+
+# Replacements for the 3 dead packages from earlier image:
+#   madmom   → allin1   (Sony CSI 2024, downbeats + bars + segment labels)
+#   musicnn  → panns_inference (AudioSet 527-class genre/mood/instrument tags)
+#   basic-pitch (still used, but with lower-level predict() API in worker.py
+#                to bypass predict_and_save TF loader issues)
+$PIP install -q allin1 || echo "allin1 failed — phrase/segment detection disabled"
+$PIP install -q panns_inference || echo "panns_inference failed — tags disabled"
+$PIP install -q basic-pitch || echo "basic-pitch failed"
 
 # ── Pre-cache ML model weights ───────────────────────────────────────
 mkdir -p /opt/models /opt/models/torch /opt/models/hf /opt/models/cache
@@ -79,17 +89,24 @@ m = get_model("htdemucs")
 print("demucs htdemucs cached")
 PY
 
-# basic-pitch model
+# basic-pitch model — pre-fetch ICASSP 2022 model
 /opt/venv/bin/python - <<'PY' || echo "basic-pitch cache failed"
-from basic_pitch.inference import predict
-# triggers model load on import indirectly
-print("basic-pitch ready")
+from basic_pitch import ICASSP_2022_MODEL_PATH
+import os
+print(f"basic-pitch model path: {ICASSP_2022_MODEL_PATH}, exists: {os.path.exists(ICASSP_2022_MODEL_PATH)}")
 PY
 
-# musicnn model
-/opt/venv/bin/python - <<'PY' || echo "musicnn cache failed"
-import musicnn  # noqa
-print("musicnn ready")
+# allin1 model (madmom replacement)
+/opt/venv/bin/python - <<'PY' || echo "allin1 cache failed"
+import allin1  # noqa
+print("allin1 ready")
+PY
+
+# PANNs model (musicnn replacement) — downloads ~600MB checkpoint on first use
+/opt/venv/bin/python - <<'PY' || echo "PANNs cache failed"
+from panns_inference import AudioTagging
+m = AudioTagging(checkpoint_path=None, device="cpu")
+print("PANNs cached")
 PY
 
 # Make models directory readable to all (workers run as default user)

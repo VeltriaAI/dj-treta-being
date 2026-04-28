@@ -67,6 +67,13 @@ log = logging.LoggerAdapter(logging.getLogger("v5"), {"shard": SHARD_ID})
 
 _gcs = None
 
+# Resolve binaries from venv (PATH doesn't include /opt/venv/bin by default
+# when worker.py is invoked as `/opt/venv/bin/python worker.py`).
+VENV_BIN = "/opt/venv/bin"
+YT_DLP = f"{VENV_BIN}/yt-dlp"
+DEMUCS_PY = f"{VENV_BIN}/python3"  # for `python -m demucs.separate`
+FFMPEG = "ffmpeg"  # system binary, always in PATH
+
 
 def gcs():
     global _gcs
@@ -89,13 +96,15 @@ def checkpoint_prefix(shard_id: int) -> str:
 
 
 def asset_paths(mbid: str) -> dict:
-    """Stable per-track relative paths in GCS — never include bucket name."""
+    """Stable per-track relative paths in GCS — never include bucket name.
+    Stems use M4A AAC (not Opus): Essentia 2.1b6 segfaults on opus files
+    in this image, M4A AAC is rock-solid for the per-stem analysis tier."""
     return {
         "audio": f"audio/{mbid}.m4a",
-        "stem_drums": f"stems/{mbid}/drums.opus",
-        "stem_bass": f"stems/{mbid}/bass.opus",
-        "stem_vocals": f"stems/{mbid}/vocals.opus",
-        "stem_other": f"stems/{mbid}/other.opus",
+        "stem_drums": f"stems/{mbid}/drums.m4a",
+        "stem_bass": f"stems/{mbid}/bass.m4a",
+        "stem_vocals": f"stems/{mbid}/vocals.m4a",
+        "stem_other": f"stems/{mbid}/other.m4a",
         "midi": f"midi/{mbid}.mid",
         "mel": f"mel/{mbid}.npy",
         "lyrics": f"lyrics/{mbid}.json",
@@ -106,7 +115,7 @@ def asset_paths(mbid: str) -> dict:
 def download_audio(video_id: str, dest: Path) -> bool:
     url = f"https://music.youtube.com/watch?v={video_id}"
     cmd = [
-        "yt-dlp",
+        YT_DLP,
         "-f",
         "bestaudio[ext=m4a]/bestaudio",
         "--no-playlist",
@@ -189,21 +198,27 @@ def analyze_essentia(audio_path: Path, sr: int = 44100) -> dict:
     }
 
 
-# ── Tier 3: Madmom (downbeats, phrases, sections) ─────────────────────
+# ── Tier 3: Allin1 (downbeats, bars, phrases, segment labels) ─────────
+# Replaced madmom (abandoned, broken on Python 3.11) with allin1 (Sony CSI
+# 2024). Bonus: allin1 also detects segment-level structure (intro/verse/
+# chorus/bridge/outro) which madmom couldn't do.
 def analyze_madmom(audio_path: Path, beat_times: list[float]) -> dict:
-    """Downbeats + phrase boundaries (every 8/16/32 bars)."""
+    """Downbeats + bar grid + phrases + section labels via allin1."""
     try:
-        from madmom.features.downbeats import RNNDownBeatProcessor, DBNDownBeatTrackingProcessor
+        import allin1  # noqa: F401
     except Exception as e:
-        return {"downbeats_json": None, "phrases_json": None, "_madmom_error": str(e)[:80]}
+        return {"downbeats_json": None, "phrases_json": None, "_madmom_error": f"import: {str(e)[:80]}"}
 
-    rnn = RNNDownBeatProcessor()(str(audio_path))
-    proc = DBNDownBeatTrackingProcessor(beats_per_bar=[3, 4], fps=100)
-    db = proc(rnn)  # returns (n, 2) array of [time_s, beat_in_bar]
+    try:
+        result = allin1.analyze(str(audio_path), keep_byproducts=False, overwrite=True)
+    except Exception as e:
+        return {"downbeats_json": None, "phrases_json": None, "_madmom_error": f"analyze: {str(e)[:80]}"}
 
-    downbeats = [{"t_ms": int(t * 1000), "beat_in_bar": int(b)} for t, b in db]
-    bars = [d for d in downbeats if d["beat_in_bar"] == 1]
+    db_raw = list(getattr(result, "downbeats", []) or [])
+    downbeats = [{"t_ms": int(t * 1000), "beat_in_bar": 1} for t in db_raw]
+    bars = downbeats
 
+    # Phrase groupings (every N bars)
     phrases = []
     for size in (8, 16, 32):
         for i in range(0, len(bars), size):
@@ -211,12 +226,22 @@ def analyze_madmom(audio_path: Path, beat_times: list[float]) -> dict:
                 "size_bars": size,
                 "start_bar": i,
                 "start_ms": bars[i]["t_ms"],
-                "end_ms": bars[min(i + size, len(bars) - 1)]["t_ms"] if i + size < len(bars) else bars[-1]["t_ms"],
+                "end_ms": bars[min(i + size, len(bars) - 1)]["t_ms"] if i + size < len(bars) else (bars[-1]["t_ms"] if bars else 0),
             })
 
+    # Segment-level labels (intro/verse/chorus/etc.) — allin1's superpower
+    segments = []
+    for s in (getattr(result, "segments", []) or []):
+        segments.append({
+            "label": getattr(s, "label", ""),
+            "start_ms": int(getattr(s, "start", 0.0) * 1000),
+            "end_ms": int(getattr(s, "end", 0.0) * 1000),
+        })
+
     return {
-        "downbeats_json": json.dumps(downbeats[:512]),  # cap size
+        "downbeats_json": json.dumps(downbeats[:512]),
         "phrases_json": json.dumps(phrases),
+        "segments_json": json.dumps(segments) if segments else None,
         "bar_count": len(bars),
     }
 
@@ -338,26 +363,44 @@ def embed_clap(audio_path: Path) -> dict:
         return {"clap_embedding": None, "_clap_error": str(e)[:80]}
 
 
-# ── Tier 7: musicnn genre/mood tags ───────────────────────────────────
+# ── Tier 7: PANNs audio tags (replaces dead musicnn) ──────────────────
+# musicnn is abandoned (TF1.x). PANNs (Pretrained Audio NN, AudioSet 527
+# classes) is maintained, gives genre + mood + instrument tags in one pass.
+_PANNS_MODEL = None
+
+
 def analyze_musicnn(audio_path: Path) -> dict:
+    """Top-10 audio tags via PANNs. Output column kept as `musicnn_tags_json`
+    for schema continuity with prior runs."""
     try:
-        from musicnn.tagger import top_tags
-        tags = top_tags(str(audio_path), model="MTT_musicnn", topN=10)
-        return {"musicnn_tags_json": json.dumps(list(tags))}
+        global _PANNS_MODEL
+        if _PANNS_MODEL is None:
+            from panns_inference import AudioTagging
+            _PANNS_MODEL = AudioTagging(checkpoint_path=None, device="cpu")
+        import librosa, numpy as np
+        wav, _ = librosa.load(str(audio_path), sr=32000, mono=True)
+        wav = wav[None, :]  # (batch=1, samples)
+        clipwise_output, _ = _PANNS_MODEL.inference(wav)
+        # AudioSet labels — top 10
+        from panns_inference.config import labels
+        scores = clipwise_output[0]
+        top_idx = np.argsort(scores)[-10:][::-1]
+        tags = [{"label": labels[i], "score": round(float(scores[i]), 4)} for i in top_idx]
+        return {"musicnn_tags_json": json.dumps(tags)}
     except Exception as e:
         return {"musicnn_tags_json": None, "_musicnn_error": str(e)[:80]}
 
 
 # ── Tier 8: Stems (htdemucs) ──────────────────────────────────────────
 def separate_stems(audio_path: Path, mbid: str) -> dict:
-    """Run htdemucs, return paths to {drums,bass,vocals,other}.opus locally."""
+    """Run htdemucs, return paths to {drums,bass,vocals,other}.m4a locally."""
     out_dir = LOCAL_TMP / f"stems_{mbid}"
     out_dir.mkdir(exist_ok=True)
     cmd = [
-        "python3", "-m", "demucs.separate",
+        DEMUCS_PY, "-m", "demucs.separate",
         "-n", "htdemucs",
         "-o", str(out_dir),
-        "--mp3",  # closer to opus and demucs supports it natively; we re-encode to opus after
+        "--mp3",  # demucs native; we re-encode to AAC m4a after
         str(audio_path),
     ]
     try:
@@ -374,15 +417,18 @@ def separate_stems(audio_path: Path, mbid: str) -> dict:
             src = stem_subdir / f"{stem_name}.wav"
         if not src.exists():
             continue
-        # re-encode to opus 192kbps for storage efficiency
-        opus_path = out_dir / f"{stem_name}.opus"
+        # re-encode to M4A AAC 192kbps. Original choice was Opus but
+        # Essentia 2.1b6 segfaults on Opus files in this image (libopus
+        # ABI mismatch). M4A AAC keeps the per-stem analyze tier (which
+        # uses Essentia MonoLoader) safe.
+        m4a_path = out_dir / f"{stem_name}.m4a"
         try:
             subprocess.run(
-                ["ffmpeg", "-y", "-i", str(src), "-c:a", "libopus", "-b:a", "192k",
-                 "-vn", str(opus_path)],
+                [FFMPEG, "-y", "-i", str(src), "-c:a", "aac", "-b:a", "192k",
+                 "-vn", str(m4a_path)],
                 capture_output=True, check=True, timeout=120,
             )
-            stems[stem_name] = opus_path
+            stems[stem_name] = m4a_path
             src.unlink()
         except Exception:
             pass
@@ -408,21 +454,28 @@ def analyze_stems(stems_paths: dict, sr: int = 44100) -> dict:
 
 # ── Tier 10: basic-pitch MIDI ─────────────────────────────────────────
 def extract_midi(audio_path: Path, mbid: str) -> Path | None:
+    """basic-pitch MIDI extraction. Uses lower-level predict() API to avoid
+    issues with predict_and_save's TF model loading."""
     try:
-        from basic_pitch.inference import predict_and_save
+        from basic_pitch.inference import predict
+        from basic_pitch import ICASSP_2022_MODEL_PATH
+        import pretty_midi  # bundled with basic-pitch
+    except Exception as e:
+        log.warning(f"basic-pitch import failed: {e}")
+        return None
+
+    try:
+        model_output, midi_data, note_events = predict(
+            str(audio_path),
+            model_or_model_path=ICASSP_2022_MODEL_PATH,
+        )
         out_dir = LOCAL_TMP / f"midi_{mbid}"
         out_dir.mkdir(exist_ok=True)
-        predict_and_save(
-            [str(audio_path)],
-            output_directory=str(out_dir),
-            save_midi=True,
-            sonify_midi=False,
-            save_model_outputs=False,
-            save_notes=False,
-        )
-        midi_files = list(out_dir.glob("*.mid")) + list(out_dir.glob("*.midi"))
-        return midi_files[0] if midi_files else None
-    except Exception:
+        midi_path = out_dir / f"{mbid}.mid"
+        midi_data.write(str(midi_path))
+        return midi_path if midi_path.exists() else None
+    except Exception as e:
+        log.warning(f"{mbid} basic-pitch predict: {str(e)[:120]}")
         return None
 
 
@@ -645,6 +698,20 @@ def _flush(worker_id: int, rows: list[dict]):
 
 
 def main():
+    # Use spawn (fresh interpreter) instead of fork — fork inherits parent's
+    # locked threadpool state from polars/numpy/google-cloud-storage and
+    # deadlocks the child workers. This is a known C-extension+fork issue.
+    mp.set_start_method("spawn", force=True)
+
+    # Smoke-test critical binaries on startup. Fail loud rather than
+    # silently mark every track as download_failed.
+    for bin_path in (YT_DLP, FFMPEG):
+        check_cmd = [bin_path, "--version"] if "/" in bin_path else ["which", bin_path]
+        if subprocess.run(check_cmd, capture_output=True).returncode != 0:
+            log.error(f"FATAL: binary missing or broken: {bin_path}")
+            sys.exit(1)
+    log.info(f"binaries OK: {YT_DLP}, {FFMPEG}")
+
     log.info(f"shard {SHARD_ID} starting (workers={WORKERS_PER_VM})")
     shard_path = LOCAL_TMP / "shard.parquet"
     gcs().blob(queue_blob(SHARD_ID)).download_to_filename(str(shard_path))
