@@ -125,11 +125,13 @@ require_cmd() {
   done
 }
 
-# Try python3, then python3.12 / 3.11 / 3.10 — set PYTHON to the first
-# >=3.10 we find. Many systems have python3 = 3.9 by default.
+# Try explicit versioned binaries first (3.12 is the safe sweet spot —
+# librosa / numba / llvmlite ship pre-built wheels for it). Fall back
+# to `python3` only if no version-named binary is found, since on
+# many systems `python3` is 3.9 (macOS pre-Sonoma, Ubuntu 22.04).
 require_python_310() {
   local candidate
-  for candidate in python3 python3.13 python3.12 python3.11 python3.10; do
+  for candidate in python3.12 python3.11 python3.13 python3.10 python3; do
     if command -v "$candidate" >/dev/null 2>&1; then
       if "$candidate" -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" 2>/dev/null; then
         PYTHON="$candidate"
@@ -215,11 +217,15 @@ fetch_mixxx_for_platform() {
 
 install_mixxx_dmg() {
   local dmg="$1" dest="$2"
-  local mount_point
+  local mount_point rc
   mount_point=$(hdiutil attach -nobrowse -readonly -mountrandom /tmp "$dmg" \
                   | tail -1 | awk '{print $NF}')
-  cp -R "$mount_point"/*.app "$dest/"
-  hdiutil detach "$mount_point" >/dev/null
+  # Save cp's exit, ALWAYS detach — otherwise `set -eu` aborts before
+  # detach runs and we leave a phantom mount on the user's Mac that
+  # survives reruns. (Caught by code review on PR #79.)
+  cp -R "$mount_point"/*.app "$dest/" && rc=0 || rc=$?
+  hdiutil detach "$mount_point" >/dev/null 2>&1 || true
+  [ "$rc" -eq 0 ] || die "Failed to copy Mixxx.app from DMG (rc=$rc)"
 }
 
 install_mixxx_deb() {
@@ -228,6 +234,34 @@ install_mixxx_deb() {
   # Extract the .deb without installing system-wide. Files land under
   # $dest/usr/bin/mixxx, $dest/usr/share/mixxx/, etc.
   dpkg-deb -x "$deb" "$dest"
+
+  # The .deb declares apt-level dependencies (Qt, PortAudio, taglib,
+  # chromaprint, etc.) that dpkg-deb -x does NOT install. On a bare
+  # Debian/Ubuntu system the mixxx binary will fail to launch with
+  # cryptic loader errors. Run ldd up front and fail fast with a
+  # specific apt-install hint instead. (Caught by code review on PR #79.)
+  local bin="$dest/usr/bin/mixxx"
+  if command -v ldd >/dev/null 2>&1 && [ -x "$bin" ]; then
+    local missing
+    missing=$(ldd "$bin" 2>/dev/null | awk '/not found/ {print $1}' | sort -u | head -10 || true)
+    if [ -n "$missing" ]; then
+      cat <<EOF >&2
+
+  ${C_YELLOW}!${C_RESET} Mixxx is installed but missing system libraries:
+
+$(echo "$missing" | sed 's/^/      /')
+
+  On Debian/Ubuntu, install them with:
+
+      sudo apt install -y mixxx
+      # (The dependency closure of the apt 'mixxx' package is the
+      #  fastest way to pull all Qt/PortAudio/taglib/chromaprint libs;
+      #  you'll keep using OUR forked binary at $bin.)
+
+EOF
+      die "Mixxx missing system libraries — see above"
+    fi
+  fi
 }
 
 mixxx_binary_path() {
@@ -302,12 +336,31 @@ maybe_run_setup() {
     return 0
   fi
   mkdir -p "$CONFIG_DIR"
-  say "First-run setup — answer 4 quick questions."
-  echo
-  # Setup wizard lives in the agent package, so we invoke it via the
-  # freshly-installed djclaw CLI. It writes config.yaml, secrets.env,
-  # and litellm.yaml under $CONFIG_DIR.
-  "$PREFIX/venv/bin/djclaw" setup
+
+  # When the user runs `curl ... | sh`, this script's stdin is the
+  # pipe carrying the script — `input()` inside the wizard would
+  # EOF immediately and write empty values. Reattach stdin to the
+  # controlling terminal if there is one. (Caught by code review.)
+  if [ -e /dev/tty ]; then
+    say "First-run setup — answer 4 quick questions."
+    echo
+    "$PREFIX/venv/bin/djclaw" setup </dev/tty
+  else
+    cat <<EOF
+
+  ${C_YELLOW}!${C_RESET} No controlling TTY — skipping interactive setup.
+
+  Finish setup later by running:
+
+      djclaw setup
+
+  Then:
+
+      djclaw doctor
+      djclaw start
+
+EOF
+  fi
 }
 
 # ─── Stamp + next steps ────────────────────────────────────────────────

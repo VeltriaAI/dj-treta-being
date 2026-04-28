@@ -33,7 +33,12 @@ py-modules = ["cli", "tui"]
 include = ["agent*", "mcp_server*"]
 
 [tool.setuptools.package-data]
-agent = ["templates/*.j2", "templates/*.yaml", "templates/*.env"]
+# Templates use a `.tpl` suffix in agent/templates/ (config.yaml.tpl,
+# secrets.env.tpl, litellm.yaml.tpl). The setup wizard reads them at
+# runtime via `Path(__file__).parent / "templates" / "..."`, so they
+# MUST be packaged into the sdist — otherwise the first end-user
+# install hits FileNotFoundError. (Caught by code review on PR #79.)
+agent = ["templates/*.tpl"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
