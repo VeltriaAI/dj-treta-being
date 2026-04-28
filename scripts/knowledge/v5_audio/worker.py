@@ -390,18 +390,27 @@ def separate_stems(audio_path: Path, mbid: str) -> dict:
 
 # ── Tier 8: Per-stem features ─────────────────────────────────────────
 def analyze_stems(stems_paths: dict, sr: int = 44100) -> dict:
+    """RMS + duration per stem.
+
+    NOTE: Using soundfile/libsndfile instead of Essentia's MonoLoader because
+    the latter segfaults on Opus files (Essentia 2.1b6 + opusfile combo on
+    this image). Segfault silently kills multiprocessing children → no
+    artifacts → no checkpoint. soundfile decodes Opus reliably.
+    """
     if not stems_paths:
         return {}
-    import essentia.standard as es
+    import soundfile as sf
     out = {}
     for stem_name, path in stems_paths.items():
         try:
-            audio = es.MonoLoader(filename=str(path), sampleRate=sr)()
+            audio, audio_sr = sf.read(str(path), always_2d=False)
+            if audio.ndim > 1:
+                audio = audio.mean(axis=1)
             rms = float(np.sqrt(np.mean(audio ** 2)))
             out[f"stem_{stem_name}_rms"] = round(rms, 5)
-            out[f"stem_{stem_name}_duration_ms"] = int(len(audio) / sr * 1000)
-        except Exception:
-            pass
+            out[f"stem_{stem_name}_duration_ms"] = int(len(audio) / audio_sr * 1000)
+        except Exception as e:
+            log.warning(f"per-stem {stem_name} failed: {e}")
     return out
 
 
