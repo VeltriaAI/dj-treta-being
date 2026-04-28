@@ -47,6 +47,7 @@ RUN_ID = os.environ["RUN_ID"]
 WORKER_COUNT = int(os.environ.get("WORKER_COUNT", "32"))
 WORKER_MACHINE_TYPE = os.environ.get("WORKER_MACHINE_TYPE", "e2-standard-4")
 USE_SPOT_WORKERS = os.environ.get("USE_SPOT_WORKERS", "true").lower() == "true"
+V5_IMAGE_NAME = os.environ.get("V5_IMAGE_NAME", "")
 
 PRIORITY_MIN_YEAR = int(os.environ.get("PRIORITY_MIN_YEAR", "2020"))
 PRIORITY_REQUIRE_VIDEO_ID = os.environ.get("PRIORITY_REQUIRE_VIDEO_ID", "true").lower() == "true"
@@ -146,11 +147,15 @@ def spawn_workers():
             f"WORKERS_PER_VM={os.environ.get('WORKERS_PER_VM', '3')},"
             f"KEEP_AUDIO_HOT={'true' if KEEP_AUDIO_HOT else 'false'}"
         )
+        if V5_IMAGE_NAME:
+            image_flag = f"--image={V5_IMAGE_NAME} --image-project={GCP_PROJECT}"
+        else:
+            image_flag = "--image-family=debian-12 --image-project=debian-cloud"
         cmd = (
             f"gcloud compute instances create {name} "
             f"--project={GCP_PROJECT} --zone={GCP_ZONE} "
             f"--machine-type={WORKER_MACHINE_TYPE} --boot-disk-size=50GB "
-            f"--image-family=debian-12 --image-project=debian-cloud "
+            f"{image_flag} "
             f"--scopes=cloud-platform "
             f"{spot_flag} "
             f"--metadata={shlex.quote(metadata)} "

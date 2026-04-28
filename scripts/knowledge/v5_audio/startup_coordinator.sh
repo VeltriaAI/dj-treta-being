@@ -12,7 +12,7 @@ get_meta() { curl -sf -H "$HDR" "$META_URL/$1"; }
 for var in GCP_PROJECT GCS_BUCKET GCP_ZONE GCP_REGION HF_TOKEN HF_DATASET_REPO \
            DATASET_VERSION RUN_ID WORKER_COUNT WORKER_MACHINE_TYPE \
            USE_SPOT_WORKERS PRIORITY_MIN_YEAR PRIORITY_REQUIRE_VIDEO_ID \
-           PRIORITY_LIMIT KEEP_AUDIO_HOT; do
+           PRIORITY_LIMIT KEEP_AUDIO_HOT V5_IMAGE_NAME; do
     val=$(get_meta "$var" || echo "")
     if [ -n "$val" ]; then
         export "$var=$val"
@@ -21,13 +21,20 @@ done
 
 echo "=== v5 coordinator (run_id=$RUN_ID) ==="
 
+# Force HTTP path for GCE metadata + system CA bundle for venv SSL.
+export GCE_METADATA_HOST_USE_HTTPS=False
+export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+
 # ── Install deps ──────────────────────────────────────────────────────
 if [ ! -f /var/lib/v5_coord_setup_done ]; then
     apt-get update -qq
-    apt-get install -y -qq python3-pip python3-venv
+    apt-get install -y -qq python3-pip python3-venv ca-certificates
+    update-ca-certificates
     python3 -m venv /opt/venv
     /opt/venv/bin/pip install -q --upgrade pip
-    /opt/venv/bin/pip install -q polars pyarrow google-cloud-storage huggingface_hub
+    /opt/venv/bin/pip install -q "urllib3<2" certifi "google-auth==2.29.0"
+    /opt/venv/bin/pip install -q polars pyarrow "google-cloud-storage==2.18.0" huggingface_hub
     touch /var/lib/v5_coord_setup_done
 fi
 
