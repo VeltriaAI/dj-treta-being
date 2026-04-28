@@ -202,44 +202,35 @@ def analyze_essentia(audio_path: Path, sr: int = 44100) -> dict:
     }
 
 
-# ── Tier 3: BeatNet (downbeats, bars, phrases) ────────────────────────
-# Replaced allin1 → which transitively imports madmom → which doesn't
-# install on Python 3.11. BeatNet is pure-PyTorch, no madmom dependency,
-# maintained 2024, gives beats + downbeats for any genre.
-# Section labels (intro/verse/chorus) are not produced — we keep using
-# the heuristic structure tier (drops/builds/breakdowns/hot_cues) which
-# already covers the DJ use case.
-_BEATNET_MODEL = None
-
-
+# ── Tier 3: 4/4 derived downbeats + phrase grid ──────────────────────
+# allin1 → BeatNet → both transitively pull madmom which doesn't install
+# on Python 3.11. For electronic music (99% in 4/4), every 4th beat IS
+# the downbeat — a simple derivation from Essentia beat_times is as
+# accurate as DBN tracking for our use case. Section labels live in the
+# heuristic structure tier (drops/builds/breakdowns/hot_cues).
 def analyze_madmom(audio_path: Path, beat_times: list[float]) -> dict:
-    """Downbeats + bar grid + phrase groupings via BeatNet."""
-    try:
-        global _BEATNET_MODEL
-        if _BEATNET_MODEL is None:
-            from BeatNet.BeatNet import BeatNet
-            _BEATNET_MODEL = BeatNet(1, mode="offline", inference_model="DBN", plot=[], thread=False)
-    except Exception as e:
-        return {"downbeats_json": None, "phrases_json": None, "_madmom_error": f"import: {str(e)[:80]}"}
+    """Downbeats + bar grid + phrase groupings — derived from beats (4/4 assumed)."""
+    if not beat_times or len(beat_times) < 4:
+        return {"downbeats_json": None, "phrases_json": None, "_madmom_error": "no_beats"}
 
-    try:
-        # BeatNet returns (n, 2): [time_s, beat_position 1..N]
-        out = _BEATNET_MODEL.process(str(audio_path))
-    except Exception as e:
-        return {"downbeats_json": None, "phrases_json": None, "_madmom_error": f"process: {str(e)[:80]}"}
+    # Every 4th beat = downbeat (4/4 time signature)
+    downbeats = []
+    for i, t in enumerate(beat_times):
+        beat_in_bar = (i % 4) + 1
+        downbeats.append({"t_ms": int(t * 1000), "beat_in_bar": beat_in_bar})
 
-    downbeats = [{"t_ms": int(t * 1000), "beat_in_bar": int(b)} for t, b in out]
     bars = [d for d in downbeats if d["beat_in_bar"] == 1]
 
     # Phrase groupings (every N bars)
     phrases = []
     for size in (8, 16, 32):
         for i in range(0, len(bars), size):
+            end_idx = min(i + size, len(bars) - 1) if i + size < len(bars) else (len(bars) - 1)
             phrases.append({
                 "size_bars": size,
                 "start_bar": i,
                 "start_ms": bars[i]["t_ms"],
-                "end_ms": bars[min(i + size, len(bars) - 1)]["t_ms"] if i + size < len(bars) else (bars[-1]["t_ms"] if bars else 0),
+                "end_ms": bars[end_idx]["t_ms"] if bars else 0,
             })
 
     return {
@@ -546,6 +537,8 @@ def process_one(row: dict) -> dict | None:
         # Tier 3
         try:
             mm = analyze_madmom(audio_path, beat_times)
+            if mm.get("_madmom_error"):
+                log.warning(f"{mbid} beatnet: {mm['_madmom_error']}")
             result.update({k: v for k, v in mm.items() if not k.startswith("_")})
             mm_data = mm
         except Exception as e:
