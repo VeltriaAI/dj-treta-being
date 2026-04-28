@@ -1,9 +1,4 @@
-"""v5 audio worker — METADATA-ONLY batch pipeline (lazy-stems architecture).
-
-v5 batch extracts the cheap, dataset-wide features — BPM, key, structure,
-embeddings — then ships. Stems are LAZY: generated on-demand at runtime
-when DJ Treta actually queues a track. See dj-treta/agent/stems_runtime/
-(separate service) for the on-demand stem generator.
+"""v5 audio worker — full Anyma-tier analysis pipeline.
 
 Per track, in order (each tier wrapped in try/except — failure of one tier
 doesn't kill the rest, partial data is better than no data):
@@ -13,21 +8,16 @@ doesn't kill the rest, partial data is better than no data):
   Tier 3: Madmom (downbeats, bars, phrase boundaries, sections)
   Tier 4: Structure (drops, build-ups, breakdowns, 8 hot cues — heuristic
           on phrase + energy + spectral flux)
-  Tier 5: silero-vad on full mix (vocal segments — where vocals start/stop)
+  Tier 5: silero-vad on full mix (vocal segments)
   Tier 6: CLAP embedding (512-dim, vibe similarity)
-  Final:  Upload audio + parquet row, delete /tmp, checkpoint.
-
-DROPPED from v5 batch (moved to lazy-runtime or v5.1):
-  - Stems (htdemucs)        — lazy: generated when track queued
-  - Per-stem features       — N/A without stems
-  - Mel spectrograms        — only valuable for ML training; defer to v5.1
-  - Whisper on vocals stem  — silero-vad already exposes vocal timestamps
-  - musicnn genre/mood tags — v4 already filtered electronic via Discogs
-  - basic-pitch MIDI        — no live MIDI use case
-
-Per-track time at this scope: ~30-50s. 2.94M tracks → ~$300 compute.
-Audio retained in GCS so stems can be lazy-generated later without
-re-downloading from YouTube (and risking bot detection).
+  Tier 7: musicnn genre/mood tags
+  Tier 8: htdemucs stems (drums/bass/vocals/other) → upload Opus 192kbps
+  Tier 9: Per-stem features (drum-only beat, bass-only key, etc.)
+  Tier 10: basic-pitch MIDI extraction → upload .mid
+  Tier 11: Whisper on vocals stem → lyrics + alignment
+  Tier 12: Multi-res mel spectrograms → upload .npy
+  Final: Upload audio + stems + midi + mel + lyrics to GCS, write parquet
+         row, delete /tmp files, checkpoint.
 
 Spawns N parallel processes per VM (configured via WORKERS_PER_VM).
 
@@ -99,26 +89,24 @@ def checkpoint_prefix(shard_id: int) -> str:
 
 
 def asset_paths(mbid: str) -> dict:
-    """Stable per-track relative paths in GCS — never include bucket name.
-    Stems are NOT pre-computed in v5 batch — generated lazily at runtime."""
+    """Stable per-track relative paths in GCS — never include bucket name."""
     return {
         "audio": f"audio/{mbid}.m4a",
+        "stem_drums": f"stems/{mbid}/drums.opus",
+        "stem_bass": f"stems/{mbid}/bass.opus",
+        "stem_vocals": f"stems/{mbid}/vocals.opus",
+        "stem_other": f"stems/{mbid}/other.opus",
+        "midi": f"midi/{mbid}.mid",
+        "mel": f"mel/{mbid}.npy",
+        "lyrics": f"lyrics/{mbid}.json",
     }
-
-
-# Resolve binaries from venv (PATH doesn't include /opt/venv/bin by default
-# when worker.py is invoked as `/opt/venv/bin/python worker.py`).
-VENV_BIN = "/opt/venv/bin"
-YT_DLP = f"{VENV_BIN}/yt-dlp"
-DEMUCS_PY = f"{VENV_BIN}/python3"  # for `python -m demucs.separate`
-FFMPEG = "ffmpeg"  # system binary, always in PATH
 
 
 # ── Tier 1: Download ──────────────────────────────────────────────────
 def download_audio(video_id: str, dest: Path) -> bool:
     url = f"https://music.youtube.com/watch?v={video_id}"
     cmd = [
-        YT_DLP,
+        "yt-dlp",
         "-f",
         "bestaudio[ext=m4a]/bestaudio",
         "--no-playlist",
@@ -350,6 +338,121 @@ def embed_clap(audio_path: Path) -> dict:
         return {"clap_embedding": None, "_clap_error": str(e)[:80]}
 
 
+# ── Tier 7: musicnn genre/mood tags ───────────────────────────────────
+def analyze_musicnn(audio_path: Path) -> dict:
+    try:
+        from musicnn.tagger import top_tags
+        tags = top_tags(str(audio_path), model="MTT_musicnn", topN=10)
+        return {"musicnn_tags_json": json.dumps(list(tags))}
+    except Exception as e:
+        return {"musicnn_tags_json": None, "_musicnn_error": str(e)[:80]}
+
+
+# ── Tier 8: Stems (htdemucs) ──────────────────────────────────────────
+def separate_stems(audio_path: Path, mbid: str) -> dict:
+    """Run htdemucs, return paths to {drums,bass,vocals,other}.opus locally."""
+    out_dir = LOCAL_TMP / f"stems_{mbid}"
+    out_dir.mkdir(exist_ok=True)
+    cmd = [
+        "python3", "-m", "demucs.separate",
+        "-n", "htdemucs",
+        "-o", str(out_dir),
+        "--mp3",  # closer to opus and demucs supports it natively; we re-encode to opus after
+        str(audio_path),
+    ]
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=600, check=True)
+    except Exception as e:
+        return {"stems_paths": None, "_stems_error": str(e)[:80]}
+
+    # Demucs writes to {out_dir}/htdemucs/{stem_name}.{wav|mp3}
+    stem_subdir = out_dir / "htdemucs" / audio_path.stem
+    stems = {}
+    for stem_name in ("drums", "bass", "vocals", "other"):
+        src = stem_subdir / f"{stem_name}.mp3"
+        if not src.exists():
+            src = stem_subdir / f"{stem_name}.wav"
+        if not src.exists():
+            continue
+        # re-encode to opus 192kbps for storage efficiency
+        opus_path = out_dir / f"{stem_name}.opus"
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", str(src), "-c:a", "libopus", "-b:a", "192k",
+                 "-vn", str(opus_path)],
+                capture_output=True, check=True, timeout=120,
+            )
+            stems[stem_name] = opus_path
+            src.unlink()
+        except Exception:
+            pass
+    return {"stems_paths": stems}
+
+
+# ── Tier 9: Per-stem features ─────────────────────────────────────────
+def analyze_stems(stems_paths: dict, sr: int = 44100) -> dict:
+    if not stems_paths:
+        return {}
+    import essentia.standard as es
+    out = {}
+    for stem_name, path in stems_paths.items():
+        try:
+            audio = es.MonoLoader(filename=str(path), sampleRate=sr)()
+            rms = float(np.sqrt(np.mean(audio ** 2)))
+            out[f"stem_{stem_name}_rms"] = round(rms, 5)
+            out[f"stem_{stem_name}_duration_ms"] = int(len(audio) / sr * 1000)
+        except Exception:
+            pass
+    return out
+
+
+# ── Tier 10: basic-pitch MIDI ─────────────────────────────────────────
+def extract_midi(audio_path: Path, mbid: str) -> Path | None:
+    try:
+        from basic_pitch.inference import predict_and_save
+        out_dir = LOCAL_TMP / f"midi_{mbid}"
+        out_dir.mkdir(exist_ok=True)
+        predict_and_save(
+            [str(audio_path)],
+            output_directory=str(out_dir),
+            save_midi=True,
+            sonify_midi=False,
+            save_model_outputs=False,
+            save_notes=False,
+        )
+        midi_files = list(out_dir.glob("*.mid")) + list(out_dir.glob("*.midi"))
+        return midi_files[0] if midi_files else None
+    except Exception:
+        return None
+
+
+# ── Tier 11: Whisper on vocals stem ───────────────────────────────────
+def transcribe_vocals(vocals_path: Path) -> dict | None:
+    try:
+        from faster_whisper import WhisperModel
+        global _WHISPER_MODEL
+        if "_WHISPER_MODEL" not in globals():
+            _WHISPER_MODEL = WhisperModel("tiny", device="cpu", compute_type="int8")
+        segments, info = _WHISPER_MODEL.transcribe(str(vocals_path), beam_size=1)
+        segs = [{"start_ms": int(s.start * 1000), "end_ms": int(s.end * 1000), "text": s.text.strip()}
+                for s in segments]
+        return {"language": info.language, "segments": segs}
+    except Exception:
+        return None
+
+
+# ── Tier 12: Multi-res mel spectrograms ───────────────────────────────
+def compute_mel(audio: np.ndarray, sr: int = 44100) -> np.ndarray | None:
+    try:
+        import librosa
+        # 128-bin mel, 22kHz nyquist, 1024 FFT, 512 hop
+        mel = librosa.feature.melspectrogram(y=audio, sr=sr, n_mels=128, n_fft=1024, hop_length=512)
+        mel_db = librosa.power_to_db(mel, ref=np.max)
+        return mel_db.astype(np.float16)  # half precision for storage
+    except Exception:
+        return None
+
+
 # ── Master per-track pipeline ─────────────────────────────────────────
 def process_one(row: dict) -> dict | None:
     mbid = row["mbid"]
@@ -413,9 +516,66 @@ def process_one(row: dict) -> dict | None:
         except Exception as e:
             log.warning(f"{mbid} clap: {e}")
 
-        # Stems + mel + per-stem all moved to lazy runtime / v5.1.
-        # The audio itself is retained in GCS so stems can be regenerated
-        # without re-downloading from YouTube.
+        # Tier 7
+        try:
+            result.update(analyze_musicnn(audio_path))
+        except Exception as e:
+            log.warning(f"{mbid} musicnn: {e}")
+
+        # Tier 8
+        stems_data = separate_stems(audio_path, mbid)
+        stems_paths = stems_data.get("stems_paths") or {}
+
+        # Upload stems
+        for stem_name, local_path in stems_paths.items():
+            gcs_path = paths[f"stem_{stem_name}"]
+            try:
+                bucket.blob(gcs_path).upload_from_filename(str(local_path))
+                result[f"stem_{stem_name}_path"] = gcs_path
+            except Exception as e:
+                log.warning(f"{mbid} upload stem {stem_name}: {e}")
+
+        # Tier 9
+        try:
+            result.update(analyze_stems(stems_paths))
+        except Exception as e:
+            log.warning(f"{mbid} stems analyze: {e}")
+
+        # Tier 10
+        midi_path = extract_midi(audio_path, mbid)
+        if midi_path and midi_path.exists():
+            try:
+                bucket.blob(paths["midi"]).upload_from_filename(str(midi_path))
+                result["midi_path"] = paths["midi"]
+            except Exception:
+                pass
+
+        # Tier 11 — Whisper on vocals stem
+        if "vocals" in stems_paths:
+            tx = transcribe_vocals(stems_paths["vocals"])
+            if tx:
+                lyrics_local = LOCAL_TMP / f"{mbid}_lyrics.json"
+                lyrics_local.write_text(json.dumps(tx))
+                try:
+                    bucket.blob(paths["lyrics"]).upload_from_filename(str(lyrics_local))
+                    result["lyrics_path"] = paths["lyrics"]
+                    result["lyrics_language"] = tx.get("language")
+                    lyrics_local.unlink()
+                except Exception:
+                    pass
+
+        # Tier 12 — mel spectrogram
+        if audio_arr is not None:
+            mel = compute_mel(audio_arr)
+            if mel is not None:
+                mel_local = LOCAL_TMP / f"{mbid}_mel.npy"
+                np.save(mel_local, mel)
+                try:
+                    bucket.blob(paths["mel"]).upload_from_filename(str(mel_local))
+                    result["mel_path"] = paths["mel"]
+                    mel_local.unlink()
+                except Exception:
+                    pass
 
         # Final: upload the audio itself
         try:
@@ -437,6 +597,10 @@ def process_one(row: dict) -> dict | None:
         try:
             if audio_path.exists():
                 audio_path.unlink()
+            for d in LOCAL_TMP.glob(f"stems_{mbid}*"):
+                shutil.rmtree(d, ignore_errors=True)
+            for d in LOCAL_TMP.glob(f"midi_{mbid}*"):
+                shutil.rmtree(d, ignore_errors=True)
         except Exception:
             pass
 
@@ -481,22 +645,6 @@ def _flush(worker_id: int, rows: list[dict]):
 
 
 def main():
-    # Use spawn (fresh interpreter) instead of fork — fork inherits parent's
-    # locked threadpool state from polars/numpy/google-cloud-storage and
-    # deadlocks the child workers. This is a known C-extension+fork issue.
-    mp.set_start_method("spawn", force=True)
-
-    # Smoke-test critical binaries on startup. Fail loud rather than
-    # silently mark every track as download_failed.
-    for bin_path in (YT_DLP, FFMPEG):
-        if subprocess.run(
-            ["which", bin_path] if "/" not in bin_path else [bin_path, "--version"],
-            capture_output=True,
-        ).returncode != 0:
-            log.error(f"FATAL: binary missing: {bin_path}")
-            sys.exit(1)
-    log.info(f"binaries OK: {YT_DLP}, {FFMPEG}")
-
     log.info(f"shard {SHARD_ID} starting (workers={WORKERS_PER_VM})")
     shard_path = LOCAL_TMP / "shard.parquet"
     gcs().blob(queue_blob(SHARD_ID)).download_to_filename(str(shard_path))

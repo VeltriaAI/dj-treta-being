@@ -1,7 +1,7 @@
 """K0 step 2 — Export JSONL of embedding inputs to GCS.
 
 Reads the v3 parquet, builds a short embedding-text per row, writes a JSONL
-file per 500k rows directly to gs://fandorab2w3-music-data/embeddings/input/
+file per 500k rows directly to gs://${DJTRETA_GCS_BUCKET}/embeddings/input/
 and the index-JSONL that maps row_id → mbid (needed to stitch output back).
 
 Embedding text format:
@@ -12,6 +12,8 @@ Vertex AI batch-prediction input schema for text-embedding-005:
 """
 from __future__ import annotations
 
+import os
+
 import json
 import sys
 from pathlib import Path
@@ -20,7 +22,7 @@ import polars as pl
 from google.cloud import storage
 
 PARQUET = Path.home() / "Music" / "DJTreta" / "knowledge" / "dj_treta_library.parquet"
-BUCKET = "fandorab2w3-music-data"
+BUCKET = os.environ.get("DJTRETA_GCS_BUCKET") or sys.exit("DJTRETA_GCS_BUCKET required")
 INPUT_PREFIX = "embeddings/input/"
 INDEX_PREFIX = "embeddings/index/"
 CHUNK_SIZE = 500_000
@@ -62,7 +64,7 @@ def main() -> int:
     total = lf.select(pl.len()).collect().item()
     print(f"[k0.2] {total:,} rows to embed")
 
-    client = storage.Client(project="fandorab2w3")
+    client = storage.Client(project=PROJECT)
     bucket = client.bucket(BUCKET)
 
     # Idempotency: skip chunks already uploaded with matching size.

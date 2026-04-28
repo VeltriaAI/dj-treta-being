@@ -21,23 +21,13 @@ done
 
 echo "=== v5 coordinator (run_id=$RUN_ID) ==="
 
-# Mumbai's GCE metadata endpoint negotiates HTTPS first. Newer google-auth
-# (>=2.30) tries https://metadata.google.internal:443 and fails on the
-# internal CA. Force the legacy HTTP path + pin older google-auth.
-export GCE_METADATA_HOST_USE_HTTPS=False
-export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
-export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
-
 # ── Install deps ──────────────────────────────────────────────────────
 if [ ! -f /var/lib/v5_coord_setup_done ]; then
     apt-get update -qq
-    apt-get install -y -qq python3-pip python3-venv ca-certificates
-    update-ca-certificates
+    apt-get install -y -qq python3-pip python3-venv
     python3 -m venv /opt/venv
     /opt/venv/bin/pip install -q --upgrade pip
-    /opt/venv/bin/pip install -q certifi "urllib3<2"
-    /opt/venv/bin/pip install -q "google-auth==2.29.0" "google-cloud-storage==2.18.0"
-    /opt/venv/bin/pip install -q polars pyarrow huggingface_hub
+    /opt/venv/bin/pip install -q polars pyarrow google-cloud-storage huggingface_hub
     touch /var/lib/v5_coord_setup_done
 fi
 

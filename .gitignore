@@ -2,7 +2,7 @@
 __pycache__/
 *.pyc
 .DS_Store
-.beings/session.json
+.beings/*session*.json
 config.local.yaml
 .env
 djtreta.db
@@ -11,6 +11,8 @@ djtreta.db-wal
 djclaw.egg-info/
 scripts/knowledge/.job_id
 scripts/knowledge/.job_ids
+scripts/knowledge/.job_ids.bak
+scripts/knowledge/.job_ids*
 scripts/knowledge/.job_id_v2
 scripts/knowledge/__pycache__/
 scripts/knowledge/logs/

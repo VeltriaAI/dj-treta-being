@@ -12,6 +12,8 @@ an IVF-PQ index.
 """
 from __future__ import annotations
 
+import os
+
 import json
 import sys
 import time
@@ -22,9 +24,9 @@ import lancedb
 import pyarrow as pa
 from google.cloud import aiplatform, storage
 
-PROJECT = "fandorab2w3"
+PROJECT = os.environ.get("DJTRETA_VERTEX_PROJECT") or sys.exit("DJTRETA_VERTEX_PROJECT required")
 LOCATION = "us-central1"
-BUCKET = "fandorab2w3-music-data"
+BUCKET = os.environ.get("DJTRETA_GCS_BUCKET") or sys.exit("DJTRETA_GCS_BUCKET required")
 INDEX_PREFIX = "embeddings/index/"
 
 LANCE_DIR = Path.home() / "Music" / "DJTreta" / "knowledge" / "lancedb"
