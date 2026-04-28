@@ -1,4 +1,9 @@
-"""v5 audio worker — DJ-essential analysis pipeline (trimmed from full v5).
+"""v5 audio worker — METADATA-ONLY batch pipeline (lazy-stems architecture).
+
+v5 batch extracts the cheap, dataset-wide features — BPM, key, structure,
+embeddings — then ships. Stems are LAZY: generated on-demand at runtime
+when DJ Treta actually queues a track. See dj-treta/agent/stems_runtime/
+(separate service) for the on-demand stem generator.
 
 Per track, in order (each tier wrapped in try/except — failure of one tier
 doesn't kill the rest, partial data is better than no data):
@@ -10,17 +15,19 @@ doesn't kill the rest, partial data is better than no data):
           on phrase + energy + spectral flux)
   Tier 5: silero-vad on full mix (vocal segments — where vocals start/stop)
   Tier 6: CLAP embedding (512-dim, vibe similarity)
-  Tier 7: htdemucs stems (drums/bass/vocals/other) → upload Opus 192kbps
-  Tier 8: Per-stem features (RMS, durations)
-  Tier 9: Multi-res mel spectrograms → upload .npy (training-time use)
-  Final: Upload audio + stems + mel to GCS, write parquet row,
-         delete /tmp files, checkpoint.
+  Final:  Upload audio + parquet row, delete /tmp, checkpoint.
 
-DROPPED (not essential for DJ runtime, can re-process audio later if needed):
-  - Whisper on vocals stem (silero-vad already gives vocal timestamps;
-    DJ rarely needs the actual lyrics text to mix)
-  - musicnn genre/mood tags (v4 already filtered electronic via Discogs styles)
-  - basic-pitch MIDI extraction (no live MIDI use case)
+DROPPED from v5 batch (moved to lazy-runtime or v5.1):
+  - Stems (htdemucs)        — lazy: generated when track queued
+  - Per-stem features       — N/A without stems
+  - Mel spectrograms        — only valuable for ML training; defer to v5.1
+  - Whisper on vocals stem  — silero-vad already exposes vocal timestamps
+  - musicnn genre/mood tags — v4 already filtered electronic via Discogs
+  - basic-pitch MIDI        — no live MIDI use case
+
+Per-track time at this scope: ~30-50s. 2.94M tracks → ~$300 compute.
+Audio retained in GCS so stems can be lazy-generated later without
+re-downloading from YouTube (and risking bot detection).
 
 Spawns N parallel processes per VM (configured via WORKERS_PER_VM).
 
@@ -92,14 +99,10 @@ def checkpoint_prefix(shard_id: int) -> str:
 
 
 def asset_paths(mbid: str) -> dict:
-    """Stable per-track relative paths in GCS — never include bucket name."""
+    """Stable per-track relative paths in GCS — never include bucket name.
+    Stems are NOT pre-computed in v5 batch — generated lazily at runtime."""
     return {
         "audio": f"audio/{mbid}.m4a",
-        "stem_drums": f"stems/{mbid}/drums.opus",
-        "stem_bass": f"stems/{mbid}/bass.opus",
-        "stem_vocals": f"stems/{mbid}/vocals.opus",
-        "stem_other": f"stems/{mbid}/other.opus",
-        "mel": f"mel/{mbid}.npy",
     }
 
 
@@ -347,85 +350,6 @@ def embed_clap(audio_path: Path) -> dict:
         return {"clap_embedding": None, "_clap_error": str(e)[:80]}
 
 
-# ── Tier 7: Stems (htdemucs) ──────────────────────────────────────────
-def separate_stems(audio_path: Path, mbid: str) -> dict:
-    """Run htdemucs, return paths to {drums,bass,vocals,other}.opus locally."""
-    out_dir = LOCAL_TMP / f"stems_{mbid}"
-    out_dir.mkdir(exist_ok=True)
-    cmd = [
-        DEMUCS_PY, "-m", "demucs.separate",
-        "-n", "htdemucs",
-        "-o", str(out_dir),
-        "--mp3",  # closer to opus and demucs supports it natively; we re-encode to opus after
-        str(audio_path),
-    ]
-    try:
-        subprocess.run(cmd, capture_output=True, timeout=600, check=True)
-    except Exception as e:
-        return {"stems_paths": None, "_stems_error": str(e)[:80]}
-
-    # Demucs writes to {out_dir}/htdemucs/{stem_name}.{wav|mp3}
-    stem_subdir = out_dir / "htdemucs" / audio_path.stem
-    stems = {}
-    for stem_name in ("drums", "bass", "vocals", "other"):
-        src = stem_subdir / f"{stem_name}.mp3"
-        if not src.exists():
-            src = stem_subdir / f"{stem_name}.wav"
-        if not src.exists():
-            continue
-        # re-encode to opus 192kbps for storage efficiency
-        opus_path = out_dir / f"{stem_name}.opus"
-        try:
-            subprocess.run(
-                [FFMPEG, "-y", "-i", str(src), "-c:a", "libopus", "-b:a", "192k",
-                 "-vn", str(opus_path)],
-                capture_output=True, check=True, timeout=120,
-            )
-            stems[stem_name] = opus_path
-            src.unlink()
-        except Exception:
-            pass
-    return {"stems_paths": stems}
-
-
-# ── Tier 8: Per-stem features ─────────────────────────────────────────
-def analyze_stems(stems_paths: dict, sr: int = 44100) -> dict:
-    """RMS + duration per stem.
-
-    NOTE: Using soundfile/libsndfile instead of Essentia's MonoLoader because
-    the latter segfaults on Opus files (Essentia 2.1b6 + opusfile combo on
-    this image). Segfault silently kills multiprocessing children → no
-    artifacts → no checkpoint. soundfile decodes Opus reliably.
-    """
-    if not stems_paths:
-        return {}
-    import soundfile as sf
-    out = {}
-    for stem_name, path in stems_paths.items():
-        try:
-            audio, audio_sr = sf.read(str(path), always_2d=False)
-            if audio.ndim > 1:
-                audio = audio.mean(axis=1)
-            rms = float(np.sqrt(np.mean(audio ** 2)))
-            out[f"stem_{stem_name}_rms"] = round(rms, 5)
-            out[f"stem_{stem_name}_duration_ms"] = int(len(audio) / audio_sr * 1000)
-        except Exception as e:
-            log.warning(f"per-stem {stem_name} failed: {e}")
-    return out
-
-
-# ── Tier 9: Multi-res mel spectrograms ────────────────────────────────
-def compute_mel(audio: np.ndarray, sr: int = 44100) -> np.ndarray | None:
-    try:
-        import librosa
-        # 128-bin mel, 22kHz nyquist, 1024 FFT, 512 hop
-        mel = librosa.feature.melspectrogram(y=audio, sr=sr, n_mels=128, n_fft=1024, hop_length=512)
-        mel_db = librosa.power_to_db(mel, ref=np.max)
-        return mel_db.astype(np.float16)  # half precision for storage
-    except Exception:
-        return None
-
-
 # ── Master per-track pipeline ─────────────────────────────────────────
 def process_one(row: dict) -> dict | None:
     mbid = row["mbid"]
@@ -489,37 +413,9 @@ def process_one(row: dict) -> dict | None:
         except Exception as e:
             log.warning(f"{mbid} clap: {e}")
 
-        # Tier 7 — stems
-        stems_data = separate_stems(audio_path, mbid)
-        stems_paths = stems_data.get("stems_paths") or {}
-
-        # Upload stems
-        for stem_name, local_path in stems_paths.items():
-            gcs_path = paths[f"stem_{stem_name}"]
-            try:
-                bucket.blob(gcs_path).upload_from_filename(str(local_path))
-                result[f"stem_{stem_name}_path"] = gcs_path
-            except Exception as e:
-                log.warning(f"{mbid} upload stem {stem_name}: {e}")
-
-        # Tier 8 — per-stem features
-        try:
-            result.update(analyze_stems(stems_paths))
-        except Exception as e:
-            log.warning(f"{mbid} stems analyze: {e}")
-
-        # Tier 9 — mel spectrogram
-        if audio_arr is not None:
-            mel = compute_mel(audio_arr)
-            if mel is not None:
-                mel_local = LOCAL_TMP / f"{mbid}_mel.npy"
-                np.save(mel_local, mel)
-                try:
-                    bucket.blob(paths["mel"]).upload_from_filename(str(mel_local))
-                    result["mel_path"] = paths["mel"]
-                    mel_local.unlink()
-                except Exception:
-                    pass
+        # Stems + mel + per-stem all moved to lazy runtime / v5.1.
+        # The audio itself is retained in GCS so stems can be regenerated
+        # without re-downloading from YouTube.
 
         # Final: upload the audio itself
         try:
@@ -541,8 +437,6 @@ def process_one(row: dict) -> dict | None:
         try:
             if audio_path.exists():
                 audio_path.unlink()
-            for d in LOCAL_TMP.glob(f"stems_{mbid}*"):
-                shutil.rmtree(d, ignore_errors=True)
         except Exception:
             pass
 
