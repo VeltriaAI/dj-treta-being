@@ -7,6 +7,7 @@ Wants=dj-treta-mixxx.service dj-treta-litellm.service
 Type=simple
 User=__SVC_USER__
 WorkingDirectory=__INSTALL_DIR__
+Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=__INSTALL_DIR__/.env
 ExecStart=__INSTALL_DIR__/.venv/bin/python -m agent
 Restart=always
