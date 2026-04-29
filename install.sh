@@ -344,7 +344,7 @@ mixxx_binary_path() {
 # ─── Python venv + djclaw ──────────────────────────────────────────────
 
 install_djclaw_venv() {
-  local venv="$PREFIX/venv"
+  local venv="$PREFIX/.venv"
 
   # On upgrade, replace the venv outright — pip's resolver gets unhappy
   # when stale top-levels (different version numbers) coexist with new
@@ -372,7 +372,7 @@ install_djclaw_venv() {
 
 symlink_cli() {
   mkdir -p "$BIN_DIR"
-  ln -sfn "$PREFIX/venv/bin/djclaw" "$BIN_DIR/djclaw"
+  ln -sfn "$PREFIX/.venv/bin/djclaw" "$BIN_DIR/djclaw"
   ok "djclaw CLI → $BIN_DIR/djclaw"
 }
 
@@ -412,7 +412,7 @@ maybe_run_setup() {
   if [ -e /dev/tty ]; then
     say "First-run setup — answer 4 quick questions."
     echo
-    "$PREFIX/venv/bin/djclaw" setup </dev/tty
+    "$PREFIX/.venv/bin/djclaw" setup </dev/tty
   else
     cat <<EOF
 
@@ -535,6 +535,14 @@ operator_setup_dirs() {
   [ -n "$HLS_DIR" ] && chown -R "$SVC_USER:$SVC_USER" "$HLS_DIR"
   chown -R "$SVC_USER:$SVC_USER" "$CONFIG_DIR"
   chmod 0750 "$CONFIG_DIR"
+
+  # systemd's `StandardOutput=append:/path` opens the file BEFORE the
+  # User= drop, so the file gets created root-owned and silently fails
+  # to receive writes. Pre-create the log files as SVC_USER so the
+  # subsequent open() inherits the right ownership.
+  for log in dj-treta-agent dj-treta-litellm dj-treta-mcp; do
+    sudo -u "$SVC_USER" touch "$LOGS_DIR/${log}.log"
+  done
 }
 
 operator_setup_pulse() {
@@ -708,10 +716,10 @@ main_operator() {
   chown -R "$SVC_USER:$SVC_USER" "$MIXXX_SETTINGS"
 
   install_djclaw_venv
-  chown -R "$SVC_USER:$SVC_USER" "$PREFIX/venv"
+  chown -R "$SVC_USER:$SVC_USER" "$PREFIX/.venv"
 
   # CLI symlink at /usr/local/bin so operators can run `djclaw doctor`.
-  ln -sfn "$PREFIX/venv/bin/djclaw" "$BIN_DIR/djclaw"
+  ln -sfn "$PREFIX/.venv/bin/djclaw" "$BIN_DIR/djclaw"
   ok "djclaw CLI → $BIN_DIR/djclaw"
 
   operator_setup_pulse
