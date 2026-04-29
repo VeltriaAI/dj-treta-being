@@ -247,9 +247,11 @@ fetch_mixxx_for_platform() {
     # collide on basename.
     local pattern
     case "$PLATFORM" in
-      macos-arm64) pattern='macos-arm64\.dmg$' ;;
-      macos-x64)   pattern='macos-x64\.dmg$' ;;
-      linux-x64)   pattern='\.deb$' ;;
+      # NB: grep -oE above leaves a trailing `"` on each match, so
+      # patterns must NOT anchor to end-of-line.
+      macos-arm64) pattern='macos-arm64\.dmg' ;;
+      macos-x64)   pattern='macos-x64\.dmg' ;;
+      linux-x64)   pattern='\.deb"' ;;
     esac
 
     # Use the GitHub API to find the matching artifact URL. No auth
