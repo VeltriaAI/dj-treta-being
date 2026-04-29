@@ -1,0 +1,13 @@
+# DJ Treta log rotation — drops at /etc/logrotate.d/dj-treta.
+# Rendered by install.sh; edits will be overwritten on next install.
+__LOGS_DIR__/dj-treta-*.log {
+    daily
+    rotate 14
+    size 100M
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su __SVC_USER__ __SVC_USER__
+}

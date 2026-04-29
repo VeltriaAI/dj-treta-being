@@ -1,0 +1,17 @@
+# PulseAudio system-mode config snippet for DJ Treta operator mode.
+# Drop into /etc/pulse/system.pa.d/djtreta.pa, then restart pulseaudio.
+#
+# Creates a virtual "djtreta_out" sink. Mixxx writes to it; the stream
+# + HLS encoder services read its monitor source. The host's physical
+# speakers are bypassed — operator boxes are typically headless.
+
+# Null sink that Mixxx points at as its main output.
+load-module module-null-sink \
+    sink_name=djtreta_out \
+    sink_properties=device.description=DJ_Treta_Output \
+    rate=48000 \
+    channels=2 \
+    format=s16le
+
+# Default sink so Qt apps (Mixxx) auto-pick the right one.
+set-default-sink djtreta_out
