@@ -1285,7 +1285,14 @@ class DJTretaApp(App):
                 line = f"{prefix}[{color}]  {agent}:[/{color}] [italic]{text}[/italic]"
                 tab.write(line)
                 # Mirror to All tab so the user has a single chronological feed.
-                self.log_widget.write(line)
+                # Skip the mirror for `agent="treta"` thoughts — handle_talk()
+                # already wrote the formal "DJ Treta: <reply>" line for those,
+                # and the streamed thinking event (the daemon broadcasts the
+                # same response text twice — once via talk_response, once via
+                # thinking-event chunks) was rendering as a duplicate
+                # `treta: <reply>` italic line right under DJ Treta:.
+                if agent != "treta":
+                    self.log_widget.write(line)
 
         elif think_type == "call":
             tool_name = tool or text or "?"
