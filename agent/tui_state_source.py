@@ -381,6 +381,11 @@ class WebSocketRemoteStateSource(StateSource):
         """
         if self._loop is None:
             raise RuntimeError("remote not connected (loop missing)")
+        if self._cmd_ready is None:
+            # _run_thread hasn't initialised the loop-bound primitives yet.
+            # The bg thread is starting; surface clean error rather than
+            # raising AttributeError on `self._cmd_ready.wait()` below.
+            raise RuntimeError("remote not connected (command channel still bootstrapping)")
         if not self.command_token:
             raise RuntimeError(
                 "No command token configured. Set DJTRETA_COMMAND_TOKEN "
@@ -552,7 +557,6 @@ class WebSocketRemoteStateSource(StateSource):
                 fut = self._cmd_pending.get(cmd_id)
                 if fut is not None and not fut.done():
                     fut.set_result(resp)
-                await asyncio.sleep(0.1)
 
     def _state_url_with_auth(self) -> str:
         """Return ``self.url`` with ``?token=`` appended when a token is set.
