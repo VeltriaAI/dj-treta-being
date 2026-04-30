@@ -619,7 +619,7 @@ mixxx:
   url: "http://127.0.0.1:7778"
 relay:
   enabled: $([ -n "$RELAY_URL" ] && echo "true" || echo "false")
-  url: "$RELAY_URL"
+  server_url: "$RELAY_URL"
 broadcast:
   auto_start: false
 knowledge:
