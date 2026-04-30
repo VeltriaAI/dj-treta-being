@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ezstream config for DJ Treta operator mode.
+  Rendered by install.sh from bin/systemd/ezstream.xml.template.
+  Replace tokens — DO NOT edit the rendered file directly; it gets
+  overwritten on every install.sh re-run.
+-->
+<ezstream>
+  <servers>
+    <server>
+      <name>default</name>
+      <protocol>HTTP</protocol>
+      <hostname>__STREAM_HOST__</hostname>
+      <port>__STREAM_PORT__</port>
+      <user>__STREAM_USER__</user>
+      <password>__STREAM_PASS__</password>
+      <tls>None</tls>
+      <reconnect_attempts>20</reconnect_attempts>
+    </server>
+  </servers>
+
+  <streams>
+    <stream>
+      <name>default</name>
+      <mountpoint>__STREAM_MOUNT__</mountpoint>
+      <intake>default</intake>
+      <server>default</server>
+      <public>Yes</public>
+      <format>MP3</format>
+      <stream_name>DJ Treta</stream_name>
+      <stream_url>__STREAM_PUBLIC_URL__</stream_url>
+      <stream_genre>Melodic Techno</stream_genre>
+      <stream_description>Live AI DJ set, always on.</stream_description>
+      <stream_bitrate>320</stream_bitrate>
+      <stream_samplerate>48000</stream_samplerate>
+      <stream_channels>2</stream_channels>
+    </stream>
+  </streams>
+
+  <intakes>
+    <intake>
+      <name>default</name>
+      <type>stdin</type>
+      <filename>stdin</filename>
+      <stream_once>No</stream_once>
+    </intake>
+  </intakes>
+
+  <metadata>
+    <no_updates>Yes</no_updates>
+  </metadata>
+</ezstream>

@@ -124,23 +124,26 @@ def set_active_state_source(src) -> None:
     global _active_state_source
     _active_state_source = src
 
-def mixxx_get(path: str) -> dict | None:
+def mixxx_get(path: str, *, allow_blocking: bool = False) -> dict | None:
     """GET a Mixxx endpoint via the daemon's WS proxy.
 
     /api/status and /api/live are pushed to the TUI at 5 Hz, so reads of
-    those return the cached snapshot — no round-trip. Other paths are
-    proxied synchronously through /ws/command (one round-trip per call).
+    those return the cached snapshot — no round-trip. Other paths fall
+    through to a synchronous WS round-trip ONLY when allow_blocking=True.
+
+    The caller must opt into blocking. Callers from the Textual main
+    thread (refresh tick, render handlers) MUST NOT block — a 5-10ms
+    round-trip per call shows up as visible input lag. Background
+    callers (set-load helpers, etc.) can pass allow_blocking=True.
     """
     src = _active_state_source
     if src is not None:
         if path == "/api/status":
-            cached = src.read_mixxx_status()
-            if cached is not None:
-                return cached
-        elif path == "/api/live":
-            cached = src.read_mixxx_live()
-            if cached is not None:
-                return cached
+            return src.read_mixxx_status()
+        if path == "/api/live":
+            return src.read_mixxx_live()
+        if not allow_blocking:
+            return None
         return src.mixxx_proxy(path, "GET")
     # Fallback for tools that import this module before the app is mounted.
     try:
@@ -181,6 +184,19 @@ def fmt_key(k: int) -> str:
     return f"{name} ({cam})" if cam else name or "—"
 
 def get_track_name(deck: int, file_path: str = "") -> str:
+    """Resolve a friendly "Artist — Title" for a deck.
+
+    Hot path: cache hit on file_path → string-only formatting, never
+    touches the network. We must NEVER do a synchronous WS round-trip
+    here — this is called from the 1 Hz refresh tick on the Textual
+    main thread, and mixxx_proxy() blocks the UI for 5-10ms+ per call,
+    which compounds into visible input lag.
+
+    Cache miss: derive a name from the file_path basename and cache it.
+    The richer track_info (with artist + title metadata) is filled in
+    asynchronously by track_loaded events on the WS — we never poll for
+    it from the render thread.
+    """
     global _track_cache, _track_cache_path
     if file_path and file_path == _track_cache_path.get(deck, ""):
         cached = _track_cache.get(deck, {})
@@ -197,13 +213,9 @@ def get_track_name(deck: int, file_path: str = "") -> str:
             return title
         return ""
 
-    info = mixxx_get(f"/api/deck/{deck}/track_info")
-    if info and not info.get("error"):
-        _track_cache[deck] = info
-        _track_cache_path[deck] = file_path or info.get("file_path", "")
-        return get_track_name(deck, _track_cache_path[deck])
-
     if file_path:
+        # New track path → derive name from filename and cache. WS
+        # events will deliver the richer artist/title later if available.
         name = Path(file_path).stem
         _track_cache_path[deck] = file_path
         _track_cache[deck] = {"title": name}
@@ -414,18 +426,44 @@ class DeckWidget(Static):
         beat_dist = live.get("beat_distance", 0)
         peak = live.get("peak_indicator", False)
 
-        # Track name
-        track_name = get_track_name(self.deck_num)
+        # Track name — DECK-AWARE. Read from agent state if it has a
+        # match for this deck, otherwise fall back to the per-deck cache.
+        # Bug fix (2026-04-30): the prior fallback used `current_track`
+        # for BOTH decks, so both rendered the active deck's title.
+        try:
+            state = self.app.state_source.read_state()
+        except Exception:
+            state = None
+
+        track_name = ""
+        deck_file_path = ""
+        if state:
+            ct = state.get("current_track") or {}
+            nt = state.get("next_track") or {}
+            # current_track has an explicit `deck` field — use that to
+            # decide whether it belongs to OUR deck.
+            ct_deck = ct.get("deck")
+            nt_deck = nt.get("deck")
+            if ct_deck == self.deck_num and ct.get("title"):
+                track_name = ct["title"]
+                deck_file_path = ct.get("file_path", "")
+            elif nt_deck == self.deck_num and nt.get("title"):
+                track_name = nt["title"]
+                deck_file_path = nt.get("file_path", "")
+            elif ct_deck != self.deck_num and nt and not nt_deck and nt.get("title"):
+                # next_track without an explicit deck field implicitly
+                # lives on whichever deck isn't the active one.
+                track_name = nt["title"]
+                deck_file_path = nt.get("file_path", "")
+
+        # Pass the resolved file_path so the per-deck cache stays correct.
         if not track_name:
-            # Prefer app state_source if available (LOCAL/REMOTE aware).
-            try:
-                state = self.app.state_source.read_state()
-            except Exception:
-                state = None
-            if state:
-                ct = state.get("current_track", {})
-                if ct.get("title"):
-                    track_name = ct["title"]
+            track_name = get_track_name(self.deck_num, deck_file_path)
+        elif deck_file_path:
+            # Prime the cache with this deck's known file_path + title so
+            # subsequent renders are pure cache hits.
+            _track_cache_path[self.deck_num] = deck_file_path
+            _track_cache[self.deck_num] = {"title": track_name}
 
         max_name = 60
         if len(track_name) > max_name:
@@ -1247,7 +1285,14 @@ class DJTretaApp(App):
                 line = f"{prefix}[{color}]  {agent}:[/{color}] [italic]{text}[/italic]"
                 tab.write(line)
                 # Mirror to All tab so the user has a single chronological feed.
-                self.log_widget.write(line)
+                # Skip the mirror for `agent="treta"` thoughts — handle_talk()
+                # already wrote the formal "DJ Treta: <reply>" line for those,
+                # and the streamed thinking event (the daemon broadcasts the
+                # same response text twice — once via talk_response, once via
+                # thinking-event chunks) was rendering as a duplicate
+                # `treta: <reply>` italic line right under DJ Treta:.
+                if agent != "treta":
+                    self.log_widget.write(line)
 
         elif think_type == "call":
             tool_name = tool or text or "?"
@@ -1918,7 +1963,8 @@ class DJTretaApp(App):
             d2 = status.get("deck2", {})
             for deck_num, d in [(1, d1), (2, d2)]:
                 if d.get("playing"):
-                    tinfo = mixxx_get(f"/api/deck/{deck_num}/track_info")
+                    # User-triggered command, not a render tick — blocking ok.
+                    tinfo = mixxx_get(f"/api/deck/{deck_num}/track_info", allow_blocking=True)
                     title = tinfo.get("title", "?") if tinfo and not tinfo.get("error") else "?"
                     bpm = d.get("bpm", 0)
                     key = fmt_key(d.get("key", 0))

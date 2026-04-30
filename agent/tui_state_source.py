@@ -245,6 +245,18 @@ class WebSocketRemoteStateSource(StateSource):
         self._last_mixxx_status: dict | None = None
         self._last_mixxx_live: dict | None = None
 
+        # Persistent /ws/agent/command connection. send_command() used to
+        # open + close a brand-new TLS WebSocket on every call, paying ~200-
+        # 500ms of handshake against dj.treta.life on every TUI interaction.
+        # We now keep one connection alive in the background thread and
+        # multiplex requests by id. Requests are tracked in _cmd_pending,
+        # the reader loop routes responses back via the matching future.
+        self._cmd_ws = None
+        self._cmd_pending: dict[str, asyncio.Future] = {}
+        self._cmd_reader_task: asyncio.Task | None = None
+        self._cmd_lock: asyncio.Lock | None = None  # initialised in _run_thread
+        self._cmd_ready: asyncio.Event | None = None
+
         # thread control
         self._shutdown = False
         self._connected = False
@@ -355,15 +367,25 @@ class WebSocketRemoteStateSource(StateSource):
         return out
 
     def send_command(self, name: str, args: dict | None = None, timeout: float = 10.0):
-        """Dispatch a DJ command over /ws/command. Short-lived WS: open,
-        auth via ?token=, send one JSON payload, await the matching response,
-        close.
+        """Dispatch a DJ command over the persistent /ws/command connection.
+
+        We multiplex many commands over a single long-lived WebSocket. The
+        background thread owns the connection (see _cmd_session_run); each
+        send_command call registers a future under a unique id, sends the
+        payload, and waits for the reader loop to resolve that future. This
+        replaces the old open-then-close behaviour that paid ~200-500ms of
+        TLS handshake on every interaction.
 
         Returns the parsed result — typically a dict (for mixxx_proxy and
         similar) or a string (for talk and other text commands).
         """
         if self._loop is None:
             raise RuntimeError("remote not connected (loop missing)")
+        if self._cmd_ready is None:
+            # _run_thread hasn't initialised the loop-bound primitives yet.
+            # The bg thread is starting; surface clean error rather than
+            # raising AttributeError on `self._cmd_ready.wait()` below.
+            raise RuntimeError("remote not connected (command channel still bootstrapping)")
         if not self.command_token:
             raise RuntimeError(
                 "No command token configured. Set DJTRETA_COMMAND_TOKEN "
@@ -374,45 +396,37 @@ class WebSocketRemoteStateSource(StateSource):
         payload = {"type": "command", "id": cmd_id, "command": name, "args": args or {}}
 
         async def _do_send():
-            # Local import — only the remote thread path needs websockets.
-            import websockets
+            # Wait for the persistent connection to be ready (or to come
+            # back after a transient failure). This bounds the wait to the
+            # caller's timeout so a dead connection surfaces as a normal
+            # send_command timeout instead of hanging.
+            try:
+                await asyncio.wait_for(self._cmd_ready.wait(), timeout=timeout)
+            except asyncio.TimeoutError:
+                raise RuntimeError(
+                    f"send_command('{name}'): /ws/agent/command not connected"
+                )
 
-            sep = "&" if "?" in self.command_url else "?"
-            url = f"{self.command_url}{sep}token={self.command_token}"
-            async with websockets.connect(url, open_timeout=timeout, close_timeout=2) as ws:
-                await ws.send(json.dumps(payload))
-                # The /ws/command socket also receives push events (state,
-                # billing, etc.) on connect. Filter for our matching response
-                # and ignore the rest.
-                deadline = asyncio.get_event_loop().time() + timeout
-                while True:
-                    remaining = deadline - asyncio.get_event_loop().time()
-                    if remaining <= 0:
-                        raise RuntimeError(f"send_command('{name}') timed out waiting for response")
-                    raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
-                    try:
-                        resp = json.loads(raw)
-                    except Exception:
-                        continue
-                    if not isinstance(resp, dict):
-                        continue
-                    msg_type = resp.get("type")
-                    # Skip push events sent on this socket.
-                    if msg_type == "event":
-                        continue
-                    # Match our command id when present.
-                    if resp.get("id") and resp.get("id") != cmd_id:
-                        continue
-                    if msg_type == "error":
-                        return f"[error] {resp.get('error') or 'unknown error'}"
-                    if resp.get("ok") is False:
-                        return f"[error] {resp.get('error') or resp.get('result') or 'unknown error'}"
-                    # Plain truthiness `or` chain breaks dicts/zero — be explicit.
-                    if "result" in resp:
-                        return resp["result"]
-                    if "message" in resp:
-                        return resp["message"]
-                    return "ok"
+            fut = self._loop.create_future()
+            self._cmd_pending[cmd_id] = fut
+            try:
+                await self._cmd_ws.send(json.dumps(payload))
+                resp = await asyncio.wait_for(fut, timeout=timeout)
+            finally:
+                self._cmd_pending.pop(cmd_id, None)
+
+            # Response is the parsed dict the reader put into the future.
+            msg_type = resp.get("type") if isinstance(resp, dict) else None
+            if msg_type == "error":
+                return f"[error] {resp.get('error') or 'unknown error'}"
+            if isinstance(resp, dict) and resp.get("ok") is False:
+                return f"[error] {resp.get('error') or resp.get('result') or 'unknown error'}"
+            if isinstance(resp, dict):
+                if "result" in resp:
+                    return resp["result"]
+                if "message" in resp:
+                    return resp["message"]
+            return "ok"
 
         fut = asyncio.run_coroutine_threadsafe(_do_send(), self._loop)
         try:
@@ -434,6 +448,11 @@ class WebSocketRemoteStateSource(StateSource):
     def _run_thread(self):
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
+        # asyncio.Lock / Event must be constructed inside the running loop
+        # (or after set_event_loop) — putting them in __init__ would bind
+        # them to the main thread's loop, which is the wrong one.
+        self._cmd_lock = asyncio.Lock()
+        self._cmd_ready = asyncio.Event()
         try:
             self._loop.run_until_complete(self._main_loop())
         except Exception as exc:
@@ -445,6 +464,16 @@ class WebSocketRemoteStateSource(StateSource):
                 pass
 
     async def _main_loop(self):
+        # Run the state-frame reader and the persistent command-channel
+        # supervisor concurrently. Either failing triggers its own backoff
+        # without taking down the other.
+        await asyncio.gather(
+            self._state_supervisor(),
+            self._cmd_supervisor(),
+            return_exceptions=True,
+        )
+
+    async def _state_supervisor(self):
         backoffs = [1, 2, 5, 10, 30]
         attempt = 0
         while not self._shutdown:
@@ -462,6 +491,72 @@ class WebSocketRemoteStateSource(StateSource):
                 if self._shutdown:
                     return
                 await asyncio.sleep(0.1)
+
+    async def _cmd_supervisor(self):
+        """Keep the /ws/agent/command WebSocket open + reading. On any
+        failure, reject all in-flight futures and reconnect with backoff."""
+        if not self.command_token:
+            # No token = no command channel. send_command will raise on its
+            # own; nothing to supervise.
+            return
+        backoffs = [1, 2, 5, 10, 30]
+        attempt = 0
+        while not self._shutdown:
+            try:
+                await self._cmd_session_run()
+                attempt = 0
+            except Exception as exc:
+                # Don't overwrite _last_error from the state channel — keep
+                # this private. Surfacing a command-channel error in status
+                # would be misleading (state can still be flowing fine).
+                pass
+            # Tell any pending callers their socket is gone.
+            self._cmd_ready.clear()
+            self._cmd_ws = None
+            for cid, fut in list(self._cmd_pending.items()):
+                if not fut.done():
+                    fut.set_exception(RuntimeError("command channel disconnected"))
+                self._cmd_pending.pop(cid, None)
+            if self._shutdown:
+                break
+            delay = backoffs[min(attempt, len(backoffs) - 1)]
+            attempt += 1
+            await asyncio.sleep(delay)
+
+    async def _cmd_session_run(self):
+        """One persistent /ws/agent/command session — connect, then read
+        responses forever, routing each to its waiting future via id."""
+        import websockets
+
+        sep = "&" if "?" in self.command_url else "?"
+        url = f"{self.command_url}{sep}token={self.command_token}"
+        async with websockets.connect(
+            url,
+            open_timeout=10.0,
+            ping_interval=20,
+            ping_timeout=10,
+            close_timeout=2,
+        ) as ws:
+            self._cmd_ws = ws
+            self._cmd_ready.set()
+            while not self._shutdown:
+                raw = await ws.recv()
+                try:
+                    resp = json.loads(raw)
+                except Exception:
+                    continue
+                if not isinstance(resp, dict):
+                    continue
+                # Push events sent on this socket — drop them silently.
+                # The state channel is the source of truth for those.
+                if resp.get("type") == "event":
+                    continue
+                cmd_id = resp.get("id")
+                if not cmd_id:
+                    continue
+                fut = self._cmd_pending.get(cmd_id)
+                if fut is not None and not fut.done():
+                    fut.set_result(resp)
 
     def _state_url_with_auth(self) -> str:
         """Return ``self.url`` with ``?token=`` appended when a token is set.
