@@ -76,6 +76,8 @@ LOGS_DIR=""
 SVC_USER=""
 MUSIC_DIR=""
 STREAM_URL=""
+STREAM_USER_FLAG=""
+STREAM_PASS_FLAG=""
 HLS_DIR=""
 RELAY_URL=""
 RELAY_TOKEN=""
@@ -98,6 +100,8 @@ parse_args() {
       --service-user)    SVC_USER="$2"; shift ;;
       --music-dir)       MUSIC_DIR="$2"; shift ;;
       --stream-url)      STREAM_URL="$2"; shift ;;
+      --stream-user)     STREAM_USER_FLAG="$2"; shift ;;
+      --stream-pass)     STREAM_PASS_FLAG="$2"; shift ;;
       --stream-public-url) STREAM_PUBLIC_URL="$2"; shift ;;
       --hls-dir)         HLS_DIR="$2"; shift ;;
       --relay-url)       RELAY_URL="$2"; shift ;;
@@ -485,18 +489,57 @@ operator_validate() {
   require_cmd ezstream parec lame
   [ "$HEADLESS" -eq 1 ] && require_cmd Xvfb
   [ -n "$HLS_DIR" ] && require_cmd ffmpeg
+
+  # The stream + hls units run with `Group=pulse-access` so they can
+  # read the system PulseAudio sink monitor. If the group doesn't
+  # exist on the host (some distros / minimal images), the units fail
+  # to start with a confusing systemd error. Fail fast instead.
+  if ! getent group pulse-access >/dev/null 2>&1; then
+    die "System group 'pulse-access' missing. Install pulseaudio-utils (Debian/Ubuntu: apt install pulseaudio-utils) or create the group manually before re-running."
+  fi
+
+  # Python is needed for the safe template renderer (operator_render).
+  command -v python3 >/dev/null 2>&1 || die "python3 is required for operator install (template rendering)."
 }
 
-# Parse icecast://user:pass@host:port/mountpoint into 5 globals.
+# Parse icecast://user:pass@host:port/mountpoint into globals.
+#
+# Bash word-splitting can't handle a password that contains `:`, `@`,
+# `/`, or `#` (RFC-3986 reserved chars in user-info), so we delegate to
+# Python's urllib for URL parsing. Operator can also bypass URL
+# embedding entirely with --stream-user / --stream-pass.
 operator_parse_stream_url() {
-  local u="${STREAM_URL#icecast://}"
-  STREAM_USER="${u%%:*}"; u="${u#*:}"
-  STREAM_PASS="${u%%@*}"; u="${u#*@}"
-  STREAM_HOST="${u%%:*}"; u="${u#*:}"
-  STREAM_PORT="${u%%/*}"
-  STREAM_MOUNT="/${u#*/}"
-  [ -n "$STREAM_USER" ] && [ -n "$STREAM_HOST" ] && [ -n "$STREAM_MOUNT" ] \
-    || die "Invalid --stream-url: '$STREAM_URL' (want icecast://user:pass@host:port/mount)"
+  local parsed
+  parsed=$(STREAM_URL="$STREAM_URL" python3 - <<'PY' || true
+import os, sys, urllib.parse as up
+url = os.environ.get("STREAM_URL", "")
+if not url.startswith("icecast://"):
+    print("ERROR: scheme must be icecast://", file=sys.stderr); sys.exit(1)
+p = up.urlparse("http://" + url[len("icecast://"):])
+host = p.hostname or ""
+port = p.port or 8000
+mount = p.path or ""
+user = up.unquote(p.username or "") if p.username else ""
+password = up.unquote(p.password or "") if p.password else ""
+if not host or not mount or mount == "/":
+    print("ERROR: need host + /mount", file=sys.stderr); sys.exit(1)
+# NUL-separate so the shell can split unambiguously even if values
+# contain whitespace or shell metacharacters.
+sys.stdout.buffer.write(b"\0".join(s.encode() for s in (user, password, host, str(port), mount)))
+PY
+)
+  if [ -z "$parsed" ]; then
+    die "Invalid --stream-url: '$STREAM_URL' (want icecast://user:pass@host:port/mount)"
+  fi
+  IFS=$'\0' read -r STREAM_USER STREAM_PASS STREAM_HOST STREAM_PORT STREAM_MOUNT <<<"$parsed"
+
+  # --stream-user / --stream-pass override anything embedded in the URL.
+  # Recommended for operators with credentials containing reserved chars.
+  [ -n "$STREAM_USER_FLAG" ] && STREAM_USER="$STREAM_USER_FLAG"
+  [ -n "$STREAM_PASS_FLAG" ] && STREAM_PASS="$STREAM_PASS_FLAG"
+
+  [ -n "$STREAM_USER" ] || die "Stream user is empty. Pass --stream-user or include it in --stream-url (icecast://USER:pass@host/mount)."
+  [ -n "$STREAM_PASS" ] || die "Stream password is empty. Pass --stream-pass or include it in --stream-url (icecast://user:PASS@host/mount)."
 }
 
 operator_fetch_template() {
@@ -505,25 +548,69 @@ operator_fetch_template() {
   curl -fsSL "$url" -o "$dest" || die "Couldn't fetch template $name from $url"
 }
 
+# Safe template renderer.
+#
+# Uses Python's str.replace (literal substitution, not regex) so values
+# containing sed-meta chars (`|`, `&`, `\`, newlines) don't corrupt the
+# output. XML-bound fields (anything that lands inside ezstream.xml)
+# are escape-encoded for `&`, `<`, `>`, `"`, `'`. Values are passed
+# via env vars, never via shell-quoted arguments — eliminates the
+# entire shell-injection surface.
 operator_render() {
   local src="$1" dst="$2"
-  sed \
-    -e "s|__SVC_USER__|$SVC_USER|g" \
-    -e "s|__INSTALL_DIR__|$PREFIX|g" \
-    -e "s|__LOGS_DIR__|$LOGS_DIR|g" \
-    -e "s|__HLS_DIR__|$HLS_DIR|g" \
-    -e "s|__EZSTREAM_CONFIG__|$CONFIG_DIR/ezstream.xml|g" \
-    -e "s|__DISPLAY_NUM__|$DISPLAY_NUM|g" \
-    -e "s|__MIXXX_BIN__|$MIXXX_BIN|g" \
-    -e "s|__MIXXX_RESOURCE__|$MIXXX_RESOURCE|g" \
-    -e "s|__MIXXX_SETTINGS__|$MIXXX_SETTINGS|g" \
-    -e "s|__STREAM_HOST__|$STREAM_HOST|g" \
-    -e "s|__STREAM_PORT__|$STREAM_PORT|g" \
-    -e "s|__STREAM_USER__|$STREAM_USER|g" \
-    -e "s|__STREAM_PASS__|$STREAM_PASS|g" \
-    -e "s|__STREAM_MOUNT__|$STREAM_MOUNT|g" \
-    -e "s|__STREAM_PUBLIC_URL__|$STREAM_PUBLIC_URL|g" \
-    "$src" > "$dst"
+  SVC_USER="$SVC_USER" \
+  PREFIX="$PREFIX" \
+  LOGS_DIR="$LOGS_DIR" \
+  HLS_DIR="$HLS_DIR" \
+  CONFIG_DIR="$CONFIG_DIR" \
+  DISPLAY_NUM="$DISPLAY_NUM" \
+  MIXXX_BIN="$MIXXX_BIN" \
+  MIXXX_RESOURCE="$MIXXX_RESOURCE" \
+  MIXXX_SETTINGS="$MIXXX_SETTINGS" \
+  STREAM_HOST="$STREAM_HOST" \
+  STREAM_PORT="$STREAM_PORT" \
+  STREAM_USER="$STREAM_USER" \
+  STREAM_PASS="$STREAM_PASS" \
+  STREAM_MOUNT="$STREAM_MOUNT" \
+  STREAM_PUBLIC_URL="$STREAM_PUBLIC_URL" \
+  SRC="$src" DST="$dst" \
+  python3 - <<'PY' || die "operator_render failed for $src → $dst"
+import os, sys, html
+
+# Plain values (substituted as-is, no escaping — destinations are
+# systemd unit files / ini-style configs / shell-safe paths).
+plain = {
+    "__SVC_USER__":       os.environ["SVC_USER"],
+    "__INSTALL_DIR__":    os.environ["PREFIX"],
+    "__LOGS_DIR__":       os.environ["LOGS_DIR"],
+    "__HLS_DIR__":        os.environ["HLS_DIR"],
+    "__EZSTREAM_CONFIG__": os.environ["CONFIG_DIR"] + "/ezstream.xml",
+    "__DISPLAY_NUM__":    os.environ["DISPLAY_NUM"],
+    "__MIXXX_BIN__":      os.environ["MIXXX_BIN"],
+    "__MIXXX_RESOURCE__": os.environ["MIXXX_RESOURCE"],
+    "__MIXXX_SETTINGS__": os.environ["MIXXX_SETTINGS"],
+    "__STREAM_HOST__":    os.environ["STREAM_HOST"],
+    "__STREAM_PORT__":    os.environ["STREAM_PORT"],
+    "__STREAM_USER__":    os.environ["STREAM_USER"],
+    "__STREAM_PASS__":    os.environ["STREAM_PASS"],
+    "__STREAM_MOUNT__":   os.environ["STREAM_MOUNT"],
+    "__STREAM_PUBLIC_URL__": os.environ["STREAM_PUBLIC_URL"],
+}
+
+with open(os.environ["SRC"], "r", encoding="utf-8") as f:
+    body = f.read()
+
+# Decide escape policy by destination: ezstream.xml is the only XML
+# we render. Everything else is ini-style / shell-quoted / plain text.
+xml_mode = os.environ["DST"].endswith(".xml")
+for token, val in plain.items():
+    if xml_mode:
+        val = html.escape(val, quote=True)
+    body = body.replace(token, val)
+
+with open(os.environ["DST"], "w", encoding="utf-8") as f:
+    f.write(body)
+PY
 }
 
 operator_setup_dirs() {
