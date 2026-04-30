@@ -124,23 +124,26 @@ def set_active_state_source(src) -> None:
     global _active_state_source
     _active_state_source = src
 
-def mixxx_get(path: str) -> dict | None:
+def mixxx_get(path: str, *, allow_blocking: bool = False) -> dict | None:
     """GET a Mixxx endpoint via the daemon's WS proxy.
 
     /api/status and /api/live are pushed to the TUI at 5 Hz, so reads of
-    those return the cached snapshot — no round-trip. Other paths are
-    proxied synchronously through /ws/command (one round-trip per call).
+    those return the cached snapshot — no round-trip. Other paths fall
+    through to a synchronous WS round-trip ONLY when allow_blocking=True.
+
+    The caller must opt into blocking. Callers from the Textual main
+    thread (refresh tick, render handlers) MUST NOT block — a 5-10ms
+    round-trip per call shows up as visible input lag. Background
+    callers (set-load helpers, etc.) can pass allow_blocking=True.
     """
     src = _active_state_source
     if src is not None:
         if path == "/api/status":
-            cached = src.read_mixxx_status()
-            if cached is not None:
-                return cached
-        elif path == "/api/live":
-            cached = src.read_mixxx_live()
-            if cached is not None:
-                return cached
+            return src.read_mixxx_status()
+        if path == "/api/live":
+            return src.read_mixxx_live()
+        if not allow_blocking:
+            return None
         return src.mixxx_proxy(path, "GET")
     # Fallback for tools that import this module before the app is mounted.
     try:
@@ -181,6 +184,19 @@ def fmt_key(k: int) -> str:
     return f"{name} ({cam})" if cam else name or "—"
 
 def get_track_name(deck: int, file_path: str = "") -> str:
+    """Resolve a friendly "Artist — Title" for a deck.
+
+    Hot path: cache hit on file_path → string-only formatting, never
+    touches the network. We must NEVER do a synchronous WS round-trip
+    here — this is called from the 1 Hz refresh tick on the Textual
+    main thread, and mixxx_proxy() blocks the UI for 5-10ms+ per call,
+    which compounds into visible input lag.
+
+    Cache miss: derive a name from the file_path basename and cache it.
+    The richer track_info (with artist + title metadata) is filled in
+    asynchronously by track_loaded events on the WS — we never poll for
+    it from the render thread.
+    """
     global _track_cache, _track_cache_path
     if file_path and file_path == _track_cache_path.get(deck, ""):
         cached = _track_cache.get(deck, {})
@@ -197,13 +213,9 @@ def get_track_name(deck: int, file_path: str = "") -> str:
             return title
         return ""
 
-    info = mixxx_get(f"/api/deck/{deck}/track_info")
-    if info and not info.get("error"):
-        _track_cache[deck] = info
-        _track_cache_path[deck] = file_path or info.get("file_path", "")
-        return get_track_name(deck, _track_cache_path[deck])
-
     if file_path:
+        # New track path → derive name from filename and cache. WS
+        # events will deliver the richer artist/title later if available.
         name = Path(file_path).stem
         _track_cache_path[deck] = file_path
         _track_cache[deck] = {"title": name}
@@ -1918,7 +1930,8 @@ class DJTretaApp(App):
             d2 = status.get("deck2", {})
             for deck_num, d in [(1, d1), (2, d2)]:
                 if d.get("playing"):
-                    tinfo = mixxx_get(f"/api/deck/{deck_num}/track_info")
+                    # User-triggered command, not a render tick — blocking ok.
+                    tinfo = mixxx_get(f"/api/deck/{deck_num}/track_info", allow_blocking=True)
                     title = tinfo.get("title", "?") if tinfo and not tinfo.get("error") else "?"
                     bpm = d.get("bpm", 0)
                     key = fmt_key(d.get("key", 0))
