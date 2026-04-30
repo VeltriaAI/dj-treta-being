@@ -426,18 +426,44 @@ class DeckWidget(Static):
         beat_dist = live.get("beat_distance", 0)
         peak = live.get("peak_indicator", False)
 
-        # Track name
-        track_name = get_track_name(self.deck_num)
+        # Track name — DECK-AWARE. Read from agent state if it has a
+        # match for this deck, otherwise fall back to the per-deck cache.
+        # Bug fix (2026-04-30): the prior fallback used `current_track`
+        # for BOTH decks, so both rendered the active deck's title.
+        try:
+            state = self.app.state_source.read_state()
+        except Exception:
+            state = None
+
+        track_name = ""
+        deck_file_path = ""
+        if state:
+            ct = state.get("current_track") or {}
+            nt = state.get("next_track") or {}
+            # current_track has an explicit `deck` field — use that to
+            # decide whether it belongs to OUR deck.
+            ct_deck = ct.get("deck")
+            nt_deck = nt.get("deck")
+            if ct_deck == self.deck_num and ct.get("title"):
+                track_name = ct["title"]
+                deck_file_path = ct.get("file_path", "")
+            elif nt_deck == self.deck_num and nt.get("title"):
+                track_name = nt["title"]
+                deck_file_path = nt.get("file_path", "")
+            elif ct_deck != self.deck_num and nt and not nt_deck and nt.get("title"):
+                # next_track without an explicit deck field implicitly
+                # lives on whichever deck isn't the active one.
+                track_name = nt["title"]
+                deck_file_path = nt.get("file_path", "")
+
+        # Pass the resolved file_path so the per-deck cache stays correct.
         if not track_name:
-            # Prefer app state_source if available (LOCAL/REMOTE aware).
-            try:
-                state = self.app.state_source.read_state()
-            except Exception:
-                state = None
-            if state:
-                ct = state.get("current_track", {})
-                if ct.get("title"):
-                    track_name = ct["title"]
+            track_name = get_track_name(self.deck_num, deck_file_path)
+        elif deck_file_path:
+            # Prime the cache with this deck's known file_path + title so
+            # subsequent renders are pure cache hits.
+            _track_cache_path[self.deck_num] = deck_file_path
+            _track_cache[self.deck_num] = {"title": track_name}
 
         max_name = 60
         if len(track_name) > max_name:
