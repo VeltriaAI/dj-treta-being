@@ -509,32 +509,47 @@ operator_validate() {
 # Python's urllib for URL parsing. Operator can also bypass URL
 # embedding entirely with --stream-user / --stream-pass.
 operator_parse_stream_url() {
-  local parsed
-  parsed=$(STREAM_URL="$STREAM_URL" python3 - <<'PY' || true
-import os, sys, urllib.parse as up
+  # Transport gotcha: bash command substitution `$(...)` STRIPS NUL bytes
+  # from the output (documented bash behavior, all versions). An earlier
+  # attempt at NUL-separated transport silently broke — every operator
+  # install without --stream-pass would die at the empty-pass check.
+  #
+  # We instead emit shell-safe `KEY=value` lines from Python (using
+  # shlex.quote) and `eval` the safe subset. Python's exit code is
+  # captured properly so a parse failure surfaces as a die() instead of
+  # silent empty output.
+  local exports rc
+  exports=$(STREAM_URL="$STREAM_URL" python3 - <<'PY'
+import os, sys, shlex, urllib.parse as up
 url = os.environ.get("STREAM_URL", "")
 if not url.startswith("icecast://"):
-    print("ERROR: scheme must be icecast://", file=sys.stderr); sys.exit(1)
-p = up.urlparse("http://" + url[len("icecast://"):])
+    print("scheme must be icecast://", file=sys.stderr); sys.exit(1)
+try:
+    p = up.urlparse("http://" + url[len("icecast://"):])
+except ValueError as e:
+    print(f"unparseable: {e}", file=sys.stderr); sys.exit(1)
 host = p.hostname or ""
 port = p.port or 8000
 mount = p.path or ""
 user = up.unquote(p.username or "") if p.username else ""
 password = up.unquote(p.password or "") if p.password else ""
 if not host or not mount or mount == "/":
-    print("ERROR: need host + /mount", file=sys.stderr); sys.exit(1)
-# NUL-separate so the shell can split unambiguously even if values
-# contain whitespace or shell metacharacters.
-sys.stdout.buffer.write(b"\0".join(s.encode() for s in (user, password, host, str(port), mount)))
+    print("need host + /mount", file=sys.stderr); sys.exit(1)
+# Newline-separated KEY=quoted-value pairs. shlex.quote handles every
+# special char correctly for `eval` consumption. No NUL bytes.
+for k, v in (("STREAM_USER", user), ("STREAM_PASS", password),
+             ("STREAM_HOST", host), ("STREAM_PORT", str(port)),
+             ("STREAM_MOUNT", mount)):
+    print(f"{k}={shlex.quote(v)}")
 PY
-)
-  if [ -z "$parsed" ]; then
+) ; rc=$?
+  if [ "$rc" -ne 0 ] || [ -z "$exports" ]; then
     die "Invalid --stream-url: '$STREAM_URL' (want icecast://user:pass@host:port/mount)"
   fi
-  IFS=$'\0' read -r STREAM_USER STREAM_PASS STREAM_HOST STREAM_PORT STREAM_MOUNT <<<"$parsed"
+  eval "$exports"
 
   # --stream-user / --stream-pass override anything embedded in the URL.
-  # Recommended for operators with credentials containing reserved chars.
+  # Recommended path for operators with credentials containing reserved chars.
   [ -n "$STREAM_USER_FLAG" ] && STREAM_USER="$STREAM_USER_FLAG"
   [ -n "$STREAM_PASS_FLAG" ] && STREAM_PASS="$STREAM_PASS_FLAG"
 
