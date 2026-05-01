@@ -13,63 +13,129 @@ from .helpers import _music_dir
 log = logging.getLogger("dj-treta")
 
 
-def search_music(query: str, limit: int = 10) -> list:
-    """Search YouTube for individual music tracks (NOT mixes or DJ sets).
+_YTMUSIC_CLIENT = None
 
-    Returns only tracks between 2-10 minutes. Longer results (mixes, sets, compilations)
-    are automatically filtered out.
+
+def _ytmusic():
+    """Lazy YTMusic client. Anonymous mode — no auth needed for search."""
+    global _YTMUSIC_CLIENT
+    if _YTMUSIC_CLIENT is None:
+        from ytmusicapi import YTMusic
+        _YTMUSIC_CLIENT = YTMusic()
+    return _YTMUSIC_CLIENT
+
+
+def _parse_duration(dur_str: str | None, dur_s: int | None) -> int:
+    """ytmusicapi returns duration as 'M:SS' string + duration_seconds int.
+    Prefer the int, fall back to parsing the string."""
+    if isinstance(dur_s, int) and dur_s > 0:
+        return dur_s
+    if not dur_str:
+        return 0
+    parts = dur_str.split(":")
+    try:
+        if len(parts) == 2:
+            return int(parts[0]) * 60 + int(parts[1])
+        if len(parts) == 3:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+    except ValueError:
+        pass
+    return 0
+
+
+def search_music(query: str = "", artist: str = "", title: str = "",
+                 limit: int = 10, min_duration: int = 120,
+                 max_duration: int = 720) -> list:
+    """Search YouTube Music for individual songs.
+
+    Three usage shapes — pass whatever signal you have:
+      - Broad mood/genre browse:  search_music(query="hypnotic deep techno")
+      - Artist discography:       search_music(artist="ARTBAT")
+      - Specific track lookup:    search_music(artist="ARTBAT", title="Horizon")
+      - Mixed:                    search_music(query="atmospheric", artist="Anyma")
+
+    Backed by YouTube Music's `songs` filter — but YT Music tags 30-min
+    DJ mixes and 30-min "sleep music" as 'Songs', so a duration window
+    is applied client-side. Default is 2-12 min (typical track length).
+
+    Returns:
+        List of dicts:
+          {video_id, url, title, artist, album, duration_seconds, duration,
+           year, is_explicit}
+        Empty list when no results — caller should treat this as "try a
+        different query / different artist", NOT as a tool error.
 
     Args:
-        query: Search query -- artist name, track title, genre. Add 'official' or 'original mix' for better results.
-        limit: Number of raw results to fetch before filtering (1-20).
+        query: Free-form text — mood, genre, vibe, or any combo.
+        artist: Optional artist filter. Combined with title → precise.
+        title: Optional song title. Combined with artist → precise.
+        limit: 1-30, default 10.
+        min_duration: Minimum seconds (default 120 — drops jingles/snippets).
+        max_duration: Maximum seconds (default 720 — drops mixes/sets).
+            Pass higher (e.g. 1800) for ambient/long-form moods explicitly.
     """
-    result = subprocess.run(
-        ["yt-dlp", f"ytsearch{limit}:{query}", "--dump-json", "--no-download", "--flat-playlist"],
-        capture_output=True, text=True, timeout=30,
-    )
-    if result.returncode != 0:
-        return [{"error": result.stderr[:200]}]
+    limit = max(1, min(30, limit))
+
+    # Compose search string from whatever signals the caller passed.
+    parts = []
+    if artist:
+        parts.append(artist.strip())
+    if title:
+        parts.append(title.strip())
+    if query and not (artist and title):
+        # Mix the broad query in unless we already have a precise A+T.
+        parts.append(query.strip())
+    q = " ".join(parts).strip()
+    if not q:
+        return [{"info": "search_music called with no query/artist/title — pass at least one"}]
+
+    try:
+        raw = _ytmusic().search(q, filter="songs", limit=limit)
+    except Exception as e:
+        log.warning(f"ytmusicapi search failed: {e}")
+        return [{"error": f"ytmusicapi: {type(e).__name__}: {str(e)[:120]}"}]
 
     results = []
-    for line in result.stdout.strip().split("\n"):
-        if not line:
+    dropped_long = 0
+    dropped_short = 0
+    for r in raw:
+        vid = r.get("videoId") or ""
+        if not vid:
             continue
-        try:
-            info = json.loads(line)
-            dur = info.get("duration", 0) or 0
-            title = info.get("title", "Unknown")
-
-            # Skip mixes, sets, compilations, non-music, tutorials
-            skip_words = ["mix 20", "full set", "compilation", "hour mix", "live set",
-                          "dj set", "mixtape", "nonstop", "megamix", "interview",
-                          "podcast", "test", "quiz", "reaction", "how to", "tutorial",
-                          "copyright free", "royalty free", "free download", "free music",
-                          "top 10", "best of", "playlist", "radio", "review",
-                          "unboxing", "vlog", "behind the scene"]
-            title_lower = title.lower()
-            if any(w in title_lower for w in skip_words):
-                continue
-
-            # Only individual tracks: 2-10 minutes
-            if dur < 120 or dur > 600:
-                continue
-
-            mins = int(dur // 60)
-            secs = int(dur % 60)
-            results.append({
-                "title": title,
-                "url": info.get("url", info.get("webpage_url", "")),
-                "id": info.get("id", ""),
-                "duration": f"{mins}:{secs:02d}",
-                "duration_seconds": dur,
-                "uploader": info.get("uploader", info.get("channel", "Unknown")),
-            })
-        except json.JSONDecodeError:
+        artists = r.get("artists") or []
+        artist_names = ", ".join(a.get("name", "") for a in artists if a.get("name"))
+        album = (r.get("album") or {}).get("name", "") if r.get("album") else ""
+        dur_s = _parse_duration(r.get("duration"), r.get("duration_seconds"))
+        # Duration window — YT Music tags 30-min mixes + 30-min "sleep
+        # music" as 'Songs', so client-side filtering is required even
+        # with filter='songs'. min_duration drops snippets/intros;
+        # max_duration drops mixes/long-form. Caller can widen.
+        if dur_s and dur_s > max_duration:
+            dropped_long += 1
             continue
+        if dur_s and dur_s < min_duration:
+            dropped_short += 1
+            continue
+        results.append({
+            "video_id": vid,
+            "url": f"https://music.youtube.com/watch?v={vid}",
+            "title": r.get("title") or "",
+            "artist": artist_names,
+            "album": album,
+            "duration": r.get("duration") or "",
+            "duration_seconds": dur_s,
+            "year": r.get("year") or "",
+            "is_explicit": bool(r.get("isExplicit")),
+        })
+        if len(results) >= limit:
+            break
 
-    if not results:
-        return [{"info": "No individual tracks found (2-10 min). Try searching with artist name + 'original mix' or 'official audio'."}]
-
+    if dropped_long or dropped_short:
+        log.info(
+            f"search_music({q!r}): {len(results)} kept, "
+            f"{dropped_long} too long (>{max_duration}s), "
+            f"{dropped_short} too short (<{min_duration}s)"
+        )
     return results
 
 
