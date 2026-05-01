@@ -297,11 +297,13 @@ def cmd_start_brain(mood: str = "melodic-techno", duration: int = 60):
         if cache_dir.exists():
             shutil.rmtree(cache_dir)
     venv_python = Path(__file__).parent / ".venv" / "bin" / "python3"
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
     subprocess.Popen(
         [str(venv_python), "-m", "agent", "--mood", mood, "--duration", str(duration)],
         cwd=str(Path(__file__).parent),
         stdout=open(runtime_path("daemon.log"), "w"),
         stderr=subprocess.STDOUT,
+        env=env,
     )
     console.print(f"[green]Brain started — mood: {mood}, duration: {duration}m[/green]")
 
@@ -430,11 +432,16 @@ def _daemon_cmd(action):
         PID_FILE.unlink(missing_ok=True)
         # Truncate log AFTER old daemon is dead — clean slate for TUI
         LOG.write_text("")
+        # PYTHONUNBUFFERED=1 — without it, stdout block-buffers when redirected
+        # to a regular file, so daemon.log stays empty for hours despite the
+        # agent logging actively. Killed our visibility on 2026-04-30.
+        env = {**os.environ, "PYTHONUNBUFFERED": "1"}
         subprocess.Popen(
             [str(PYTHON), "-m", "agent"],
             cwd=str(DJ_HOME),
             stdout=open(str(LOG), "a"),  # append — don't clobber our truncation
             stderr=subprocess.STDOUT,
+            env=env,
         )
         import time
         time.sleep(2)
@@ -488,16 +495,31 @@ def _reset(hard=False):
     music_dir = Path.home() / "Music" / "DJTreta"
 
     if hard:
-        # Nuclear — delete library + DB
+        # Nuclear — delete library + DB, but PRESERVE the knowledge dir
+        # (~/Music/DJTreta/knowledge/ holds the 5 GB v4 parquet + 4.5 GB
+        # LanceDB index — re-downloading + rebuilding takes ~5 min and
+        # bandwidth, so we only delete the per-genre MP3 subdirs.)
         if music_dir.exists():
-            shutil.rmtree(music_dir)
+            for child in music_dir.iterdir():
+                if child.name == "knowledge":
+                    continue  # preserve knowledge cache + LanceDB
+                if child.is_dir():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink(missing_ok=True)
         for genre in ["melodic-techno", "dark-techno", "deep", "progressive",
                       "minimal", "vocal", "psychill", "psytrance", "techno"]:
             (music_dir / genre).mkdir(parents=True, exist_ok=True)
+        # Nuke BOTH possible DB locations: repo-local (dev) and XDG (installer).
+        # agent/db.py prefers repo-local but falls back to XDG, so leaving XDG
+        # behind = stale tracks that point to deleted files = stuck planner.
         (DJ_HOME / "djtreta.db").unlink(missing_ok=True)
+        xdg_db = Path.home() / ".local" / "share" / "djclaw" / "db" / "djtreta.db"
+        for sidecar in (xdg_db, xdg_db.with_suffix(".db-shm"), xdg_db.with_suffix(".db-wal")):
+            sidecar.unlink(missing_ok=True)
         console.print("[green]Hard reset complete.[/green]")
         console.print(f"  Library: deleted")
-        console.print(f"  Database: deleted")
+        console.print(f"  Database: deleted (repo + XDG)")
     else:
         # Soft — keep library + DB
         track_count = sum(1 for _ in music_dir.rglob("*.mp3")) if music_dir.exists() else 0
