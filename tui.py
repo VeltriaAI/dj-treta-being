@@ -1003,7 +1003,7 @@ TabPane {
     padding: 0;
 }
 
-#log-all, #log-dj, #log-planner, #log-treta {
+#log-all, #log-dj, #log-planner, #log-treta, #log-library, #log-issues {
     height: 1fr;
     padding: 0 1;
 }
@@ -1072,6 +1072,8 @@ class DJTretaApp(App):
         Binding("f7", "tab_treta", "Treta"),
         Binding("f8", "tab_dj", "DJ"),
         Binding("f9", "tab_planner", "Plan"),
+        Binding("f10", "tab_library", "Lib"),
+        Binding("ctrl+i", "tab_issues", "Issues"),
         Binding("f11", "fullscreen", "Full"),
         Binding("f2", "toggle_debug", "Debug"),
         Binding("f4", "show_tracks", "Tracks"),
@@ -1142,6 +1144,126 @@ class DJTretaApp(App):
         except Exception:
             pass
 
+    # ── Helpers for rich rendering of structured payloads ──────────────
+    def _try_render_planner_json(self, text: str) -> tuple[str, str] | None:
+        """If `text` is a planner playlist JSON blob, return (summary, detail).
+
+        Returns None when the text isn't JSON or doesn't look like a playlist —
+        caller falls back to plain rendering. Strips the ```json fence and
+        tolerates trailing truncation by trying a soft parse.
+        """
+        import json
+        s = text.strip()
+        if s.startswith("```json"):
+            s = s[len("```json"):].strip()
+        if s.endswith("```"):
+            s = s[:-3].strip()
+        if not s.startswith("{"):
+            return None
+        try:
+            obj = json.loads(s)
+        except json.JSONDecodeError:
+            # Try to recover a partial — find last complete `}` and parse up to it.
+            last = s.rfind("}")
+            if last < 0:
+                return None
+            try:
+                obj = json.loads(s[:last + 1])
+            except Exception:
+                return None
+        tracks = obj.get("tracks") or []
+        if not isinstance(tracks, list) or not tracks:
+            return None
+
+        why = (obj.get("reasoning_summary") or "").strip()
+        head = why if why else f"{len(tracks)} tracks planned"
+        if len(head) > 110:
+            head = head[:107] + "…"
+        summary = f'playlist — [italic]"{head}"[/italic]'
+
+        # Build a tree of up to 5 picks
+        lines = []
+        for i, t in enumerate(tracks[:5]):
+            rank = t.get("rank", i + 1)
+            title = (t.get("title") or "?")[:50]
+            bpm = t.get("bpm")
+            key = t.get("key_camelot") or t.get("key") or ""
+            dl = t.get("downloaded")
+            dl_marker = "[green]●[/green]" if dl else "[dim]○[/dim]"
+            bpm_str = f"{bpm:.0f}" if isinstance(bpm, (int, float)) else "?"
+            tag = "├─" if i < min(len(tracks) - 1, 4) else "└─"
+            lines.append(f"{tag} {dl_marker} {rank}. {title}  [dim]{bpm_str} BPM · {key}[/dim]")
+        if len(tracks) > 5:
+            lines.append(f"   [dim]+ {len(tracks) - 5} more[/dim]")
+        return summary, "\n".join(lines)
+
+    def _pretty_tool_args(self, args: str) -> str:
+        """Render Python-dict tool args as `kw=val, kw=val`.
+
+        Input is a stringified dict from the daemon (e.g. `{'limit': 5, 'query': 'foo'}`).
+        Falls back to the raw string if parse fails.
+        """
+        import ast
+        try:
+            d = ast.literal_eval(args)
+            if not isinstance(d, dict):
+                return args
+            parts = []
+            for k, v in d.items():
+                if isinstance(v, str):
+                    sv = v if len(v) < 60 else v[:57] + "…"
+                    parts.append(f'{k}=[yellow]"{sv}"[/yellow]')
+                else:
+                    parts.append(f"{k}=[yellow]{v}[/yellow]")
+            return ", ".join(parts)
+        except Exception:
+            return args
+
+    # ── Unified log emission ────────────────────────────────────────────
+    def _emit_log(self, level: str, tag: str, message: str,
+                  detail: str = "", ts: float | None = None,
+                  is_replay: bool = False) -> None:
+        """Single point of truth for writing a log line to TUI tabs.
+
+        - Renders via agent.log_format with timestamp + level symbol + tag.
+        - Always writes to All.
+        - Mirrors to per-tag tabs from log_format.TAG_TABS.
+        - WARN/ERROR also land in Issues.
+        - Replayed-on-connect entries get a [hist] dim prefix.
+        """
+        from agent.log_format import (
+            LogEntry, render_markup, TAG_TABS,
+            LEVEL_WARN, LEVEL_ERROR,
+        )
+        import time as _time
+
+        if ts is None:
+            ts = _time.time()
+        entry = LogEntry(ts=ts, level=level, tag=tag,
+                         message=message, detail=detail)
+        line = render_markup(entry)
+        if is_replay:
+            line = "[dim][hist][/dim] " + line
+
+        # Always to All
+        self.log_widget.write(line)
+
+        # Per-tag mirroring
+        tab_map = {
+            "dj": self._log_dj,
+            "planner": self._log_planner,
+            "treta": self._log_treta,
+            "library": self._log_library,
+        }
+        for tab_name in TAG_TABS.get(tag, []):
+            w = tab_map.get(tab_name)
+            if w is not None:
+                w.write(line)
+
+        # WARN/ERROR also to Issues
+        if level in (LEVEL_WARN, LEVEL_ERROR):
+            self._log_issues.write(line)
+
     def _apply_ws_log(self, text: str):
         """Apply a log line from WebSocket — agent-prefixed for clarity."""
         # Extract message (strip timestamp + level)
@@ -1164,71 +1286,53 @@ class DJTretaApp(App):
         if re.match(r'^\d{2}:\d{2}:\d{2}\s*\[INFO\]\s*$', msg):
             return
 
-        # Classify by agent, write to All + agent-specific tab
-        all_w = self.log_widget
+        # Classify msg → (level, tag) and route via the unified emitter.
+        from agent.log_format import (
+            LEVEL_DEBUG, LEVEL_INFO, LEVEL_OK, LEVEL_WARN, LEVEL_ERROR, LEVEL_EVENT,
+            TAG_DJ, TAG_MIX, TAG_AUTO, TAG_LOAD, TAG_PLAN, TAG_KB,
+            TAG_EVO, TAG_SOS, TAG_SET, TAG_SELF, TAG_ERR, TAG_PROD, TAG_SYS,
+        )
 
         if "DJ decision" in msg:
             decision = msg.replace("DJ decision: ", "").strip()
-            line = f"[bold bright_blue]  DJ  [/bold bright_blue] {decision or '[dim](tool call)[/dim]'}"
-            all_w.write(line)
-            self._log_dj.write(line)
+            self._emit_log(LEVEL_INFO, TAG_DJ, decision or "(tool call)")
         elif "Executing" in msg or "Transition result" in msg:
-            line = f"[bold cyan]  MIX [/bold cyan] {msg}"
-            all_w.write(line)
-            self._log_dj.write(line)
+            self._emit_log(LEVEL_EVENT, TAG_MIX, msg)
         elif "Transition scheduled" in msg or "schedule_transition" in msg:
-            line = f"[bold cyan]  MIX [/bold cyan] {msg}"
-            all_w.write(line)
-            self._log_dj.write(line)
+            self._emit_log(LEVEL_INFO, TAG_MIX, msg)
         elif "Auto-transition" in msg:
-            line = f"[yellow]  AUTO[/yellow] {msg}"
-            all_w.write(line)
-            self._log_dj.write(line)
+            self._emit_log(LEVEL_EVENT, TAG_AUTO, msg)
         elif "Loaded deck" in msg:
-            line = f"[green]  LOAD[/green] {msg.replace('Loaded deck ', 'D')}"
-            all_w.write(line)
-            self._log_planner.write(line)
+            self._emit_log(LEVEL_EVENT, TAG_LOAD, msg.replace("Loaded deck ", "D"))
         elif "Planner done" in msg:
-            line = f"[magenta]  PLAN[/magenta] done"
-            all_w.write(line)
-            self._log_planner.write(line)
+            self._emit_log(LEVEL_OK, TAG_PLAN, "cycle done")
             self._show_planner_plan()
         elif "Planner running" in msg:
-            line = f"[magenta]  PLAN[/magenta] {msg.replace('Planner running — ', '')}"
-            all_w.write(line)
-            self._log_planner.write(line)
+            self._emit_log(LEVEL_INFO, TAG_PLAN,
+                           msg.replace("Planner running — ", ""))
         elif "Enriched:" in msg:
-            line = f"[dim]  SCAN[/dim] {msg.replace('Enriched: ', '')[:70]}"
-            all_w.write(line)
-            self._log_planner.write(line)
+            self._emit_log(LEVEL_DEBUG, TAG_KB,
+                           msg.replace("Enriched: ", "")[:80])
         elif "Evolution" in msg or "evolve" in msg.lower():
-            line = f"[bold yellow]  EVO [/bold yellow] {msg}"
-            all_w.write(line)
-            self._log_treta.write(line)
+            self._emit_log(LEVEL_INFO, TAG_EVO, msg)
         elif "Emergency" in msg:
-            line = f"[bold red]  SOS [/bold red] {msg}"
-            all_w.write(line)
-            self._log_dj.write(line)
+            self._emit_log(LEVEL_ERROR, TAG_SOS, msg)
         elif "Backup" in msg:
-            line = f"[red]  BKUP[/red] {msg}"
-            all_w.write(line)
-            self._log_planner.write(line)
+            self._emit_log(LEVEL_INFO, TAG_SYS, msg)
         elif "Set started" in msg or "Set ended" in msg:
-            line = f"[bold white]  SET [/bold white] {msg}"
-            all_w.write(line)
+            self._emit_log(LEVEL_EVENT, TAG_SET, msg)
         elif "Being thought" in msg or "Being reflect" in msg:
-            line = f"[bright_cyan]  SELF[/bright_cyan] {msg.replace('Being thought: ', '').replace('Being reflect: ', '')[:70]}"
-            all_w.write(line)
-            self._log_treta.write(line)
-        elif "ERROR" in text or "WARNING" in text:
-            line = f"[red]  ERR [/red] {msg}"
-            all_w.write(line)
+            cleaned = (msg.replace("Being thought: ", "")
+                          .replace("Being reflect: ", ""))[:120]
+            self._emit_log(LEVEL_INFO, TAG_SELF, cleaned)
+        elif "ERROR" in text:
+            self._emit_log(LEVEL_ERROR, TAG_ERR, msg)
+        elif "WARNING" in text:
+            self._emit_log(LEVEL_WARN, TAG_ERR, msg)
         elif "Generated" in msg or "generate_track" in msg:
-            line = f"[bold bright_magenta]  PROD[/bold bright_magenta] {msg}"
-            all_w.write(line)
-            self._log_planner.write(line)
+            self._emit_log(LEVEL_OK, TAG_PROD, msg)
         else:
-            all_w.write(f"[dim]  ··· [/dim] {msg[:80]}")
+            self._emit_log(LEVEL_DEBUG, TAG_SYS, msg[:120])
 
     def _apply_ws_thinking(self, data: dict):
         """Apply thinking event — route to agent tab + activity panel."""
@@ -1241,7 +1345,6 @@ class DJTretaApp(App):
         # can tell live activity apart from what was buffered before they
         # opened the TUI.
         is_replay = bool(data.get("_replay"))
-        prefix = "[dim][hist][/dim] " if is_replay else ""
 
         # Update agent activity panel
         try:
@@ -1253,24 +1356,25 @@ class DJTretaApp(App):
         except Exception:
             pass
 
-        # Determine which tab this goes to
+        # Map agent → tag for the unified emitter.
+        from agent.log_format import (
+            LEVEL_DEBUG, LEVEL_INFO, LEVEL_OK,
+            TAG_DJ, TAG_PLAN, TAG_LIB, TAG_SELF, TAG_SYS,
+        )
         if "dj_treta" in agent or "mixer" in agent:
-            tab = self._log_dj
-            color = "bright_blue"
-        elif "planner" in agent or "library" in agent or "producer" in agent:
-            tab = self._log_planner
-            color = "magenta"
+            tag = TAG_DJ
+        elif "planner" in agent:
+            tag = TAG_PLAN
+        elif "library" in agent or "producer" in agent:
+            tag = TAG_LIB
         elif "consciousness" in agent or "treta" in agent:
-            tab = self._log_treta
-            color = "bright_cyan"
+            tag = TAG_SELF
         else:
-            tab = self._log_treta
-            color = "dim"
+            tag = TAG_SYS
 
         if think_type == "think":
             if "dj_treta" in agent and not is_replay:
                 # Ring buffer entries kept short to keep /brain output scannable.
-                # Don't pollute /brain with replayed history.
                 self._last_dj_decision = text[:300]
                 self._last_dj_decision_time = time.time()
                 buf = getattr(self, "_recent_dj_thoughts", None)
@@ -1281,27 +1385,25 @@ class DJTretaApp(App):
                 if len(buf) > 30:
                     del buf[:-30]
             if text and len(text.strip()) > 5:
-                # Full text — RichLog has wrap=True so it word-wraps naturally.
-                line = f"{prefix}[{color}]  {agent}:[/{color}] [italic]{text}[/italic]"
-                tab.write(line)
-                # Mirror to All tab so the user has a single chronological feed.
-                # Skip the mirror for `agent="treta"` thoughts — handle_talk()
-                # already wrote the formal "DJ Treta: <reply>" line for those,
-                # and the streamed thinking event (the daemon broadcasts the
-                # same response text twice — once via talk_response, once via
-                # thinking-event chunks) was rendering as a duplicate
-                # `treta: <reply>` italic line right under DJ Treta:.
-                if agent != "treta":
-                    self.log_widget.write(line)
+                # Special case: planner playlist JSON → render as tree summary.
+                rendered = self._try_render_planner_json(text) if tag == TAG_PLAN else None
+                if rendered:
+                    summary, detail = rendered
+                    self._emit_log(LEVEL_OK, TAG_PLAN, summary,
+                                   detail=detail, is_replay=is_replay)
+                else:
+                    # Plain thinking — render in italic as the message body.
+                    self._emit_log(LEVEL_INFO, tag,
+                                   f"[italic]{text}[/italic]",
+                                   is_replay=is_replay)
 
         elif think_type == "call":
             tool_name = tool or text or "?"
-            # Full args — RichLog wraps. Truncating cut off important JSON
-            # context (planner reasoning summaries, schedule_transition params).
-            line = f"{prefix}[bold {color}]  {agent}:[/bold {color}] [cyan]{tool_name}({args})[/cyan]"
-            tab.write(line)
-            # Mirror to All tab so the user has a single chronological feed.
-            self.log_widget.write(line)
+            # Pretty-format Python-dict args → kw=val
+            pretty_args = self._pretty_tool_args(args) if args else ""
+            self._emit_log(LEVEL_DEBUG, tag,
+                           f"[cyan]{tool_name}([/cyan]{pretty_args}[cyan])[/cyan]",
+                           is_replay=is_replay)
 
         # Debug panel gets everything raw
         debug_visible = self.query_one("#debug-log").has_class("visible")
@@ -1330,6 +1432,10 @@ class DJTretaApp(App):
                     yield RichLog(id="log-dj", highlight=True, markup=True, wrap=True)
                 with TabPane("Planner", id="tab-planner"):
                     yield RichLog(id="log-planner", highlight=True, markup=True, wrap=True)
+                with TabPane("Library", id="tab-library"):
+                    yield RichLog(id="log-library", highlight=True, markup=True, wrap=True)
+                with TabPane("Issues", id="tab-issues"):
+                    yield RichLog(id="log-issues", highlight=True, markup=True, wrap=True)
             with Vertical(id="right-panel"):
                 yield AgentActivityWidget(id="agent-activity")
                 with ScrollableContainer(id="playlist-scroll"):
@@ -1346,6 +1452,8 @@ class DJTretaApp(App):
         self._log_dj = self.query_one("#log-dj", RichLog)
         self._log_planner = self.query_one("#log-planner", RichLog)
         self._log_treta = self.query_one("#log-treta", RichLog)
+        self._log_library = self.query_one("#log-library", RichLog)
+        self._log_issues = self.query_one("#log-issues", RichLog)
         self.debug_widget = self.query_one("#debug-log", RichLog)
         self.log_widget.write("[dim]DJ Treta Console. Type anything to talk, /help for commands.[/dim]\n")
         self.log_widget.write(
@@ -1372,6 +1480,8 @@ class DJTretaApp(App):
     def action_tab_treta(self): self._switch_tab("tab-treta")
     def action_tab_dj(self): self._switch_tab("tab-dj")
     def action_tab_planner(self): self._switch_tab("tab-planner")
+    def action_tab_library(self): self._switch_tab("tab-library")
+    def action_tab_issues(self): self._switch_tab("tab-issues")
 
     def action_fullscreen(self):
         """Toggle fullscreen tabs — hide decks/mixer/brain for focused view."""
@@ -1721,7 +1831,8 @@ class DJTretaApp(App):
             # Wipe local log widgets AND ask the daemon to flush its
             # thinking/log replay buffers so nothing comes back on next
             # restart. Decks/state stay untouched (they're live).
-            for w in (self.log_widget, self._log_dj, self._log_planner, self._log_treta):
+            for w in (self.log_widget, self._log_dj, self._log_planner,
+                      self._log_treta, self._log_library, self._log_issues):
                 try:
                     w.clear()
                 except Exception:
