@@ -46,6 +46,34 @@ def _format_current_timeline(current_meta: dict | None) -> str:
 
 class PlannerMixin:
 
+    def _emit_kb(self, msg: str, level: str = "INFO") -> None:
+        """Broadcast a knowledge-surfacing event to the TUI.
+
+        Routes through `_ws_broadcast("thinking", ...)` with `agent="planner"`
+        so the TUI's existing thinking-event path picks it up; the unified
+        renderer in tui.py classifies by tag (TAG_PLAN here). The level kw
+        is reserved for future when we add a typed log event — for now it
+        just prefixes the body so WARN/ERROR are still readable.
+        """
+        if not hasattr(self, "_ws_broadcast"):
+            return
+        body = msg if level == "INFO" else f"[{level}] {msg}"
+        try:
+            self._ws_broadcast("thinking", {
+                "agent": "planner",
+                "type": "think",
+                "text": body,
+            })
+        except Exception:
+            pass
+        # Also write to thinking.log so the file replay shows it.
+        try:
+            from .runtime_paths import runtime_path
+            with open(runtime_path("thinking.log"), "a") as f:
+                f.write(f"[THINK:planner] {body}\n")
+        except Exception:
+            pass
+
     def _planner_loop(self):
         """Background: plan 6 tracks, load idle deck, re-plan every 4 tracks."""
         from .main import _get_status
@@ -526,11 +554,15 @@ class PlannerMixin:
         if isinstance(raw_range, (list, tuple)) and len(raw_range) == 2:
             bpm_range = (int(raw_range[0]), int(raw_range[1]))
 
+        mood_slug = mood_profile.get("canonical_slug") or self.mood or "?"
+        self._emit_kb(f"cycle start — mood={mood_slug} bpm={bpm_range}")
+
         discover = kb.discover_candidates(
             mood_profile=mood_profile,
             bpm_range=bpm_range,
             limit=40,
         )
+        self._emit_kb(f"discover_candidates → {len(discover)} hits")
 
         similar = []
         if current_meta and kb._client().has_vectors():
@@ -548,8 +580,10 @@ class PlannerMixin:
                 seed = CanonicalRef(artist=artist, song=song)
                 try:
                     similar = kb.similar_to(seed, limit=20)
+                    self._emit_kb(f"similar_to({artist} — {song}) → {len(similar)} hits")
                 except Exception as exc:
                     log.warning(f"v9 similar_to seed failed: {exc}")
+                    self._emit_kb(f"similar_to failed: {exc}", level="WARN")
 
         # Union + dedup (similar first to preserve similarity rank).
         seen = set()
@@ -562,17 +596,26 @@ class PlannerMixin:
             ktracks.append(t)
 
         if not ktracks:
+            self._emit_kb("0 unique candidates — knowledge dry, falling back to v8")
             return []
 
+        self._emit_kb(f"union+dedup → {len(ktracks)} unique candidates")
+
         merged = merge_candidates_against_local(ktracks)
+        n_dl = sum(1 for m in merged if getattr(m, "downloaded", False))
+        self._emit_kb(f"merge_against_local → {n_dl} downloaded, {len(merged)-n_dl} need-download")
 
         # Played dedup: by canonical-title normalization.
         played_lower = {(p or "").lower() for p in played_list}
         played_lower.discard("")
+        before_play_dedup = len(merged)
         merged = [
             m for m in merged
             if m.title.lower() not in played_lower
         ]
+        dropped = before_play_dedup - len(merged)
+        if dropped:
+            self._emit_kb(f"played_dedup → dropped {dropped} already-played")
 
         # Filter out continuous-mix compilations (K7 data-quality finding).
         _MIX_MARKERS = (
