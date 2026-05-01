@@ -36,6 +36,18 @@ def build_dj_user_message(
     playlist: dict | None = None,
     mood_profile: dict | None = None,
     external_decks: list[int] | None = None,
+    # v9 Tier-2 — pre-computed transition points so DJ doesn't have to
+    # invent at_position values from raw timeline strings. All optional;
+    # fall back to a generic prompt if the analyzer hasn't run yet.
+    active_camelot: str = "",
+    active_energy: int | None = None,
+    active_mix_in: float | None = None,
+    active_mix_out: float | None = None,
+    idle_duration: float | None = None,
+    idle_camelot: str = "",
+    idle_energy: int | None = None,
+    idle_mix_in: float | None = None,
+    idle_mix_out: float | None = None,
 ) -> str:
     """Build the user message for DJ agent heartbeat decisions.
 
@@ -100,29 +112,102 @@ def build_dj_user_message(
                 lines.append(f"       path: {path}")
         playlist_block = "\n".join(lines) + "\n\n"
 
+    # ── Pre-computed transition points (v9 Tier-2) ──────────────────
+    # These are what a real DJ uses: where active's outro begins, where
+    # idle's intro ends. Pre-computed by the audio analyzer (Essentia
+    # mix_in / mix_out heuristic). DJ no longer has to count seconds
+    # from raw timeline strings — pick from these landmarks.
+    active_camelot_str = active_camelot or active_key or "?"
+    idle_camelot_str = idle_camelot or idle_key or "?"
+    active_energy_str = f"e{active_energy}" if active_energy is not None else "e?"
+    idle_energy_str = f"e{idle_energy}" if idle_energy is not None else "e?"
+
+    # Active track transition points
+    active_points = []
+    if active_mix_out is not None:
+        delta_to_outro = active_mix_out - position
+        if delta_to_outro >= 0:
+            active_points.append(
+                f"  OUTRO STARTS AT: {active_mix_out:.0f}s "
+                f"({delta_to_outro:.0f}s away — IDEAL transition-out point)"
+            )
+        else:
+            active_points.append(
+                f"  OUTRO STARTED AT: {active_mix_out:.0f}s "
+                f"({-delta_to_outro:.0f}s ago — already in outro, schedule NOW)"
+            )
+    if active_mix_in is not None:
+        active_points.append(f"  INTRO ENDED AT: {active_mix_in:.0f}s")
+    active_points_block = "\n".join(active_points)
+    if active_points_block:
+        active_points_block += "\n"
+
+    # Idle track transition points
+    idle_points = []
+    idle_dur_str = f"/{idle_duration:.0f}s" if idle_duration else ""
+    if idle_mix_in is not None:
+        idle_points.append(
+            f"  INTRO ENDS AT: {idle_mix_in:.0f}s "
+            f"(seed-in window — drop active over idle's first {idle_mix_in:.0f}s)"
+        )
+    if idle_mix_out is not None:
+        idle_points.append(f"  OUTRO STARTS AT: {idle_mix_out:.0f}s")
+    idle_points_block = "\n".join(idle_points)
+    if idle_points_block:
+        idle_points_block += "\n"
+
+    # Ideal-transition hint — pre-compute the obvious answer when both
+    # mix points are known. DJ may override with a directive or based on
+    # section context, but having the canonical answer in the prompt
+    # massively reduces hallucinated at_position values.
+    ideal_hint = ""
+    if (active_mix_out is not None and idle_mix_in is not None
+            and active_mix_out >= position):
+        # Duration: don't exceed idle's intro length, cap at 64s for sanity.
+        ideal_dur = min(int(idle_mix_in), 64)
+        if ideal_dur < 8:
+            ideal_dur = 16  # too-short intros — fall back to a 16s blend
+        ideal_hint = (
+            f"\nIDEAL TRANSITION (pre-computed from mix points):\n"
+            f"  schedule_transition(to_deck={idle_deck}, "
+            f"at_position={int(active_mix_out)}, technique=<your_pick>, "
+            f"duration={ideal_dur})\n"
+            f"  → start when active's outro begins, blend over idle's intro.\n"
+            f"  Override only if directive says otherwise OR section "
+            f"context demands earlier (e.g. breakdown alignment).\n"
+        )
+
     return (
         f"{directive_info}"
         f"{profile_line}"
         f"{ownership_line}"
         f"ACTIVE: '{active_track[:40]}' at {position:.0f}s/{duration:.0f}s "
-        f"({remaining:.0f}s left, BPM:{active_bpm:.0f} file:{active_file_bpm:.0f}, Key:{active_key})\n"
+        f"({remaining:.0f}s left, BPM:{active_bpm:.0f} file:{active_file_bpm:.0f}, "
+        f"Camelot:{active_camelot_str} {active_energy_str})\n"
         f"  NOW IN: {active_section}\n"
+        f"{active_points_block}"
         f"  TIMELINE: {active_timeline}\n\n"
-        f"NEXT: '{idle_track[:40]}' on deck {idle_deck} "
-        f"(BPM:{idle_bpm:.0f} file:{idle_file_bpm:.0f}, Key:{idle_key})\n"
-        f"  TIMELINE: {idle_timeline}\n\n"
+        f"NEXT: '{idle_track[:40]}' on deck {idle_deck}{idle_dur_str} "
+        f"(BPM:{idle_bpm:.0f} file:{idle_file_bpm:.0f}, "
+        f"Camelot:{idle_camelot_str} {idle_energy_str})\n"
+        f"{idle_points_block}"
+        f"  TIMELINE: {idle_timeline}\n"
+        f"{ideal_hint}\n"
         f"{playlist_block}"
         f"{pending_info}\n"
         f"Decide now. Your options:\n"
-        f"  - If ACTIVE is in a breakdown or outro (and NEXT is ready on "
-        f"deck {idle_deck}), invoke the schedule_transition tool. Pick a "
-        f"technique that fits the BPM/key/energy gap.\n"
+        f"  - If ACTIVE is in a breakdown / outro OR within ~30s of OUTRO "
+        f"STARTS AT (and NEXT is ready on deck {idle_deck}), invoke "
+        f"schedule_transition. Use the IDEAL TRANSITION values above unless "
+        f"a directive or section cue tells you otherwise.\n"
         f"  - If the idle deck is empty or loaded with the wrong track, "
-        f"invoke the load_track tool with the best path from the playlist "
-        f"above.\n"
+        f"invoke load_track with the best path from the playlist above.\n"
         f"  - Otherwise (active track is mid-drop, mid-buildup, or too "
-        f"early), call defer_decision(seconds=30) so the heartbeat asks "
-        f"you again in 30s.\n\n"
+        f"early — i.e. position is well before OUTRO STARTS AT), call "
+        f"defer_decision(seconds=30).\n\n"
+        f"NEVER pick at_position > duration. NEVER pick at_position < "
+        f"current position+5. NEVER use idle's mix_in as active's "
+        f"at_position — those are different decks.\n"
         f"Respond with EXACTLY ONE tool call. Never respond in plain text. "
         f"If unsure, defer_decision(60) is always safe."
     )
