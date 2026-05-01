@@ -487,6 +487,19 @@ def _reset(hard=False):
     # Clean session + bytecache (always)
     DJ_HOME = Path.home() / "beings" / "dj-treta"
     (DJ_HOME / ".beings" / "session.json").unlink(missing_ok=True)
+
+    # Defensive: clear the mood_profile_cache so a stale entry from a prior
+    # session (e.g. an earlier "techno-deep" default that resolved into the
+    # cache) can't be served back to a fresh "melodic-techno" boot. Hard
+    # reset nukes the DB anyway, but soft reset keeps it — and either way a
+    # belt-and-braces clear keeps the planner mood-aligned with config.
+    try:
+        sys.path.insert(0, str(DJ_HOME))
+        from agent.mood_resolver import clear_cache as _clear_mood_cache
+        _clear_mood_cache()
+    except Exception:
+        # Cache table may not exist yet on a brand-new install — fine.
+        pass
     import shutil as _shutil
     for cache_dir in [DJ_HOME / "agent" / "__pycache__", DJ_HOME / "agent" / "tools" / "__pycache__", DJ_HOME / "__pycache__"]:
         if cache_dir.exists():
