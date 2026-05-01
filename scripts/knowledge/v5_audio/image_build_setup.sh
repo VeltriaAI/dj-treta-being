@@ -31,15 +31,29 @@ $PIP install -q "numpy<2.0" "urllib3<2" certifi
 $PIP install -q "google-auth==2.29.0" "google-cloud-storage==2.18.0" huggingface_hub
 $PIP install -q polars pyarrow scipy soundfile yt-dlp librosa
 $PIP install -q essentia || $PIP install -q essentia-tensorflow
-$PIP install -q "cython<3.0"
-$PIP install -q madmom || echo "madmom failed — phrase detection disabled"
+
+# torchaudio<2.9 keeps silero-vad working without torchcodec; torchvision
+# is required transitively by laion-clap.
+$PIP install -q "torch<2.9" "torchaudio<2.9" "torchvision<0.24" \
+    --index-url https://download.pytorch.org/whl/cpu
+
 $PIP install -q demucs
-$PIP install -q basic-pitch || echo "basic-pitch failed"
 $PIP install -q silero-vad
-$PIP install -q torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 $PIP install -q faster-whisper
 $PIP install -q laion-clap || echo "laion-clap failed"
-$PIP install -q musicnn || echo "musicnn failed"
+
+# Replacements for dead packages:
+#   madmom   → BeatNet  (pure PyTorch, no madmom dep, maintained 2024)
+#                (allin1 looked promising but it transitively imports madmom)
+#   musicnn  → panns_inference (AudioSet 527-class genre/mood/instrument tags)
+#   basic-pitch (kept; using lower-level predict() API in worker.py
+#                to bypass predict_and_save TF loader issues)
+#   pyloudnorm — pure-Python ITU-R BS.1770 LUFS (mono-friendly, replaces
+#                Essentia's LoudnessEBUR128 which needs stereo + segfaults)
+$PIP install -q BeatNet || echo "BeatNet failed — downbeat detection disabled"
+$PIP install -q panns_inference || echo "panns_inference failed — tags disabled"
+$PIP install -q basic-pitch || echo "basic-pitch failed"
+$PIP install -q pyloudnorm
 
 # ── Pre-cache ML model weights ───────────────────────────────────────
 mkdir -p /opt/models /opt/models/torch /opt/models/hf /opt/models/cache
@@ -79,17 +93,31 @@ m = get_model("htdemucs")
 print("demucs htdemucs cached")
 PY
 
-# basic-pitch model
+# basic-pitch model — pre-fetch ICASSP 2022 model
 /opt/venv/bin/python - <<'PY' || echo "basic-pitch cache failed"
-from basic_pitch.inference import predict
-# triggers model load on import indirectly
-print("basic-pitch ready")
+from basic_pitch import ICASSP_2022_MODEL_PATH
+import os
+print(f"basic-pitch model path: {ICASSP_2022_MODEL_PATH}, exists: {os.path.exists(ICASSP_2022_MODEL_PATH)}")
 PY
 
-# musicnn model
-/opt/venv/bin/python - <<'PY' || echo "musicnn cache failed"
-import musicnn  # noqa
-print("musicnn ready")
+# BeatNet model (allin1 replacement, no madmom dep)
+/opt/venv/bin/python - <<'PY' || echo "BeatNet cache failed"
+from BeatNet.BeatNet import BeatNet
+m = BeatNet(1, mode="offline", inference_model="DBN", plot=[], thread=False)
+print("BeatNet ready")
+PY
+
+# pyloudnorm has no models to cache — pure-Python
+/opt/venv/bin/python - <<'PY' || echo "pyloudnorm cache failed"
+import pyloudnorm  # noqa
+print("pyloudnorm ready")
+PY
+
+# PANNs model (musicnn replacement) — downloads ~600MB checkpoint on first use
+/opt/venv/bin/python - <<'PY' || echo "PANNs cache failed"
+from panns_inference import AudioTagging
+m = AudioTagging(checkpoint_path=None, device="cpu")
+print("PANNs cached")
 PY
 
 # Make models directory readable to all (workers run as default user)

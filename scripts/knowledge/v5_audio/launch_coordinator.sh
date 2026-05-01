@@ -23,7 +23,7 @@ GCP_ZONE="${GCP_ZONE:-us-central1-a}"
 DATASET_VERSION="${DATASET_VERSION:-v5}"
 COORDINATOR_MACHINE_TYPE="${COORDINATOR_MACHINE_TYPE:-e2-standard-2}"
 COORD_NAME="v5-coordinator-${RUN_ID//_/-}"
-COORD_NAME="${COORD_NAME,,}"
+COORD_NAME=$(echo "$COORD_NAME" | tr '[:upper:]' '[:lower:]')
 COORD_NAME="${COORD_NAME:0:62}"
 
 echo "=== v5 launch (run_id=$RUN_ID, coord=$COORD_NAME) ==="
@@ -56,6 +56,7 @@ META_PARTS=(
     "PRIORITY_REQUIRE_VIDEO_ID=${PRIORITY_REQUIRE_VIDEO_ID:-true}"
     "PRIORITY_LIMIT=${PRIORITY_LIMIT:-200000}"
     "KEEP_AUDIO_HOT=${KEEP_AUDIO_HOT:-false}"
+    "V5_IMAGE_NAME=${V5_IMAGE_NAME:-}"
 )
 META=$(IFS=,; echo "${META_PARTS[*]}")
 
