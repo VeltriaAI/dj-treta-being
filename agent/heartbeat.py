@@ -666,13 +666,25 @@ class HeartbeatMixin:
                     log.info(f"Emergency play: {Path(filepath).stem[:50]}")
                     self._record_playing_tracks()
             elif self.config.sources.youtube:
-                result = self._invoke_agent(
-                    f"{self._build_context(_get_status(url))}\n\n"
-                    f"SILENCE! Empty library. Search YouTube, download a {self.mood or 'melodic-techno'} track, "
-                    f"load on deck 1, play it, set crossfader to 0.0."
+                # Empty library + youtube=true: route to library_manager peer
+                # via library_need signal — DJ agent's v8 prompt explicitly
+                # forbids search_music/download_track (those belong to the
+                # library peer), so calling DJ here just produces the
+                # "I cannot fulfill" refuse-loop we observed 2026-05-02
+                # (28 wasted Flash calls / $0.012 before this fix landed).
+                # Library_manager runs as a peer thread (library_loop.py)
+                # and processes library_need signals natively.
+                mood = self.mood or "melodic-techno"
+                self.session.library_need = {
+                    "mood": mood,
+                    "count": 3,
+                    "reason": "emergency_play — empty library, silence imminent",
+                    "ts": time.time(),
+                }
+                log.info(
+                    f"[SOS] empty library — emitted library_need(mood={mood}, "
+                    f"count=3) for library_manager peer to fulfill"
                 )
-                log.info(f"Emergency play (agent): {result[:200]}")
-                self._record_playing_tracks()
             self._record_playing_tracks()
         except Exception as e:
             import traceback
