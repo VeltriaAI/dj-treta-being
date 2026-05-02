@@ -88,7 +88,7 @@ def parse_next_data(html: str) -> list[dict]:
     return []
 
 
-def normalize_row(t: dict, genre_slug: str, genre_id: int, fetched_at: str) -> dict:
+def normalize_row(t: dict, genre_slug: str, genre_id: int, fetched_at: str, source_endpoint: str = "tracks") -> dict:
     """Beatport track dict -> seeds_raw schema."""
     artists = t.get("artists") or []
     remixers = t.get("remixers") or []
@@ -125,6 +125,7 @@ def normalize_row(t: dict, genre_slug: str, genre_id: int, fetched_at: str) -> d
         "release_name": release.get("name"),
         "chart_genre_slug": genre_slug,
         "chart_genre_id": genre_id,
+        "source_endpoint": source_endpoint,
         "fetched_at": fetched_at,
     }
 
@@ -145,7 +146,9 @@ def scrape_genre(session, genre_slug: str, genre_id: int, pages: int, delay_s: f
         )
 
     for url in urls:
-        kind = "top-100" if url.endswith("/top-100") else f"p{url.split('page=')[-1]}"
+        is_top = url.endswith("/top-100")
+        kind = "top-100" if is_top else f"p{url.split('page=')[-1]}"
+        endpoint_tag = "top-100" if is_top else "tracks"
         try:
             html = fetch(session, url, cache_dir=CACHE_DIR, min_delay_s=delay_s)
         except Exception as e:
@@ -164,7 +167,7 @@ def scrape_genre(session, genre_slug: str, genre_id: int, pages: int, delay_s: f
                 continue
             seen_ids.add(tid)
             try:
-                out.append(normalize_row(t, genre_slug, genre_id, fetched_at))
+                out.append(normalize_row(t, genre_slug, genre_id, fetched_at, endpoint_tag))
                 new += 1
             except Exception as e:
                 print(f"  [{genre_slug} {kind}] row parse failed: {e}")
