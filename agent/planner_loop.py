@@ -513,14 +513,36 @@ class PlannerMixin:
             # empty because every track has been played — that's the
             # played-exhaustion case which still needs more tracks, just
             # for a different reason. Treat both as library_need.
-            if not validated["tracks"]:
+            # Played-exhaustion check: count fresh (unplayed) tracks in the
+            # validated playlist. If <2, library is too thin even if planner
+            # produced 5 ranked tracks — they're all replays. Emit
+            # library_need so library_manager peer downloads more.
+            played_paths = set()
+            for t in (self.tracks_played or []):
+                p = t.get("path") or t.get("file_path") or ""
+                if p:
+                    played_paths.add(p)
+            fresh_in_playlist = sum(
+                1 for t in validated.get("tracks", [])
+                if (t.get("path") or "") not in played_paths
+            )
+            playlist_empty = not validated["tracks"]
+            playlist_exhausted = (not playlist_empty) and fresh_in_playlist < 2
+
+            if playlist_empty or playlist_exhausted:
                 mood_slug = validated.get("mood_snapshot") or (
                     getattr(self.session, "mood_profile", {}) or {}
                 ).get("canonical_slug") or self.mood or "melodic-techno"
-                reason = (
-                    "library empty" if not library
-                    else f"all {len(library)} library tracks already played this set"
-                )
+                if playlist_empty:
+                    reason = (
+                        "library empty" if not library
+                        else f"all {len(library)} library tracks already played this set"
+                    )
+                else:
+                    reason = (
+                        f"playlist has {len(validated['tracks'])} tracks but only "
+                        f"{fresh_in_playlist} unplayed — library exhausted"
+                    )
                 if not getattr(self.session, "library_need", None):
                     self.session.library_need = {
                         "mood": mood_slug,
