@@ -530,13 +530,29 @@ class HeartbeatMixin:
             idle_path = deck_paths.get(idle_deck, "") or ""
             duplicate = bool(active_path) and active_path == idle_path
 
-            idle_stale = (not idle_loaded) or idle_remaining < 60 or duplicate
+            played_paths = {(t.get("path") or t.get("file_path") or "")
+                            for t in (self.tracks_played or [])}
+            played_paths.discard("")
+            already_played = bool(idle_path) and idle_path in played_paths
+
+            idle_stale = (
+                (not idle_loaded)
+                or idle_remaining < 60
+                or duplicate
+                or already_played
+            )
             if idle_stale:
                 try:
                     if duplicate:
                         log.info(
                             f"[SIGNAL] idle_needs_load → idle deck {idle_deck} "
                             f"holds the same track as active deck {active_deck}; "
+                            f"forcing reload"
+                        )
+                    elif already_played:
+                        log.info(
+                            f"[SIGNAL] idle_needs_load → idle deck {idle_deck} "
+                            f"holds already-played track ({Path(idle_path).stem[:40]}); "
                             f"forcing reload"
                         )
                     self._load_next_on_idle(status)
