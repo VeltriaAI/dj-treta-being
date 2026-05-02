@@ -510,6 +510,11 @@ class HeartbeatMixin:
         #    case is invisible — outgoing track stays loaded after transition,
         #    next transition would replay it. Detected live: 3 cycles of
         #    NEXT==Hypnotica after Hypnotica had finished playing.
+        #
+        #    Path-format note: get_deck_paths returns relative paths
+        #    (genre/filename.mp3), session.tracks_played stores absolute
+        #    paths (/Users/.../genre/filename.mp3). Compare by filename
+        #    suffix to bridge the two formats.
         try:
             from .playback_applier import get_deck_paths as _gd
             _idle_path_now = (_gd(self.config.mixxx.url) or {}).get(idle_deck, "") or ""
@@ -517,7 +522,14 @@ class HeartbeatMixin:
                 _played_paths = {(t.get("path") or t.get("file_path") or "")
                                  for t in (self.tracks_played or [])}
                 _played_paths.discard("")
-                if _idle_path_now in _played_paths:
+                _idle_basename = _idle_path_now.rsplit("/", 1)[-1]
+                already_played_match = any(
+                    p == _idle_path_now
+                    or p.endswith("/" + _idle_path_now)
+                    or p.rsplit("/", 1)[-1] == _idle_basename
+                    for p in _played_paths
+                )
+                if already_played_match:
                     log.info(
                         f"[SIGNAL] idle deck {idle_deck} holds already-played "
                         f"({Path(_idle_path_now).stem[:40]}) — flagging idle_needs_load"

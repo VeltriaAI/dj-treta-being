@@ -517,14 +517,20 @@ class PlannerMixin:
             # validated playlist. If <2, library is too thin even if planner
             # produced 5 ranked tracks — they're all replays. Emit
             # library_need so library_manager peer downloads more.
-            played_paths = set()
+            #
+            # Path-format note: validated tracks come from the LLM with
+            # relative paths (genre/filename.mp3); session.tracks_played
+            # stores absolute paths. Match by basename to bridge formats
+            # (filename collisions across genres are rare enough that
+            # endswith match is reliable here).
+            played_basenames = set()
             for t in (self.tracks_played or []):
                 p = t.get("path") or t.get("file_path") or ""
                 if p:
-                    played_paths.add(p)
+                    played_basenames.add(p.rsplit("/", 1)[-1])
             fresh_in_playlist = sum(
                 1 for t in validated.get("tracks", [])
-                if (t.get("path") or "") not in played_paths
+                if (t.get("path") or "").rsplit("/", 1)[-1] not in played_basenames
             )
             playlist_empty = not validated["tracks"]
             playlist_exhausted = (not playlist_empty) and fresh_in_playlist < 2
