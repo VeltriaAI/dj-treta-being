@@ -505,6 +505,27 @@ class HeartbeatMixin:
             log.info("[SIGNAL] set_ending set — no Python executor wired yet, clearing")
             self.session.set_ending = False
 
+        # ── auto-set idle_needs_load when idle deck holds an already-played
+        #    track (2026-05-02 fix). Without this trigger, the played-on-idle
+        #    case is invisible — outgoing track stays loaded after transition,
+        #    next transition would replay it. Detected live: 3 cycles of
+        #    NEXT==Hypnotica after Hypnotica had finished playing.
+        try:
+            from .playback_applier import get_deck_paths as _gd
+            _idle_path_now = (_gd(self.config.mixxx.url) or {}).get(idle_deck, "") or ""
+            if _idle_path_now and not getattr(self.session, "idle_needs_load", False):
+                _played_paths = {(t.get("path") or t.get("file_path") or "")
+                                 for t in (self.tracks_played or [])}
+                _played_paths.discard("")
+                if _idle_path_now in _played_paths:
+                    log.info(
+                        f"[SIGNAL] idle deck {idle_deck} holds already-played "
+                        f"({Path(_idle_path_now).stem[:40]}) — flagging idle_needs_load"
+                    )
+                    self.session.idle_needs_load = True
+        except Exception:
+            pass
+
         # ── idle_needs_load → load rank-1 via existing helper (BUG-17 dedup) ──
         idle_needs_load = getattr(self.session, "idle_needs_load", False)
         if idle_needs_load and idle_owned_external:
