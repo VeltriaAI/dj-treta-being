@@ -1,0 +1,4 @@
+# Scraper outputs and raw HTML cache — should not be tracked
+output/
+raw_html/
+.env
