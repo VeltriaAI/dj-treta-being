@@ -802,8 +802,12 @@ class PlannerMixin:
         played_paths.discard("")
 
         # Primary path: trust the planner's session.playlist.
+        # Pass played_paths so basename-match catches replays where DB
+        # title ≠ Mixxx-reported title (BUG-17 pattern).
         playlist = getattr(self.session, "playlist", None)
-        pick = pick_next_candidate(playlist, exclude_paths, played_titles)
+        pick = pick_next_candidate(
+            playlist, exclude_paths, played_titles, played_paths
+        )
 
         if pick is None:
             # Last-resort safety net. No SQL filter, no mood match, no
