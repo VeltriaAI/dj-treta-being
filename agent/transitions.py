@@ -14,6 +14,7 @@ class TransitionMixin:
     def _execute_scheduled_transition(self, sched: dict):
         """Python-side transition executor. Waits for track position, then executes.
         Runs in its own thread. Agent is FREE during this entire time."""
+        import httpx
         from .main import _get_status
         from .tools import do_transition, do_bass_swap, do_filter_sweep, do_hard_cut, do_echo_out, do_riser, do_dissolve
 
@@ -22,6 +23,7 @@ class TransitionMixin:
         technique = sched.get("technique", "crossfade")
         duration = sched.get("duration", 45)
         active_deck = sched.get("activeDeck", 1 if to_deck == 2 else 2)
+        scheduled_track_path = sched.get("activeTrackPath", "") or ""
 
         log.info(f"Transition scheduled: {technique} to deck {to_deck} at {at_position}s (waiting...)")
 
@@ -43,6 +45,54 @@ class TransitionMixin:
                 gap = at_position - current_pos
 
                 if gap <= 0:
+                    # ── Patch B: stale-schedule detection ─────────────────
+                    # If the active deck's track changed between scheduling
+                    # and fire-time (planner force-load is the common cause),
+                    # the at_position is meaningless against the new track.
+                    # Abort and ask planner to re-evaluate.
+                    if scheduled_track_path:
+                        try:
+                            tinfo = httpx.get(
+                                f"{self.config.mixxx.url}/api/deck/{active_deck}/track_info",
+                                timeout=2,
+                            ).json() or {}
+                            current_track_path = tinfo.get("file_path", "") or ""
+                        except Exception:
+                            current_track_path = ""
+                        if current_track_path and current_track_path != scheduled_track_path:
+                            log.warning(
+                                f"[STALE-SCHEDULE] active track changed from "
+                                f"{scheduled_track_path!r} to {current_track_path!r}, "
+                                f"aborting scheduled {technique} — planner will re-evaluate"
+                            )
+                            if hasattr(self, "session"):
+                                try:
+                                    self.session.replan_requested = True
+                                except Exception:
+                                    pass
+                            break
+
+                    # ── Patch A: fire-time overshoot guard ────────────────
+                    # Re-fetch fresh status; the duration we scheduled with
+                    # might no longer fit the active track (cold-load 0,
+                    # short track, late tail). Shorten if needed.
+                    try:
+                        d_now = status.get(f"deck{active_deck}", {})
+                        rem_now = float(d_now.get("remaining_seconds", 0) or 0)
+                    except Exception:
+                        rem_now = 0.0
+                    if rem_now > 0 and rem_now < duration + 5:
+                        new_duration = max(10, int(rem_now - 5))
+                        if new_duration < duration:
+                            log.warning(
+                                f"[OVERSHOOT-GUARD] track ends in {rem_now:.1f}s, "
+                                f"transition needs {duration}s — shortening to "
+                                f"{new_duration}s so the fade finishes before track end"
+                            )
+                            if hasattr(self, '_ws_broadcast'):
+                                self._ws_broadcast("log", {"text": f"[OVERSHOOT-GUARD] shortening {technique} {duration}s → {new_duration}s (rem={rem_now:.1f}s)"})
+                            duration = new_duration
+
                     # Time to execute — right on the mark
                     log.info(f"Executing {technique} to deck {to_deck} at {current_pos:.1f}s (target: {at_position}s)")
                     if hasattr(self, '_ws_broadcast'):

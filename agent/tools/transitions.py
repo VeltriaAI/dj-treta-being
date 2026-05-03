@@ -217,7 +217,39 @@ def do_transition(to_deck: int, duration: int = 60, bpm_after: str = "keep", gli
 
     # Mixxx C++ S-curve transition (20fps, smooth)
     _mixxx_post("/api/transition", {"deck": to_deck, "duration": duration})
-    _time.sleep(duration + 2)
+
+    # ── Patch C: crossfade end-safety belt ────────────────────────────
+    # Replace blind _time.sleep(duration + 2) with a watchdog poll. If
+    # the OUTGOING deck runs out mid-fade (track shorter than the fade,
+    # or the schedule ran late), we detect rem<0.5s, force xf to dest
+    # immediately, and break — no more cut-out audible to the listener.
+    deadline = _time.monotonic() + duration + 2
+    forced_end = False
+    while _time.monotonic() < deadline:
+        try:
+            st = _mixxx_get("/api/status") or {}
+            d_out = st.get(f"deck{out_deck}", {})
+            rem_out = float(d_out.get("remaining_seconds", 0) or 0)
+            playing_out = bool(d_out.get("playing", False))
+        except Exception:
+            rem_out = 999.0
+            playing_out = True
+        if (playing_out and rem_out < 0.5) or (not playing_out and rem_out <= 0):
+            # Outgoing track is at the cliff — slam crossfader to dest.
+            xf_force = 0.0 if to_deck == 1 else 1.0
+            try:
+                _mixxx_post("/api/crossfade", {"position": xf_force})
+            except Exception:
+                pass
+            forced_end = True
+            log.warning(
+                f"[CROSSFADE-FORCE-END] outgoing deck {out_deck} hit end "
+                f"mid-fade (rem={rem_out:.2f}s, playing={playing_out}); "
+                f"forced crossfader to {xf_force}"
+            )
+            break
+        _time.sleep(0.5)
+
     # Make sure bass-restore has run even if duration math drifted.
     _mixxx_post("/api/eq", {"deck": to_deck, "lo": 1.0})
 
@@ -1274,6 +1306,17 @@ def schedule_transition(to_deck: int, at_position: int, technique: str = "crossf
         at_position = current_pos + 2  # start in 2 seconds
         delay = 2
 
+    # Capture the active track's file_path at scheduling time so the
+    # executor can detect a stale schedule (planner force-load between
+    # schedule and fire would leave at_position pointing at a track that
+    # no longer exists on the deck — Patch B / overshoot-safety).
+    active_track_path = ""
+    try:
+        _tinfo = _mixxx_get(f"/api/deck/{active_deck}/track_info") or {}
+        active_track_path = _tinfo.get("file_path", "") or ""
+    except Exception:
+        active_track_path = ""
+
     # Write schedule -- Python (_execute_scheduled_transition in main.py) picks this up
     scheduled = {
         "toDeck": to_deck,
@@ -1285,6 +1328,8 @@ def schedule_transition(to_deck: int, at_position: int, technique: str = "crossf
         "executesIn": round(delay),
         "bpmAfter": str(bpm_after),
         "glideDuration": max(5, min(60, glide_duration)),
+        "activeTrackPath": active_track_path,
+        "activeTrackDuration": track_duration,
     }
     runtime_path("scheduled-transition.json").write_text(
         json.dumps(scheduled, indent=2)
