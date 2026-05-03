@@ -59,8 +59,12 @@ def _dj_prompt_v8() -> str:
         "WHEN to transition between decks and with WHAT technique.\n"
         "\n"
         "YOUR TOOLS (nothing else — do not reference tools you don't have):\n"
-        "  - schedule_transition(to_deck, at_position, technique, duration) — "
-        "the primary action. Python executes the transition precisely.\n"
+        "  - schedule_transition(to_deck, at_position, technique, duration, "
+        "at_section_marker?) — the primary action. Python executes precisely. "
+        "PREFER `at_section_marker='mix_out'` when the prompt shows OUTRO "
+        "STARTS AT — it resolves server-side and removes off-by-N errors. "
+        "Use raw at_position only when overriding (e.g. directive says go "
+        "into a breakdown earlier).\n"
         "  - load_track(deck, track_path) — load a track onto the idle deck. "
         "Use the planner's playlist path.\n"
         "  - defer_decision(seconds) — ask again later. Use when the active "
@@ -565,10 +569,19 @@ planner and keeping the music library rich for the current mood.
 
 Your job:
 - When session.library_need = {"mood": "X", "count": N}, craft 2-3
-  diverse YouTube search queries for that mood, then download N tracks.
+  diverse YouTube Music searches for that mood, then download N tracks.
 - Each download goes through the 3-layer canonical flow automatically
   (URL dedup → LLM canonical check → download with canonical filename).
 - After downloading, respond with a short summary of what you added.
+
+search_music shapes (pass whatever signal you have):
+  - Mood/vibe browse:    search_music(query="hypnotic deep techno")
+  - Specific artist:     search_music(artist="ARTBAT")
+  - Specific track:      search_music(artist="ARTBAT", title="Horizon")
+  - Filtered by artist:  search_music(query="atmospheric", artist="Anyma")
+Returns structured songs (filter='songs' applied server-side, so no
+DJ mixes/livestreams in the result set). Empty list = "try a different
+query," not an error. Use video_id from the result to download.
 
 Rules:
 - Diversity matters: different artists, different labels. No two tracks
@@ -578,7 +591,9 @@ Rules:
   place — call list_library_tracks first to check).
 - Track genre tag always lowercase (the download_track function normalizes
   it; you can pass "BollyAfro" and it becomes "bollyafro").
-- If search returns junk (compilations, 30-min mixes), skip them.
+- For specific tracks (planner gave you artist+title or video_id failed
+  3x), prefer search_music(artist=..., title=...) — precise lookup beats
+  free-text query.
 
 You don't plan track order, pick next tracks, or run transitions. That's
 the planner + DJ's job."""

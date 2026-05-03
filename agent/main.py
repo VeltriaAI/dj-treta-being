@@ -496,10 +496,23 @@ class DJTretaBeing(
 
             # Async LLM mood resolver — runs in a thread so the callback
             # returns immediately and the LLM call doesn't block the writer.
+            #
+            # Race guard: if session.mood changes again before this thread's
+            # LLM call returns (e.g. boot-time default "techno-deep" → user
+            # set_mood "melodic-techno"), the slower resolver must NOT clobber
+            # the newer profile. We re-check session.mood against `new` after
+            # the resolve and bail if a fresher write has landed.
+            mood_target = new
             def _resolve():
                 try:
                     from .mood_resolver import resolve_mood
-                    profile = resolve_mood(new)
+                    profile = resolve_mood(mood_target)
+                    if self.session.mood != mood_target:
+                        log.info(
+                            f"Mood resolver: discarding stale profile for "
+                            f"{mood_target!r} (current mood={self.session.mood!r})"
+                        )
+                        return
                     self.session.mood_profile = profile.to_dict()
                     log.info(
                         f"Mood profile resolved: {profile.canonical_slug} "

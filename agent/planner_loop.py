@@ -513,14 +513,42 @@ class PlannerMixin:
             # empty because every track has been played — that's the
             # played-exhaustion case which still needs more tracks, just
             # for a different reason. Treat both as library_need.
-            if not validated["tracks"]:
+            # Played-exhaustion check: count fresh (unplayed) tracks in the
+            # validated playlist. If <2, library is too thin even if planner
+            # produced 5 ranked tracks — they're all replays. Emit
+            # library_need so library_manager peer downloads more.
+            #
+            # Path-format note: validated tracks come from the LLM with
+            # relative paths (genre/filename.mp3); session.tracks_played
+            # stores absolute paths. Match by basename to bridge formats
+            # (filename collisions across genres are rare enough that
+            # endswith match is reliable here).
+            played_basenames = set()
+            for t in (self.tracks_played or []):
+                p = t.get("path") or t.get("file_path") or ""
+                if p:
+                    played_basenames.add(p.rsplit("/", 1)[-1])
+            fresh_in_playlist = sum(
+                1 for t in validated.get("tracks", [])
+                if (t.get("path") or "").rsplit("/", 1)[-1] not in played_basenames
+            )
+            playlist_empty = not validated["tracks"]
+            playlist_exhausted = (not playlist_empty) and fresh_in_playlist < 2
+
+            if playlist_empty or playlist_exhausted:
                 mood_slug = validated.get("mood_snapshot") or (
                     getattr(self.session, "mood_profile", {}) or {}
                 ).get("canonical_slug") or self.mood or "melodic-techno"
-                reason = (
-                    "library empty" if not library
-                    else f"all {len(library)} library tracks already played this set"
-                )
+                if playlist_empty:
+                    reason = (
+                        "library empty" if not library
+                        else f"all {len(library)} library tracks already played this set"
+                    )
+                else:
+                    reason = (
+                        f"playlist has {len(validated['tracks'])} tracks but only "
+                        f"{fresh_in_playlist} unplayed — library exhausted"
+                    )
                 if not getattr(self.session, "library_need", None):
                     self.session.library_need = {
                         "mood": mood_slug,
@@ -774,8 +802,12 @@ class PlannerMixin:
         played_paths.discard("")
 
         # Primary path: trust the planner's session.playlist.
+        # Pass played_paths so basename-match catches replays where DB
+        # title ≠ Mixxx-reported title (BUG-17 pattern).
         playlist = getattr(self.session, "playlist", None)
-        pick = pick_next_candidate(playlist, exclude_paths, played_titles)
+        pick = pick_next_candidate(
+            playlist, exclude_paths, played_titles, played_paths
+        )
 
         if pick is None:
             # Last-resort safety net. No SQL filter, no mood match, no

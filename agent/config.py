@@ -156,34 +156,74 @@ def _pick_fields(d: dict, cls: type) -> dict:
     return {k: v for k, v in d.items() if k in fields}
 
 
-def _resolve_config_path() -> Path:
-    """Pick the config file path with end-user installs in mind.
+def _deep_merge(base: dict, overlay: dict) -> dict:
+    """Recursively merge `overlay` onto `base`. Returns a new dict.
 
-    Search order (first hit wins):
-      1. ``$DJCLAW_CONFIG`` — explicit override, used by tests and CI
-      2. ``~/.config/djclaw/config.yaml`` — XDG home, written by the
-         installer's first-run wizard. This is where end-user installs
-         (`curl … | sh`) keep their config.
-      3. Repo-local ``config.local.yaml`` — dev convenience, gitignored
-      4. Repo-local ``config.yaml``                   — tracked default
+    - Dicts merge key-by-key (recursive).
+    - Scalars and lists in overlay REPLACE base entirely (lists aren't merged
+      because list semantics are usually "the complete value"; partial
+      overrides per-element would surprise more than help).
+    - Keys present only in base are preserved.
+    """
+    result = dict(base)
+    for k, v in overlay.items():
+        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+            result[k] = _deep_merge(result[k], v)
+        else:
+            result[k] = v
+    return result
 
-    The repo-local fallbacks let `djclaw` keep working when run from a
-    git checkout (the developer flow) without forcing every dev to
-    populate ~/.config/djclaw.
+
+def _config_layers() -> list[Path]:
+    """Ordered list of config files to layer (lowest priority first).
+
+    Priority (later layers override earlier):
+      1. Repo-local ``config.yaml``                  — tracked default (base)
+      2. Repo-local ``config.local.yaml``            — dev override (gitignored)
+      3. ``~/.config/djclaw/config.yaml``            — XDG, end-user install
+
+    With ``$DJCLAW_CONFIG`` set, that single file replaces the entire stack
+    (used by tests and CI for deterministic config). Otherwise we layer
+    every existing file in the priority order — fixes the long-standing
+    footgun where `config.local.yaml` declaring only `set:` would silently
+    let every other section fall back to dataclass defaults instead of
+    inheriting from config.yaml.
     """
     env_path = os.environ.get("DJCLAW_CONFIG")
     if env_path:
-        return Path(env_path).expanduser()
+        p = Path(env_path).expanduser()
+        return [p] if p.exists() else []
+
+    layers: list[Path] = []
+    repo_root = Path(__file__).parent.parent
+
+    yaml_path = repo_root / "config.yaml"
+    if yaml_path.exists():
+        layers.append(yaml_path)
+
+    local_path = repo_root / "config.local.yaml"
+    if local_path.exists():
+        layers.append(local_path)
 
     xdg = Path("~/.config/djclaw/config.yaml").expanduser()
     if xdg.exists():
-        return xdg
+        layers.append(xdg)
 
-    repo_root = Path(__file__).parent.parent
-    local = repo_root / "config.local.yaml"
-    if local.exists():
-        return local
-    return repo_root / "config.yaml"
+    return layers
+
+
+def _resolve_config_path() -> Path:
+    """Back-compat shim — returns the highest-priority existing layer.
+
+    Prefer `_config_layers()` for new code. This shim is kept so any
+    out-of-tree caller that imports `_resolve_config_path` keeps working.
+    """
+    layers = _config_layers()
+    if layers:
+        return layers[-1]
+    # Nothing exists — return the canonical default path so the caller
+    # can write it / report it. Existing callers handle the not-exists case.
+    return Path(__file__).parent.parent / "config.yaml"
 
 
 def _load_secrets_env() -> None:
@@ -211,22 +251,48 @@ def _load_secrets_env() -> None:
 
 
 def load_config(path: str | Path | None = None) -> Config:
-    """Load config from YAML file. Also loads secrets / .env if present."""
+    """Load config from YAML files. Also loads secrets / .env if present.
+
+    Behavior:
+      - If `path` is given, it's used as the sole source (preserves the
+        explicit-path escape hatch used by tests).
+      - Otherwise, all existing layers from `_config_layers()` are
+        deep-merged in priority order: config.yaml → config.local.yaml
+        → ~/.config/djclaw/config.yaml. Sections missing from a higher
+        layer correctly inherit from the lower layer instead of falling
+        back to dataclass defaults.
+    """
     _load_secrets_env()
 
-    if path is None:
-        path = _resolve_config_path()
-    path = Path(path)
-
-    if not path.exists():
-        cfg = Config()
-        env_key = os.environ.get("DJTRETA_LLM_API_KEY") or os.environ.get("LLM_API_KEY")
-        if env_key:
-            cfg.llm.api_key = env_key
-        return cfg
-
-    with open(path) as f:
-        raw = yaml.safe_load(f) or {}
+    if path is not None:
+        # Explicit single path — preserve old "single source" behavior.
+        p = Path(path)
+        if not p.exists():
+            cfg = Config()
+            env_key = os.environ.get("DJTRETA_LLM_API_KEY") or os.environ.get("LLM_API_KEY")
+            if env_key:
+                cfg.llm.api_key = env_key
+            return cfg
+        with open(p) as f:
+            raw = yaml.safe_load(f) or {}
+    else:
+        # Layered load — deep-merge all existing config files in priority order.
+        raw: dict = {}
+        for layer_path in _config_layers():
+            try:
+                with open(layer_path) as f:
+                    layer_data = yaml.safe_load(f) or {}
+            except (yaml.YAMLError, OSError):
+                continue
+            if isinstance(layer_data, dict):
+                raw = _deep_merge(raw, layer_data)
+        if not raw:
+            # No layer existed (or all empty/invalid) — return defaults + env.
+            cfg = Config()
+            env_key = os.environ.get("DJTRETA_LLM_API_KEY") or os.environ.get("LLM_API_KEY")
+            if env_key:
+                cfg.llm.api_key = env_key
+            return cfg
 
     cfg = Config()
     if "mixxx" in raw:

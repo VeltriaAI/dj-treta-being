@@ -190,6 +190,7 @@ def pick_next_candidate(
     playlist: dict | None,
     exclude_paths: set,
     played_titles: list,
+    played_paths: set | None = None,
     *,
     downloaded_only: bool = True,
 ) -> dict | None:
@@ -198,15 +199,32 @@ def pick_next_candidate(
     `downloaded_only=True` (default) skips knowledge-dataset candidates that
     haven't been fetched yet — DJ can't load_track(path="").
     Returns None if the playlist is empty / all candidates excluded.
+
+    Uses three dedup layers (any one excludes a candidate):
+      1. exclude_paths — currently loaded on a deck
+      2. played_titles — title-matched already-played
+      3. played_paths — path-basename-matched already-played (more reliable
+         than title; Mixxx-reported titles often differ from DB titles —
+         the BUG-17 comment in heartbeat.py notes the same gap)
     """
     if not playlist or not isinstance(playlist.get("tracks"), list):
         return None
     played_titles_set = set(played_titles or [])
+    # Build basename set from played_paths for path-format-tolerant match.
+    played_basenames = set()
+    if played_paths:
+        for p in played_paths:
+            if p:
+                played_basenames.add(p.rsplit("/", 1)[-1])
     ranked = sorted(playlist["tracks"], key=lambda t: t.get("rank", 999))
     for track in ranked:
         if downloaded_only and not track.get("downloaded", True):
             continue
-        if track.get("path") in exclude_paths:
+        path = track.get("path") or ""
+        if path in exclude_paths:
+            continue
+        # Path basename match — catches replays the title dedup misses.
+        if played_basenames and path.rsplit("/", 1)[-1] in played_basenames:
             continue
         title = track.get("title", "")
         if title and title in played_titles_set:

@@ -228,9 +228,15 @@ class HeartbeatMixin:
         # schedule into — skip the agent call entirely. Active-only DJing
         # (just let the current track finish) is the right behaviour.
         sched_file_exists = runtime_path("scheduled-transition.json").exists()
-        # Issue #76: invoke earlier so defer_decision retries still have a
-        # scheduling window before the P2 watchdog fires (< 30s remaining).
-        transition_window = idle_ready and remaining > 0 and remaining < 120
+        # v9 Tier-2: invoke DJ as soon as both decks are ready, not just in
+        # the last 120s. Real DJs decide transitions ahead of time — by the
+        # time you're 30s out, you've already pre-cued, beat-matched, and
+        # pre-aligned phrase boundaries. The earlier we surface mix_out as
+        # the IDEAL transition point, the more time DJ has to defer/decide
+        # consciously instead of being forced into a watchdog rescue.
+        # `dj_deferred_until` (added in #76) still throttles repeat asks,
+        # so the cost is bounded — DJ controls cadence via defer_decision.
+        transition_window = idle_ready and remaining > 0
         # Issue #76: respect defer_decision — DJ told us to ask later.
         deferred_until = getattr(self.session, "dj_deferred_until", 0.0) or 0.0
         if time.time() < deferred_until:
@@ -281,6 +287,26 @@ class HeartbeatMixin:
             active_key = active_meta.get("key_musical", "?") if active_meta else "?"
             idle_key = idle_meta.get("key_musical", "?") if idle_meta else "?"
 
+            # v9 Tier-2: pre-computed transition points + Camelot key + energy.
+            # These come straight from the analyzer-populated tracks table —
+            # surfacing them here means DJ doesn't have to invent at_position
+            # values from raw timeline strings.
+            def _meta_get(meta, key, default=None):
+                if not meta:
+                    return default
+                v = meta.get(key)
+                return v if v is not None else default
+
+            active_camelot = _meta_get(active_meta, "key_camelot", "")
+            idle_camelot = _meta_get(idle_meta, "key_camelot", "")
+            active_energy = _meta_get(active_meta, "energy_peak")
+            idle_energy = _meta_get(idle_meta, "energy_peak")
+            active_mix_in = _meta_get(active_meta, "mix_in_seconds")
+            active_mix_out = _meta_get(active_meta, "mix_out_seconds")
+            idle_mix_in = _meta_get(idle_meta, "mix_in_seconds")
+            idle_mix_out = _meta_get(idle_meta, "mix_out_seconds")
+            idle_duration = _meta_get(idle_meta, "duration_seconds")
+
             from .prompts import build_dj_user_message
 
             # BUG-2 fix: filter the playlist so it never shows tracks
@@ -324,6 +350,15 @@ class HeartbeatMixin:
                 playlist=filtered_playlist,
                 mood_profile=getattr(self.session, "mood_profile", None),
                 external_decks=external_decks,
+                active_camelot=active_camelot,
+                active_energy=active_energy,
+                active_mix_in=active_mix_in,
+                active_mix_out=active_mix_out,
+                idle_duration=idle_duration,
+                idle_camelot=idle_camelot,
+                idle_energy=idle_energy,
+                idle_mix_in=idle_mix_in,
+                idle_mix_out=idle_mix_out,
             )
 
             self._agent_busy = True
@@ -470,6 +505,39 @@ class HeartbeatMixin:
             log.info("[SIGNAL] set_ending set — no Python executor wired yet, clearing")
             self.session.set_ending = False
 
+        # ── auto-set idle_needs_load when idle deck holds an already-played
+        #    track (2026-05-02 fix). Without this trigger, the played-on-idle
+        #    case is invisible — outgoing track stays loaded after transition,
+        #    next transition would replay it. Detected live: 3 cycles of
+        #    NEXT==Hypnotica after Hypnotica had finished playing.
+        #
+        #    Path-format note: get_deck_paths returns relative paths
+        #    (genre/filename.mp3), session.tracks_played stores absolute
+        #    paths (/Users/.../genre/filename.mp3). Compare by filename
+        #    suffix to bridge the two formats.
+        try:
+            from .playback_applier import get_deck_paths as _gd
+            _idle_path_now = (_gd(self.config.mixxx.url) or {}).get(idle_deck, "") or ""
+            if _idle_path_now and not getattr(self.session, "idle_needs_load", False):
+                _played_paths = {(t.get("path") or t.get("file_path") or "")
+                                 for t in (self.tracks_played or [])}
+                _played_paths.discard("")
+                _idle_basename = _idle_path_now.rsplit("/", 1)[-1]
+                already_played_match = any(
+                    p == _idle_path_now
+                    or p.endswith("/" + _idle_path_now)
+                    or p.rsplit("/", 1)[-1] == _idle_basename
+                    for p in _played_paths
+                )
+                if already_played_match:
+                    log.info(
+                        f"[SIGNAL] idle deck {idle_deck} holds already-played "
+                        f"({Path(_idle_path_now).stem[:40]}) — flagging idle_needs_load"
+                    )
+                    self.session.idle_needs_load = True
+        except Exception:
+            pass
+
         # ── idle_needs_load → load rank-1 via existing helper (BUG-17 dedup) ──
         idle_needs_load = getattr(self.session, "idle_needs_load", False)
         if idle_needs_load and idle_owned_external:
@@ -495,13 +563,29 @@ class HeartbeatMixin:
             idle_path = deck_paths.get(idle_deck, "") or ""
             duplicate = bool(active_path) and active_path == idle_path
 
-            idle_stale = (not idle_loaded) or idle_remaining < 60 or duplicate
+            played_paths = {(t.get("path") or t.get("file_path") or "")
+                            for t in (self.tracks_played or [])}
+            played_paths.discard("")
+            already_played = bool(idle_path) and idle_path in played_paths
+
+            idle_stale = (
+                (not idle_loaded)
+                or idle_remaining < 60
+                or duplicate
+                or already_played
+            )
             if idle_stale:
                 try:
                     if duplicate:
                         log.info(
                             f"[SIGNAL] idle_needs_load → idle deck {idle_deck} "
                             f"holds the same track as active deck {active_deck}; "
+                            f"forcing reload"
+                        )
+                    elif already_played:
+                        log.info(
+                            f"[SIGNAL] idle_needs_load → idle deck {idle_deck} "
+                            f"holds already-played track ({Path(idle_path).stem[:40]}); "
                             f"forcing reload"
                         )
                     self._load_next_on_idle(status)
@@ -631,13 +715,25 @@ class HeartbeatMixin:
                     log.info(f"Emergency play: {Path(filepath).stem[:50]}")
                     self._record_playing_tracks()
             elif self.config.sources.youtube:
-                result = self._invoke_agent(
-                    f"{self._build_context(_get_status(url))}\n\n"
-                    f"SILENCE! Empty library. Search YouTube, download a {self.mood or 'melodic-techno'} track, "
-                    f"load on deck 1, play it, set crossfader to 0.0."
+                # Empty library + youtube=true: route to library_manager peer
+                # via library_need signal — DJ agent's v8 prompt explicitly
+                # forbids search_music/download_track (those belong to the
+                # library peer), so calling DJ here just produces the
+                # "I cannot fulfill" refuse-loop we observed 2026-05-02
+                # (28 wasted Flash calls / $0.012 before this fix landed).
+                # Library_manager runs as a peer thread (library_loop.py)
+                # and processes library_need signals natively.
+                mood = self.mood or "melodic-techno"
+                self.session.library_need = {
+                    "mood": mood,
+                    "count": 3,
+                    "reason": "emergency_play — empty library, silence imminent",
+                    "ts": time.time(),
+                }
+                log.info(
+                    f"[SOS] empty library — emitted library_need(mood={mood}, "
+                    f"count=3) for library_manager peer to fulfill"
                 )
-                log.info(f"Emergency play (agent): {result[:200]}")
-                self._record_playing_tracks()
             self._record_playing_tracks()
         except Exception as e:
             import traceback

@@ -688,7 +688,11 @@ def _flush(worker_id: int, rows: list[dict]):
     else:
         merged = new_df
     out = LOCAL_TMP / f"out_w{worker_id}.parquet"
-    merged.write_parquet(out, compression="zstd")
+    # Use pyarrow direct — polars.write_parquet internally calls sink_parquet
+    # which forks a subprocess (streaming engine). Calling that from inside a
+    # multiprocessing-fork worker deadlocks (fork-of-fork is unsafe).
+    import pyarrow.parquet as pq
+    pq.write_table(merged.to_arrow(), str(out), compression="zstd")
     blob.upload_from_filename(str(out))
     out.unlink()
 

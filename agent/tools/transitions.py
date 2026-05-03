@@ -402,7 +402,7 @@ def do_echo_out(to_deck: int, duration: int = 30, bpm_after: str = "keep", glide
     return f"Echo-out to Deck {to_deck} over {duration}s (bpm_after={bpm_after}). Deck {out_deck} ejected."
 
 
-def schedule_transition(to_deck: int, at_position: int, technique: str = "crossfade", duration: int = 45, bpm_after: str = "keep", glide_duration: int = 60) -> str:
+def schedule_transition(to_deck: int, at_position: int, technique: str = "crossfade", duration: int = 45, bpm_after: str = "keep", glide_duration: int = 60, at_section_marker: str = "") -> str:
     """Schedule a transition at a specific track position. Returns immediately --
     Python executes the transition in the background when the track reaches at_position.
 
@@ -412,10 +412,20 @@ def schedule_transition(to_deck: int, at_position: int, technique: str = "crossf
     Args:
         to_deck: Deck to transition TO (1 or 2).
         at_position: Track position in seconds to START the transition.
+            Server clamps to [current_position+5, duration-5-transition_duration]
+            so a hallucinated or stale value can't fire past-end / in-the-past.
         technique: "crossfade" (smooth blend), "bass_swap" (EQ swap, techno), "filter_sweep" (progressive reveal), "echo_out" (fade with echo, mood shift), "hard_cut" (instant switch, genre change).
         duration: Transition duration in seconds (10-90). Ignored for hard_cut.
         bpm_after: What to do with BPM after the transition completes. "keep" = leave synced BPM (default, best when ±5 BPM), "reset" = glide back to native file BPM, or a number like "126.0" = glide to that specific BPM.
         glide_duration: Seconds for the BPM change when bpm_after is "reset" or a target BPM (5-60, default 10). Ignored when bpm_after="keep".
+        at_section_marker: Optional symbolic position (overrides at_position
+            when set). One of:
+            - "mix_out" / "outro_start" — start at active.mix_out_seconds
+              from the analyzer (the canonical outro entry)
+            - "next_breakdown" / "next_outro" — first matching section in
+              the active timeline at or after current position
+            Resolves to seconds via the active deck's track metadata. If the
+            metadata is missing the marker, falls back to at_position.
     """
     duration = max(10, min(120, duration))
 
@@ -444,11 +454,66 @@ def schedule_transition(to_deck: int, at_position: int, technique: str = "crossf
     current_pos = float(d_active.get("position_seconds", 0) or 0)
     track_duration = float(d_active.get("duration", 0) or 0)
 
-    # Safety: clamp at_position so transition completes before track ends
+    # Resolve at_section_marker to seconds via DB metadata if provided.
+    # Markers take priority over at_position so DJ can express intent
+    # symbolically and let the server pick the right second.
+    marker_used = ""
+    if at_section_marker:
+        try:
+            from ..db import get_track_by_path
+            tinfo = _mixxx_get(f"/api/deck/{active_deck}/track_info") or {}
+            file_path = tinfo.get("file_path", "")
+            meta = get_track_by_path(file_path) if file_path else None
+            resolved: float | None = None
+            marker = at_section_marker.lower().strip()
+            if meta and marker in ("mix_out", "outro_start"):
+                v = meta.get("mix_out_seconds")
+                if v is not None:
+                    resolved = float(v)
+                    marker_used = "mix_out"
+            elif meta and marker in ("next_outro", "next_breakdown"):
+                target_section = "outro" if marker == "next_outro" else "breakdown"
+                tl_raw = meta.get("timeline") or ""
+                if tl_raw:
+                    sections = json.loads(tl_raw) if isinstance(tl_raw, str) else tl_raw
+                    for s in sections:
+                        try:
+                            start = float(s.get("start", 0))
+                        except Exception:
+                            continue
+                        if (s.get("section") == target_section
+                                and start >= current_pos):
+                            resolved = start
+                            marker_used = marker
+                            break
+            if resolved is not None:
+                at_position = int(resolved)
+        except Exception:
+            # Marker resolution is advisory — silent fall-back to at_position.
+            pass
+
+    # Safety clamp — both bounds. Hallucinated or stale at_positions
+    # could fire past-end (the 419-on-a-398s-track bug from 2026-04-30)
+    # or in-the-past (transition immediately, no usable lead time).
+    # Floor: current_pos + 5  (need a moment to set up the executor)
+    # Ceil:  duration - duration_arg - 5  (transition must finish before
+    #        the track ends with a 5s safety margin)
     if track_duration > 0:
-        max_start = track_duration - duration - 5  # 5s safety margin
+        max_start = track_duration - duration - 5
+        min_start = current_pos + 5
+        clamped = False
         if at_position > max_start:
-            at_position = max(current_pos + 5, max_start)
+            at_position = max(min_start, max_start)
+            clamped = True
+        elif at_position < min_start:
+            at_position = min_start
+            clamped = True
+        if clamped:
+            log = __import__("logging").getLogger("dj-treta")
+            log.warning(
+                f"schedule_transition: clamped at_position to {at_position} "
+                f"(orig pick out of [{min_start:.0f}, {max_start:.0f}] window)"
+            )
 
     delay = max(0, at_position - current_pos)
 
