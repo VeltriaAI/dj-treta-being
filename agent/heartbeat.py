@@ -21,6 +21,41 @@ from .runtime_paths import runtime_path
 log = logging.getLogger("dj-treta")
 
 
+def _idle_was_played(idle_path: str, tracks_played: list) -> bool:
+    """True iff `idle_path` matches any entry in `tracks_played`.
+
+    Match handles the relative-vs-absolute path mismatch between the two
+    sources we draw on at runtime:
+      - `idle_path` comes from `get_deck_paths(...)` which normalizes to
+        a path *relative* to `library.music_path` (e.g.
+        `melodic-techno/Eric Luttrell - LOVE.mp3`).
+      - `tracks_played[].path` is the raw `tinfo.file_path` Mixxx reports,
+        which is an *absolute* path (e.g.
+        `/Users/.../melodic-techno/Eric Luttrell - LOVE.mp3`).
+
+    Direct equality silently misses every replay. We match on:
+      1. exact equality (cheap, covers same-shape entries)
+      2. absolute-ends-with-relative (`abs.endswith("/" + rel)`)
+      3. basename equality (fallback — different libraries, same filename)
+
+    Empty `idle_path` always returns False.
+    """
+    if not idle_path:
+        return False
+    idle_basename = idle_path.rsplit("/", 1)[-1]
+    for t in (tracks_played or []):
+        p = (t.get("path") or t.get("file_path") or "") if isinstance(t, dict) else ""
+        if not p:
+            continue
+        if p == idle_path:
+            return True
+        if p.endswith("/" + idle_path):
+            return True
+        if p.rsplit("/", 1)[-1] == idle_basename:
+            return True
+    return False
+
+
 def _filter_playlist_for_decks(
     playlist: dict | None,
     active_path: str,
@@ -519,24 +554,23 @@ class HeartbeatMixin:
             from .playback_applier import get_deck_paths as _gd
             _idle_path_now = (_gd(self.config.mixxx.url) or {}).get(idle_deck, "") or ""
             if _idle_path_now and not getattr(self.session, "idle_needs_load", False):
-                _played_paths = {(t.get("path") or t.get("file_path") or "")
-                                 for t in (self.tracks_played or [])}
-                _played_paths.discard("")
-                _idle_basename = _idle_path_now.rsplit("/", 1)[-1]
-                already_played_match = any(
-                    p == _idle_path_now
-                    or p.endswith("/" + _idle_path_now)
-                    or p.rsplit("/", 1)[-1] == _idle_basename
-                    for p in _played_paths
-                )
-                if already_played_match:
-                    log.info(
-                        f"[SIGNAL] idle deck {idle_deck} holds already-played "
-                        f"({Path(_idle_path_now).stem[:40]}) — flagging idle_needs_load"
+                if _idle_was_played(_idle_path_now, self.tracks_played):
+                    log.warning(
+                        f"[REPLAY-GUARD] idle deck {idle_deck} holds already-played "
+                        f"({Path(_idle_path_now).stem[:60]}) — setting idle_needs_load"
                     )
+                    if hasattr(self, "_ws_broadcast"):
+                        self._ws_broadcast("log", {
+                            "text": (
+                                f"[REPLAY-GUARD] idle deck {idle_deck} held already-"
+                                f"played ({Path(_idle_path_now).stem[:60]}); reloading"
+                            )
+                        })
                     self.session.idle_needs_load = True
-        except Exception:
-            pass
+        except Exception as _exc:
+            # Silent failure here was hiding the bug — log at debug so it
+            # shows up in TUI without spamming production runs.
+            log.debug(f"[REPLAY-GUARD] auto-detect skipped: {_exc}")
 
         # ── idle_needs_load → load rank-1 via existing helper (BUG-17 dedup) ──
         idle_needs_load = getattr(self.session, "idle_needs_load", False)
@@ -563,10 +597,11 @@ class HeartbeatMixin:
             idle_path = deck_paths.get(idle_deck, "") or ""
             duplicate = bool(active_path) and active_path == idle_path
 
-            played_paths = {(t.get("path") or t.get("file_path") or "")
-                            for t in (self.tracks_played or [])}
-            played_paths.discard("")
-            already_played = bool(idle_path) and idle_path in played_paths
+            # Match using the basename-aware helper — Mixxx file_path
+            # (absolute) vs get_deck_paths (relative-to-music_dir) would
+            # otherwise never compare equal, so a plain `in played_paths`
+            # check silently passed every replay through.
+            already_played = _idle_was_played(idle_path, self.tracks_played)
 
             idle_stale = (
                 (not idle_loaded)
@@ -583,11 +618,19 @@ class HeartbeatMixin:
                             f"forcing reload"
                         )
                     elif already_played:
-                        log.info(
-                            f"[SIGNAL] idle_needs_load → idle deck {idle_deck} "
-                            f"holds already-played track ({Path(idle_path).stem[:40]}); "
+                        log.warning(
+                            f"[REPLAY-GUARD] idle_needs_load → idle deck {idle_deck} "
+                            f"holds already-played track ({Path(idle_path).stem[:60]}); "
                             f"forcing reload"
                         )
+                        if hasattr(self, "_ws_broadcast"):
+                            self._ws_broadcast("log", {
+                                "text": (
+                                    f"[REPLAY-GUARD] forcing reload on deck "
+                                    f"{idle_deck} (held played: "
+                                    f"{Path(idle_path).stem[:60]})"
+                                )
+                            })
                     self._load_next_on_idle(status)
                     log.info("[SIGNAL] idle_needs_load → loaded rank-1 on idle deck")
                     self.session.idle_needs_load = False
