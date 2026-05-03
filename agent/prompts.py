@@ -11,6 +11,38 @@ and pass it in.
 import json
 
 
+# ── Mood-class → technique-whitelist mapping (Patch A, fix/mood-aware-technique)
+# Keyed by canonical_slug emitted by mood_resolver. Slugs are matched
+# case-insensitively. Anything not listed falls into the "flowing" default.
+
+CONTINUOUS_ENERGY_SLUGS = {
+    "psy-trance", "psytrance", "psy_trance",
+    "peak-time", "peak-time-techno", "peak_time_techno",
+    "hard-techno", "hard_techno",
+    "drum-n-bass", "drum-and-bass", "dnb", "drum_n_bass",
+    "hardstyle",
+    "big-room", "big_room",
+}
+
+MOOD_SHIFT_SLUGS: set[str] = set()  # reserved — currently caller-driven, not slug-driven
+
+
+def _mood_class_and_allowed(mood_slug: str) -> tuple[str, list[str]]:
+    """Return (class_name, allowed_techniques) for a canonical mood slug.
+
+    Three classes:
+      - continuous-energy: bass_swap (default), crossfade. echo_out BANNED.
+      - flowing/atmospheric: crossfade (default), bass_swap, echo_out.
+      - mood-shift: echo_out, hard_cut. (Caller-driven; slug rarely lands here.)
+    """
+    s = (mood_slug or "").strip().lower()
+    if s in CONTINUOUS_ENERGY_SLUGS:
+        return ("continuous-energy", ["bass_swap", "crossfade"])
+    if s in MOOD_SHIFT_SLUGS:
+        return ("mood-shift", ["echo_out", "hard_cut"])
+    return ("flowing/atmospheric", ["crossfade", "bass_swap", "echo_out"])
+
+
 # ── DJ Agent (Heartbeat Priority 4) ────────────────────────────────────
 
 
@@ -82,10 +114,21 @@ def build_dj_user_message(
         )
 
     profile_line = ""
+    # Default mood class + allowed technique list (used even when no profile)
+    _mood_class, _allowed = _mood_class_and_allowed(
+        (mood_profile or {}).get("canonical_slug") or ""
+    )
     if mood_profile:
         slug = mood_profile.get("canonical_slug") or ""
         vibe = ", ".join(mood_profile.get("vibe_keywords", [])[:4])
-        profile_line = f"Mood profile: {slug} | vibe: {vibe}\n"
+        profile_line = (
+            f"Mood profile: {slug} | vibe: {vibe}\n"
+            f"Mood class: {_mood_class} | allowed techniques: "
+            f"{', '.join(_allowed)}"
+        )
+        if _mood_class == "continuous-energy":
+            profile_line += " (echo_out BANNED — kick wall, no holes)"
+        profile_line += "\n"
 
     # Phase 7 co-being mode: external Beings may have claimed one or more decks
     # via MCP. DJ Treta must not schedule transitions onto those decks.

@@ -813,6 +813,28 @@ def do_echo_out(to_deck: int, duration: int = 32, bpm_after: str = "keep", glide
                                 )
                             except Exception:
                                 in_pos = 0.0
+                            # ── Wait-cap safety abort (Patch B) ──
+                            # If outgoing track is about to end, STOP waiting.
+                            # Holding for incoming-drop while outgoing runs out
+                            # produces silence → incoming intro → kick lands
+                            # late, which is exactly the failure mode we just
+                            # heard live. Bail out, hard-cut now.
+                            try:
+                                outgoing_rem = float(
+                                    in_status.get(f"deck{out_deck}", {})
+                                    .get("remaining_seconds", 0) or 0
+                                )
+                            except Exception:
+                                outgoing_rem = 0.0
+                            if outgoing_rem < 5.0:
+                                log.warning(
+                                    f"[ECHO-OUT-ABORT] outgoing deck{out_deck} "
+                                    f"remaining {outgoing_rem:.1f}s < 5s while "
+                                    f"waiting for incoming drop "
+                                    f"(in_pos {in_pos:.1f}/{incoming_intro_ends:.1f}); "
+                                    f"firing hard fader-cut now to avoid silence"
+                                )
+                                break
                             if in_pos >= incoming_intro_ends:
                                 log.info(
                                     f"[ECHO-OUT] incoming hit drop at "
@@ -1111,6 +1133,38 @@ def schedule_transition(to_deck: int, at_position: int, technique: str = "crossf
             metadata is missing the marker, falls back to at_position.
     """
     duration = max(10, min(120, duration))
+
+    # ── Mood-guard: continuous-energy moods (Patch C) ──
+    # Belt-and-braces. Even if the DJ prompt rule slips and Flash schedules
+    # echo_out for psy-trance / hard-techno / etc., coerce to bass_swap so
+    # the listener never hears the energy-hole failure mode. Pulled from
+    # session_state.mood_profile.canonical_slug; failure to read = no-op.
+    _CONT_ENERGY = {
+        "psy-trance", "psytrance", "psy_trance",
+        "peak-time", "peak-time-techno", "peak_time_techno",
+        "hard-techno", "hard_techno",
+        "drum-n-bass", "drum-and-bass", "dnb", "drum_n_bass",
+        "hardstyle",
+        "big-room", "big_room",
+    }
+    if technique == "echo_out":
+        try:
+            from ..session_state import get_session
+            _sess = get_session()
+            _slug = ""
+            if _sess is not None:
+                _mp = getattr(_sess, "mood_profile", None) or {}
+                if isinstance(_mp, dict):
+                    _slug = (_mp.get("canonical_slug") or "").strip().lower()
+            if _slug in _CONT_ENERGY:
+                log.warning(
+                    f"[MOOD-GUARD] active mood '{_slug}' is continuous-energy; "
+                    f"coercing technique echo_out → bass_swap (echo_out creates "
+                    f"audible energy hole, breaks kick wall)"
+                )
+                technique = "bass_swap"
+        except Exception as _e:
+            log.warning(f"[MOOD-GUARD] mood lookup failed, no coercion: {_e}")
 
     # ── Echo-out duration floor (safety net for the 15s-default bug) ──
     # The DJ prompt mandates 32-64 bars (≥32s) for echo_out, but Flash has
