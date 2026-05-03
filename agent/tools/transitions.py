@@ -405,23 +405,30 @@ def _echo_disengage(deck: int) -> None:
     })
 
 
-def do_echo_out(to_deck: int, duration: int = 32, bpm_after: str = "keep", glide_duration: int = 60) -> str:
-    """Echo out -- engage the Mixxx Echo effect on the outgoing deck, sweep
-    HPF up to cut bass, ramp wet/dry to ~80%, then cross-blend the new track
-    in under the echo tail.
+def do_echo_out(to_deck: int, duration: int = 32, bpm_after: str = "keep", glide_duration: int = 60, freeze: bool = False) -> str:
+    """Echo out -- a discrete moment, not a smooth ramp. Outgoing rides at
+    full level; in the last bar of Phase A the echo wet/dry snaps up to 0.7
+    in 4 quick steps; at Phase A→B we HARD-CUT the outgoing fader (volume 0
+    + LO-EQ kill) so the kick goes silent but the FX bus keeps ringing from
+    the echo unit's internal buffer; incoming is then brought up under the
+    tail.
 
     Best for: energy shifts, key/BPM gaps, mood changes, dramatic moments.
 
-    Phase shape (over `duration` seconds):
-      A  0%-50%  : ramp echo wet/dry 0 → 0.8, sweep HPF up (cut bass on
-                   outgoing), volume held at ~0.9. New deck is playing
-                   silent + synced.
-      B  50%-90% : bring incoming volume 0 → 1.0; outgoing volume 0.9 → 0.1;
-                   echo wet/dry stays high so the tail rings under the blend.
-      C  90%-100%: outgoing volume → 0 (echo continues to ring out from FX
-                   bus), incoming volume = 1.0.
-      Tail        : let echo ring 6 beats at the post-transition BPM, then
-                   disengage FX, eject outgoing deck.
+    Phase shape (over `duration` seconds, freeze=False):
+      A  0%-50%  : outgoing volume held at 1.0. First ~75% of A is dry; in
+                   the last ~25% wet snaps 0 → 0.7 in 4 discrete steps.
+      A→B boundary: HARD CUT on outgoing (volume 1.0 → 0.0 + LO-EQ → 0.0).
+                    Echo bus keeps ringing.
+      B  50%-90% : bring incoming volume 0 → 1.0 under the echo tail.
+      C  90%-100%: incoming pinned at 1.0.
+      Tail        : 8 beats at outgoing BPM, clamped 2-8s. Wet ramps
+                   0.7 → 0 linearly. Then disengage FX + eject outgoing.
+
+    Echo Freeze variant (freeze=True):
+      Snaps wet to 1.0, pauses outgoing immediately, holds the wet=1.0 echo
+      loop ringing. Skips Phase B / tail / ejection — caller is expected to
+      bring the incoming track in via a separate call.
 
     Args:
         to_deck: Deck to transition TO (1 or 2).
@@ -429,6 +436,9 @@ def do_echo_out(to_deck: int, duration: int = 32, bpm_after: str = "keep", glide
             is ~16 bars at 120 BPM, which is the canonical pro echo-out.
         bpm_after: "keep", "reset", or a target BPM string.
         glide_duration: Seconds for BPM glide (used when bpm_after != "keep").
+        freeze: If True, engage Echo Freeze (wet=1.0, pause outgoing, hold
+            the echo loop) and return early without touching the incoming
+            deck.
     """
     import time as _time
 
@@ -470,49 +480,100 @@ def do_echo_out(to_deck: int, duration: int = 32, bpm_after: str = "keep", glide
     # Engage echo on the outgoing deck.
     _echo_engage(out_deck)
 
+    # Echo Freeze: snap wet to 1.0, pause outgoing, hold the loop. No Phase
+    # B, no tail decay, no ejection — caller handles the incoming track.
+    if freeze:
+        _mixxx_post("/api/control", {
+            "group": "[EffectRack1_EffectUnit1]",
+            "key": "mix",
+            "value": 1.0,
+        })
+        _mixxx_post("/api/pause", {"deck": out_deck})
+        return (
+            f"Echo Freeze engaged on Deck {out_deck} (wet=1.0, paused). "
+            f"Bring Deck {to_deck} in with a separate call."
+        )
+
     fps = 10
     total = int(duration * fps)
 
-    # Full ramp loop. Phase boundaries computed once.
+    # Phase boundaries. Phase A holds outgoing at full level until the last
+    # ~25% of A, where wet snaps up in 4 quick steps timed to the run-up of
+    # the next "downbeat". At A→B we hard-cut outgoing; the FX bus rings
+    # while the incoming track is brought up over Phase B.
     PHASE_A_END = 0.50
     PHASE_B_END = 0.90
+    WET_SNAP_START = 0.75  # fraction inside Phase A where wet starts snapping
+    WET_PEAK = 0.7          # echo wet/dry at peak (real echo-out, not full freeze)
+
+    a_end_idx = int(total * PHASE_A_END)
+    b_end_idx = int(total * PHASE_B_END)
+    snap_start_idx = int(a_end_idx * WET_SNAP_START)
+    # 4 discrete snap steps across the last 25% of Phase A.
+    snap_total = max(1, a_end_idx - snap_start_idx)
+    snap_step = max(1, snap_total // 4)
+    last_wet_sent = -1.0
+    hard_cut_done = False
 
     for i in range(total + 1):
         t = i / total if total else 1.0
 
-        if t <= PHASE_A_END:
-            # Phase A: ramp wet 0→0.8, sweep HPF up (filter knob 0.5→0.8 on
-            # the deck quick-effect filter — values >0.5 = HPF in Mixxx's
-            # default QuickEffect). Volume held at 0.9.
-            a = t / PHASE_A_END  # 0..1 inside phase
-            wet = 0.8 * a
-            hpf = 0.5 + 0.3 * a  # 0.5 (neutral) → 0.8 (HPF, bass cut)
-            _mixxx_post("/api/control", {
-                "group": "[EffectRack1_EffectUnit1]",
-                "key": "mix",
-                "value": round(wet, 3),
-            })
-            _mixxx_post("/api/filter", {"deck": out_deck, "value": round(hpf, 3)})
-            _mixxx_post("/api/volume", {"deck": out_deck, "level": 0.9})
+        if i <= a_end_idx:
+            # Phase A: outgoing volume held at 1.0. HPF/EQ untouched (this is
+            # echo-out, not filter-fade — keep the kick punching until we
+            # hard-cut at A→B).
+            _mixxx_post("/api/volume", {"deck": out_deck, "level": 1.0})
 
-        elif t <= PHASE_B_END:
-            # Phase B: cross-blend under echo tail. Wet stays high, HPF keeps
-            # climbing slightly (0.8→0.9). Outgoing vol 0.9→0.1, incoming
-            # vol 0.0→1.0.
+            if i < snap_start_idx:
+                # First ~75% of Phase A: dry. Wet kept at 0.
+                if last_wet_sent != 0.0:
+                    _mixxx_post("/api/control", {
+                        "group": "[EffectRack1_EffectUnit1]",
+                        "key": "mix",
+                        "value": 0.0,
+                    })
+                    last_wet_sent = 0.0
+            else:
+                # Last ~25%: 4 discrete snap steps up to WET_PEAK on the
+                # run-up to the downbeat. (We don't have true downbeat
+                # detection — we approximate "last bar before A→B" with
+                # this 4-step snap.)
+                step_idx = (i - snap_start_idx) // snap_step
+                step_idx = min(step_idx, 3)
+                wet = WET_PEAK * ((step_idx + 1) / 4.0)
+                if abs(wet - last_wet_sent) > 1e-3:
+                    _mixxx_post("/api/control", {
+                        "group": "[EffectRack1_EffectUnit1]",
+                        "key": "mix",
+                        "value": round(wet, 3),
+                    })
+                    last_wet_sent = wet
+
+        elif i <= b_end_idx:
+            # Phase B opens with a HARD CUT on outgoing: volume 0 + LO-EQ kill
+            # in a single step. The deck transport keeps playing into the FX
+            # send so the echo unit's internal buffer continues to ring out.
+            if not hard_cut_done:
+                _mixxx_post("/api/volume", {"deck": out_deck, "level": 0.0})
+                _mixxx_post("/api/eq", {"deck": out_deck, "lo": 0.0})
+                # Pin wet at peak so the tail rings cleanly under the blend.
+                if abs(WET_PEAK - last_wet_sent) > 1e-3:
+                    _mixxx_post("/api/control", {
+                        "group": "[EffectRack1_EffectUnit1]",
+                        "key": "mix",
+                        "value": round(WET_PEAK, 3),
+                    })
+                    last_wet_sent = WET_PEAK
+                hard_cut_done = True
+
+            # Bring incoming up 0 → 1.0 across Phase B.
             b = (t - PHASE_A_END) / (PHASE_B_END - PHASE_A_END)
-            hpf = 0.8 + 0.1 * b
-            out_vol = 0.9 - 0.8 * b
-            in_vol = b
-            _mixxx_post("/api/filter", {"deck": out_deck, "value": round(hpf, 3)})
-            _mixxx_post("/api/volume", {"deck": out_deck, "level": round(out_vol, 3)})
+            in_vol = max(0.0, min(1.0, b))
             _mixxx_post("/api/volume", {"deck": to_deck, "level": round(in_vol, 3)})
 
         else:
-            # Phase C: outgoing vol → 0, incoming pinned at 1.0. Wet still
-            # high so any remaining audio rings into the FX bus.
-            c = (t - PHASE_B_END) / (1.0 - PHASE_B_END)
-            out_vol = 0.1 * (1.0 - c)
-            _mixxx_post("/api/volume", {"deck": out_deck, "level": round(out_vol, 3)})
+            # Phase C: outgoing already silent; pin incoming at 1.0. Echo
+            # tail keeps ringing from the FX bus.
             _mixxx_post("/api/volume", {"deck": to_deck, "level": 1.0})
 
         _time.sleep(1.0 / fps)
@@ -530,13 +591,15 @@ def do_echo_out(to_deck: int, duration: int = 32, bpm_after: str = "keep", glide
     # echo unit's internal buffer.
     _mixxx_post("/api/pause", {"deck": out_deck})
 
-    # Let echo tail ring for ~6 beats at outgoing BPM, then ramp wet down.
-    tail_seconds = (60.0 / out_bpm) * 6.0
-    tail_seconds = max(1.5, min(4.0, tail_seconds))
+    # Let echo tail ring for ~8 beats at outgoing BPM, clamped 2-8s. During
+    # the tail, ramp wet from WET_PEAK → 0 linearly so the echo decays
+    # naturally instead of cutting.
+    tail_seconds = (60.0 / out_bpm) * 8.0
+    tail_seconds = max(2.0, min(8.0, tail_seconds))
     tail_steps = max(8, int(tail_seconds * fps))
     for s in range(tail_steps + 1):
         a = s / tail_steps
-        wet = 0.8 * (1.0 - a)
+        wet = WET_PEAK * (1.0 - a)
         _mixxx_post("/api/control", {
             "group": "[EffectRack1_EffectUnit1]",
             "key": "mix",
