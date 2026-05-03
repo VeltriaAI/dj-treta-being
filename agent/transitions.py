@@ -15,7 +15,7 @@ class TransitionMixin:
         """Python-side transition executor. Waits for track position, then executes.
         Runs in its own thread. Agent is FREE during this entire time."""
         from .main import _get_status
-        from .tools import do_transition, do_bass_swap, do_filter_sweep, do_hard_cut, do_echo_out
+        from .tools import do_transition, do_bass_swap, do_filter_sweep, do_hard_cut, do_echo_out, do_riser, do_dissolve
 
         to_deck = sched["toDeck"]
         at_position = sched["atPosition"]
@@ -55,6 +55,10 @@ class TransitionMixin:
                         result = do_hard_cut(to_deck)
                     elif technique == "echo_out":
                         result = do_echo_out(to_deck, duration)
+                    elif technique == "riser":
+                        result = do_riser(to_deck, duration)
+                    elif technique == "dissolve":
+                        result = do_dissolve(to_deck, duration)
                     else:
                         result = do_transition(to_deck, duration)
                     log.info(f"Transition result: {str(result)[:200]}")

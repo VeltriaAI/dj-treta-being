@@ -53,6 +53,8 @@ from .transitions import (
     do_filter_sweep,
     do_hard_cut,
     do_echo_out,
+    do_riser,
+    do_dissolve,
     schedule_transition,
 )
 
@@ -124,7 +126,7 @@ __all__ = [
     "align_beats", "nudge_track",
     # transitions
     "do_transition", "do_bass_swap", "do_filter_sweep", "do_hard_cut",
-    "do_echo_out", "schedule_transition",
+    "do_echo_out", "do_riser", "do_dissolve", "schedule_transition",
     # perception
     "hear_music", "analyze_track", "preview_track",
     # discovery

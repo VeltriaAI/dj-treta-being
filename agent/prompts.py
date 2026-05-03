@@ -48,6 +48,11 @@ def build_dj_user_message(
     idle_energy: int | None = None,
     idle_mix_in: float | None = None,
     idle_mix_out: float | None = None,
+    # v8.2 — caller pre-computes whether idle deck holds a track already in
+    # tracks_played. Surfacing this explicitly fixes the observed bug where
+    # DJ scheduled crossfades into already-played tracks (replay) because the
+    # info was buried in implicit playlist filtering.
+    idle_already_played: bool = False,
 ) -> str:
     """Build the user message for DJ agent heartbeat decisions.
 
@@ -142,6 +147,33 @@ def build_dj_user_message(
     if active_points_block:
         active_points_block += "\n"
 
+    # ── IDLE DECK STATUS (v8.2 fix for replay bug) ──────────────────
+    # Explicitly tells the DJ whether the idle-deck track has already been
+    # played. Without this, DJ has been scheduling crossfades into played
+    # tracks ("the next track is loaded on deck 1, schedule transition") —
+    # observed in the live set on 2026-05-03.
+    if idle_already_played:
+        idle_status_line = (
+            f"IDLE DECK STATUS: ALREADY PLAYED — DO NOT TRANSITION INTO "
+            f"deck {idle_deck}. Call defer_decision(seconds=15) and wait for "
+            f"a fresh load.\n"
+        )
+    else:
+        idle_status_line = f"IDLE DECK STATUS: FRESH (deck {idle_deck} OK to mix into)\n"
+
+    # ── BAR-COUNT REFERENCE (v8.2 — pro DJs think in bars, not seconds) ──
+    # Use active_bpm if > 0, fall back to idle_bpm or a 120 BPM placeholder.
+    _ref_bpm = active_bpm if active_bpm and active_bpm > 0 else (idle_bpm or 120)
+    bar_ref_block = (
+        f"BAR-COUNT REFERENCE (active BPM {_ref_bpm:.0f}):\n"
+        f"  8 bars  = {8*4*60/_ref_bpm:.0f}s\n"
+        f"  16 bars = {16*4*60/_ref_bpm:.0f}s\n"
+        f"  32 bars = {32*4*60/_ref_bpm:.0f}s   ← default crossfade for melodic techno\n"
+        f"  64 bars = {64*4*60/_ref_bpm:.0f}s   ← big-moment crossfade\n"
+        f"Pick duration in BARS first, convert to seconds with this table. "
+        f"NEVER pick < 16 bars unless using hard_cut.\n"
+    )
+
     # Idle track transition points
     idle_points = []
     idle_dur_str = f"/{idle_duration:.0f}s" if idle_duration else ""
@@ -163,10 +195,14 @@ def build_dj_user_message(
     ideal_hint = ""
     if (active_mix_out is not None and idle_mix_in is not None
             and active_mix_out >= position):
-        # Duration: don't exceed idle's intro length, cap at 64s for sanity.
-        ideal_dur = min(int(idle_mix_in), 64)
-        if ideal_dur < 8:
-            ideal_dur = 16  # too-short intros — fall back to a 16s blend
+        # Duration: target 32 bars (pro melodic-techno default), but never
+        # exceed idle's intro length. Cap at 64 bars for sanity.
+        _bars32_s = int(round(32 * 4 * 60 / max(_ref_bpm, 60)))
+        _bars64_s = int(round(64 * 4 * 60 / max(_ref_bpm, 60)))
+        ideal_dur = min(_bars32_s, int(idle_mix_in), _bars64_s)
+        if ideal_dur < 16:
+            # too-short intros — clamp to a 16-bar floor (avoid sub-16-bar mixes)
+            ideal_dur = min(int(round(16 * 4 * 60 / max(_ref_bpm, 60))), int(idle_mix_in) or _bars32_s)
         ideal_hint = (
             f"\nIDEAL TRANSITION (pre-computed from mix points):\n"
             f"  schedule_transition(to_deck={idle_deck}, "
@@ -190,16 +226,23 @@ def build_dj_user_message(
         f"NEXT: '{idle_track[:40]}' on deck {idle_deck}{idle_dur_str} "
         f"(BPM:{idle_bpm:.0f} file:{idle_file_bpm:.0f}, "
         f"Camelot:{idle_camelot_str} {idle_energy_str})\n"
+        f"{idle_status_line}"
         f"{idle_points_block}"
         f"  TIMELINE: {idle_timeline}\n"
         f"{ideal_hint}\n"
+        f"{bar_ref_block}\n"
         f"{playlist_block}"
         f"{pending_info}\n"
         f"Decide now. Your options:\n"
+        f"  - HARD RULE: if IDLE DECK STATUS = ALREADY PLAYED, do NOT call "
+        f"schedule_transition to deck {idle_deck}. Call "
+        f"defer_decision(seconds=15) and wait for a fresh load.\n"
         f"  - If ACTIVE is in a breakdown / outro OR within ~30s of OUTRO "
-        f"STARTS AT (and NEXT is ready on deck {idle_deck}), invoke "
-        f"schedule_transition. Use the IDEAL TRANSITION values above unless "
-        f"a directive or section cue tells you otherwise.\n"
+        f"STARTS AT AND idle is FRESH, invoke schedule_transition. Use the "
+        f"IDEAL TRANSITION values above unless a directive or section cue "
+        f"tells you otherwise. Pick duration in BARS (default 32 bars for "
+        f"melodic techno crossfade), convert to seconds with the bar-count "
+        f"table above.\n"
         f"  - If the idle deck is empty or loaded with the wrong track, "
         f"invoke load_track with the best path from the playlist above.\n"
         f"  - Otherwise (active track is mid-drop, mid-buildup, or too "
