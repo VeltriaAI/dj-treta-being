@@ -782,6 +782,7 @@ class PlannerMixin:
         from .main import _active_idle_decks
         from .playback_applier import load_on_deck, get_deck_paths, refresh_duration
         from .playlist_schema import pick_next_candidate
+        from .heartbeat import _idle_was_played
 
         active_deck, idle_deck = _active_idle_decks(status)
         d_idle = status.get(f"deck{idle_deck}", {})
@@ -798,7 +799,21 @@ class PlannerMixin:
         # (e.g. "Massano - Telepathic") can differ from DB titles
         # (e.g. "Massano - Telepathic (Original Mix)"), so title-only dedup
         # lets a played track re-load when the planner's playlist is empty.
-        played_paths = {t.get("path", "") for t in self.tracks_played}
+        #
+        # 2026-05-03 fix (replay-guard-planner): include `file_path` fallback
+        # AND derive a basename set, because `tracks_played[].path` is
+        # ABSOLUTE (Mixxx tinfo.file_path) while:
+        #   - the LLM playlist's candidate `path` is RELATIVE (genre/foo.mp3)
+        #   - the DB `tracks.path` column is RELATIVE (normalized)
+        # Direct `relative in {absolutes}` always misses → played tracks
+        # leak through both `pick_next_candidate` (relied on basename via
+        # played_paths arg, but only if path key was present) AND the SQL
+        # fallback (compared DB-relative against absolute set). Mirror the
+        # 3-tier match `_idle_was_played` does in heartbeat.
+        played_paths = {
+            (t.get("path") or t.get("file_path") or "")
+            for t in self.tracks_played
+        }
         played_paths.discard("")
 
         # Primary path: trust the planner's session.playlist.
@@ -808,6 +823,18 @@ class PlannerMixin:
         pick = pick_next_candidate(
             playlist, exclude_paths, played_titles, played_paths
         )
+
+        # Replay-guard post-filter: even after pick_next_candidate, defend
+        # against the path-format edge case where neither basename nor title
+        # match worked (e.g. playlist entry has empty path). Use the same
+        # helper heartbeat uses for parity.
+        if pick is not None and _idle_was_played(pick.get("path", ""), self.tracks_played):
+            log.warning(
+                f"[REPLAY-GUARD-PLANNER] pick_next_candidate returned already-played "
+                f"track {pick.get('title', '?')!r} (path={pick.get('path', '')!r}); "
+                f"forcing fallback"
+            )
+            pick = None
 
         if pick is None:
             # Last-resort safety net. No SQL filter, no mood match, no
@@ -821,10 +848,24 @@ class PlannerMixin:
                 ).fetchall()]
             finally:
                 db.close()
-            available = [r for r in rows
-                         if r.get("path") not in exclude_paths
-                         and r.get("path") not in played_paths
-                         and r.get("title") not in played_titles]
+            available = []
+            for r in rows:
+                rp = r.get("path") or ""
+                if rp in exclude_paths:
+                    continue
+                # Use the path-bridge helper instead of the broken
+                # `rp in played_paths` direct compare — DB path is RELATIVE
+                # but played_paths is ABSOLUTE, so direct membership is
+                # always False and lets played tracks recycle.
+                if _idle_was_played(rp, self.tracks_played):
+                    log.warning(
+                        f"[REPLAY-GUARD-PLANNER] SQL fallback skipped already-played "
+                        f"track {r.get('title', '?')!r} (path={rp!r})"
+                    )
+                    continue
+                if r.get("title") in played_titles:
+                    continue
+                available.append(r)
             if not available:
                 log.warning("No tracks available to load on idle deck")
                 return
