@@ -344,6 +344,30 @@ class HeartbeatMixin:
 
             from .prompts import build_dj_user_message
 
+            # v8.2 — compute whether idle deck holds an already-played track.
+            # Surfacing this explicitly to the DJ prompt fixes the observed
+            # bug (2026-05-03 set) where DJ scheduled crossfades into played
+            # tracks because the info was buried in implicit playlist
+            # filtering. Compare by basename to bridge relative/absolute
+            # path forms (same approach as the [SIGNAL] check below).
+            _idle_already_played = False
+            try:
+                _idle_basename = (idle_file or "").rsplit("/", 1)[-1]
+                if _idle_basename:
+                    _played_paths_check = {
+                        (t.get("path") or t.get("file_path") or "")
+                        for t in (self.tracks_played or [])
+                    }
+                    _played_paths_check.discard("")
+                    _idle_already_played = any(
+                        p == idle_file
+                        or (idle_file and p.endswith("/" + idle_file))
+                        or p.rsplit("/", 1)[-1] == _idle_basename
+                        for p in _played_paths_check
+                    )
+            except Exception:
+                _idle_already_played = False
+
             # BUG-2 fix: filter the playlist so it never shows tracks
             # already on either deck. Otherwise, on a small library with a
             # stale playlist, DJ picks rank-1 which is still the
@@ -394,6 +418,7 @@ class HeartbeatMixin:
                 idle_energy=idle_energy,
                 idle_mix_in=idle_mix_in,
                 idle_mix_out=idle_mix_out,
+                idle_already_played=_idle_already_played,
             )
 
             self._agent_busy = True
