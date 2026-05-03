@@ -107,10 +107,10 @@ def _dj_prompt_v8() -> str:
         "  - BPM gap ≤ 3 AND COMPATIBLE → crossfade, duration_bars=32.\n"
         "  - BPM gap ≤ 3 AND BRIDGEABLE → filter_sweep, duration_bars=16. "
         "Must land in a breakdown.\n"
-        "  - BPM gap ≤ 3 AND DISSONANT → echo_out, duration_bars=8.\n"
-        "  - BPM gap 4-6 (any key) → echo_out, duration_bars=8 (echo "
+        "  - BPM gap ≤ 3 AND DISSONANT → echo_out, duration_bars=32.\n"
+        "  - BPM gap 4-6 (any key) → echo_out, duration_bars=32 (echo "
         "tail masks tempo shift).\n"
-        "  - BPM gap ≥ 7 (any key) → echo_out, duration_bars=8 to "
+        "  - BPM gap ≥ 7 (any key) → echo_out, duration_bars=32 to "
         "near-silence, then incoming clean. NEVER hard_cut here.\n"
         "  - filter_sweep is for SAME-BPM key bridges only. Never use it "
         "across a tempo gap.\n"
@@ -152,8 +152,11 @@ def _dj_prompt_v8() -> str:
         "kick alignment — use this often, not just crossfade\n"
         "  - filter_sweep (16-32 bars) → progressive reveal, energy build, "
         "Camelot bridge ±2 over a breakdown\n"
-        "  - echo_out    (16-24 bars) → energy shift, mood change, "
-        "dramatic moment, BPM/key gap\n"
+        "  - echo_out    (32-64 bars, 64-128s @120bpm) → energy shift, "
+        "mood change, dramatic moment, BPM/key gap. MANDATORY: duration ≥ "
+        "32s OR pick crossfade instead. MANDATORY: at_position must be ≥ "
+        "idle deck's INTRO ENDS AT minus 8s, so the echo tail rings INTO "
+        "the incoming drop, not its buildup.\n"
         "  - hard_cut    (instant)    → genre change, surprise drop "
         "(strict preconditions above)\n"
         "  AIM FOR VARIETY across a set: don't pick crossfade every time. "
@@ -275,7 +278,7 @@ Techniques:
 - "crossfade" — smooth S-curve blend (default)
 - "bass_swap" — EQ swap bass (ONLY when energy > 6)
 - "filter_sweep" — reveal incoming through low-pass filter
-- "echo_out" — fade outgoing with echo tail
+- "echo_out" — fade outgoing with echo tail (MANDATORY: duration ≥ 32s; at_position ≥ incoming intro_ends − 8s so tail lands on the drop)
 - "hard_cut" — instant switch
 
 MUSIC SOURCES:

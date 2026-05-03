@@ -598,7 +598,7 @@ def _echo_disengage(deck: int) -> None:
     })
 
 
-def do_echo_out(to_deck: int, duration: int = 32, bpm_after: str = "keep", glide_duration: int = 60, freeze: bool = False) -> str:
+def do_echo_out(to_deck: int, duration: int = 32, bpm_after: str = "keep", glide_duration: int = 60, freeze: bool = False, wait_for_incoming_drop: bool = True) -> str:
     """Echo out -- a discrete moment, not a smooth ramp. Outgoing rides at
     full level; in the last bar of Phase A the echo wet/dry snaps up to 0.7
     in 4 quick steps; at Phase A→B we HARD-CUT the outgoing fader (volume 0
@@ -672,6 +672,29 @@ def do_echo_out(to_deck: int, duration: int = 32, bpm_after: str = "keep", glide
 
     # Engage echo on the outgoing deck.
     _echo_engage(out_deck)
+
+    # ── Buildup-aware Phase-B gating (fix for echo_out energy-drop bug) ──
+    # Look up incoming deck's intro_ends_at so we know when its drop hits.
+    # If the hard-cut (Phase A→B) lands while incoming is still in its
+    # intro/buildup, the listener hears [echo tail] → [quiet buildup] →
+    # delayed drop = energy hole. Hold Phase A until incoming reaches its
+    # drop, capped at +32s extra so we don't hang forever.
+    incoming_intro_ends: float | None = None
+    if wait_for_incoming_drop and not freeze:
+        try:
+            from ..db import get_track_by_path
+            tinfo = _mixxx_get(f"/api/deck/{to_deck}/track_info") or {}
+            in_path = tinfo.get("file_path", "")
+            meta = get_track_by_path(in_path) if in_path else None
+            if meta and meta.get("mix_in_seconds") is not None:
+                incoming_intro_ends = float(meta["mix_in_seconds"])
+            else:
+                # Fallback heuristic: 32s ≈ 16 bars at 120bpm — conservative
+                # floor for unknown melodic-techno intros (most run 32 bars).
+                incoming_intro_ends = 32.0
+        except Exception as _e:
+            log.warning(f"[ECHO-OUT] intro_ends lookup failed: {_e}")
+            incoming_intro_ends = 32.0
 
     # Echo Freeze: snap wet to 1.0, pause outgoing, hold the loop. No Phase
     # B, no tail decay, no ejection — caller handles the incoming track.
@@ -747,6 +770,63 @@ def do_echo_out(to_deck: int, duration: int = 32, bpm_after: str = "keep", glide
             # in a single step. The deck transport keeps playing into the FX
             # send so the echo unit's internal buffer continues to ring out.
             if not hard_cut_done:
+                # ── Buildup-aware delay (do_echo_out fix) ──
+                # If incoming is still in its intro/buildup, hold the echo
+                # at peak with outgoing still at full level (Phase A shape)
+                # until incoming pos >= intro_ends_at. Cap at 32s extra wait.
+                if wait_for_incoming_drop and incoming_intro_ends is not None:
+                    waited = 0.0
+                    poll_interval = 0.5
+                    max_wait = 32.0
+                    in_pos = 0.0
+                    in_status = _mixxx_get("/api/status") or {}
+                    try:
+                        in_pos = float(
+                            in_status.get(f"deck{to_deck}", {})
+                            .get("position_seconds", 0) or 0
+                        )
+                    except Exception:
+                        in_pos = 0.0
+                    if in_pos < incoming_intro_ends:
+                        log.info(
+                            f"[ECHO-OUT] holding Phase A — incoming pos "
+                            f"{in_pos:.1f}s < intro_ends {incoming_intro_ends:.1f}s; "
+                            f"max wait {max_wait:.0f}s"
+                        )
+                        # Pin echo at peak, outgoing still at 1.0, no cut yet.
+                        _mixxx_post("/api/volume", {"deck": out_deck, "level": 1.0})
+                        if abs(WET_PEAK - last_wet_sent) > 1e-3:
+                            _mixxx_post("/api/control", {
+                                "group": "[EffectRack1_EffectUnit1]",
+                                "key": "mix",
+                                "value": round(WET_PEAK, 3),
+                            })
+                            last_wet_sent = WET_PEAK
+                        while waited < max_wait:
+                            _time.sleep(poll_interval)
+                            waited += poll_interval
+                            in_status = _mixxx_get("/api/status") or {}
+                            try:
+                                in_pos = float(
+                                    in_status.get(f"deck{to_deck}", {})
+                                    .get("position_seconds", 0) or 0
+                                )
+                            except Exception:
+                                in_pos = 0.0
+                            if in_pos >= incoming_intro_ends:
+                                log.info(
+                                    f"[ECHO-OUT] incoming hit drop at "
+                                    f"{in_pos:.1f}s after {waited:.1f}s wait — "
+                                    f"firing hard-cut"
+                                )
+                                break
+                        else:
+                            log.warning(
+                                f"[ECHO-OUT] still in buildup after {waited:.0f}s "
+                                f"wait (pos {in_pos:.1f} < {incoming_intro_ends:.1f}); "
+                                f"falling through to avoid hang"
+                            )
+
                 _mixxx_post("/api/volume", {"deck": out_deck, "level": 0.0})
                 _mixxx_post("/api/eq", {"deck": out_deck, "lo": 0.0})
                 # Pin wet at peak so the tail rings cleanly under the blend.
@@ -1031,6 +1111,20 @@ def schedule_transition(to_deck: int, at_position: int, technique: str = "crossf
             metadata is missing the marker, falls back to at_position.
     """
     duration = max(10, min(120, duration))
+
+    # ── Echo-out duration floor (safety net for the 15s-default bug) ──
+    # The DJ prompt mandates 32-64 bars (≥32s) for echo_out, but Flash has
+    # been picking duration=15 (the schedule_transition default) anyway.
+    # 15s = ~7.5 bars at 120bpm — way too short, listener hears the echo
+    # tail land on the incoming buildup. Coerce up to 32s here so the
+    # technique can't be silently misused.
+    if technique == "echo_out" and duration < 32:
+        old_duration = duration
+        duration = 32
+        log.warning(
+            f"[ECHO-OUT-FLOOR] caller passed duration={old_duration}, "
+            f"coerced to 32s (echo_out floor)"
+        )
 
     # Don't schedule if one is already pending
     # Check both the schedule file AND the lock file (lock survives P3 deletion)

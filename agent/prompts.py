@@ -182,6 +182,13 @@ def build_dj_user_message(
             f"  INTRO ENDS AT: {idle_mix_in:.0f}s "
             f"(seed-in window — drop active over idle's first {idle_mix_in:.0f}s)"
         )
+        idle_points.append(
+            f"  ECHO_OUT GUARD: if technique=echo_out, "
+            f"duration MUST be ≥ 32s AND at_position MUST aim so that "
+            f"transition START + duration ≈ idle's INTRO ENDS AT "
+            f"({idle_mix_in:.0f}s) — i.e. echo tail rings into the drop, "
+            f"not the buildup. Otherwise pick crossfade."
+        )
     if idle_mix_out is not None:
         idle_points.append(f"  OUTRO STARTS AT: {idle_mix_out:.0f}s")
     idle_points_block = "\n".join(idle_points)
