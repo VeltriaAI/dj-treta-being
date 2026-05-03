@@ -31,6 +31,49 @@ _LANCEDB_DIR = "lancedb"
 _LANCEDB_TABLE = "tracks"
 
 
+def _normalize_schema(lf):
+    """Adapt v6-stage1+ schemas to the v3/v4 column names queries.py uses.
+
+    queries.py was written against the v3 dataset (`tempo`, `dvi_styles`,
+    `dvi_labels`, etc.). v6 uses Beatport-derived names (`bpm`, `genre`,
+    `label`). This adapter renames where possible and synthesizes nulls
+    for cols that don't exist in v6 but are referenced by display/filter
+    logic, so neither side has to know about the other.
+    """
+    import polars as pl
+
+    schema = lf.collect_schema()
+    cols = set(schema.names())
+
+    rename = {}
+    if "tempo" not in cols and "bpm" in cols:
+        rename["bpm"] = "tempo"
+    if "dvi_styles" not in cols and "genre" in cols:
+        rename["genre"] = "dvi_styles"
+    if rename:
+        lf = lf.rename(rename)
+        cols = (cols - set(rename.keys())) | set(rename.values())
+
+    synth = [
+        ("dvi_labels", pl.Utf8),
+        ("yt_matched_album", pl.Utf8),
+        ("key", pl.Utf8),
+        ("youtube_music_url", pl.Utf8),
+        ("danceability", pl.Float64),
+        ("energy", pl.Float64),
+        ("valence", pl.Float64),
+    ]
+    add = [
+        pl.lit(None, dtype=dt).alias(name)
+        for name, dt in synth
+        if name not in cols
+    ]
+    if add:
+        lf = lf.with_columns(add)
+    return lf
+
+
+
 class KnowledgeClient:
     """Thread-safe singleton. Holds polars LazyFrame + LanceDB table handles."""
 
@@ -111,7 +154,8 @@ class KnowledgeClient:
 
         try:
             import polars as pl
-            self._lf = pl.scan_parquet(parquet_path)
+            lf = pl.scan_parquet(parquet_path)
+            self._lf = _normalize_schema(lf)
             row_count = self._lf.select(pl.len()).collect().item()
             log.info(
                 f"Knowledge parquet loaded: {row_count:,} rows from {parquet_path.name}"
