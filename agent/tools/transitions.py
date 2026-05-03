@@ -337,65 +337,223 @@ def do_hard_cut(to_deck: int, bpm_after: str = "keep", glide_duration: int = 60)
     return f"Hard-cut to Deck {to_deck} (bpm_after={bpm_after}). Deck {out_deck} ejected."
 
 
-def do_echo_out(to_deck: int, duration: int = 30, bpm_after: str = "keep", glide_duration: int = 60) -> str:
-    """Echo out -- fade outgoing track with delay/echo tail, then drop incoming.
-    Best for: energy shifts, mood changes, dramatic moments.
+# ──────────────────────────────────────────────────────────────────────────
+# Echo-effect helpers (Mixxx EffectRack1 / EffectUnit1)
+#
+# Mixxx control-object names verified against the Mixxx 2.4 controls manual
+# (https://manual.mixxx.org/2.4/en/chapters/appendix/mixxx_controls.html).
+# These keys are stable across 2.3 / 2.4 / 2.5. The effect-loading API (how
+# you put "Echo" into Effect1 of Unit1) is the part that *does* vary by
+# version — see TODO inside _echo_engage.
+#
+# Convention used here:
+#   - Unit 1 of Rack 1 is reserved for echo-out transitions.
+#   - We assume the user has Echo (or an equivalent delay) pre-loaded in
+#     [EffectRack1_EffectUnit1_Effect1]. If not, transition still completes
+#     but the FX won't audibly engage — a clear, validatable failure mode.
+#   - We DON'T touch effect parameters (delay time / feedback) because they
+#     differ per-effect and per-version. We drive the unit via `mix` (dry/wet)
+#     and `super1` (super-knob) which the user has dialed in to taste.
+# ──────────────────────────────────────────────────────────────────────────
+
+def _echo_engage(deck: int) -> None:
+    """Route `deck` through EffectRack1/EffectUnit1 with mix=0 (silent insert).
+
+    Caller then ramps `mix` 0 → ~0.8 over the fade. We DO NOT load the effect
+    here — see TODO. We assume Echo is already in slot 1.
+    """
+    unit = "[EffectRack1_EffectUnit1]"
+
+    # Start dry — we'll ramp mix up during phase A.
+    _mixxx_post("/api/control", {"group": unit, "key": "mix", "value": 0.0})
+
+    # Enable the unit itself (some Mixxx builds default it off).
+    _mixxx_post("/api/control", {"group": unit, "key": "enabled", "value": 1})
+
+    # Route the deck channel through this unit.
+    _mixxx_post("/api/control", {
+        "group": unit,
+        "key": f"group_[Channel{deck}]_enable",
+        "value": 1,
+    })
+
+    # Ensure Effect1 in the chain is enabled.
+    _mixxx_post("/api/control", {
+        "group": "[EffectRack1_EffectUnit1_Effect1]",
+        "key": "enabled",
+        "value": 1,
+    })
+
+    # TODO (live-validate): if the user hasn't pre-loaded Echo into
+    # [EffectRack1_EffectUnit1_Effect1], we'd need to load it here. The
+    # canonical 2.4 way is to write the effect's identifier into a chain
+    # control, but the exact key (`loaded` / `effect_selector` / chain
+    # `next_effect`) varies. Current plan: rely on the Mixxx session
+    # having Echo pre-loaded in slot 1; if that's wrong this fade will
+    # be silent-FX (still ducks volume, just no tail) — easy to spot live.
+
+
+def _echo_disengage(deck: int) -> None:
+    """Tear down the echo routing for `deck`. Idempotent."""
+    unit = "[EffectRack1_EffectUnit1]"
+
+    _mixxx_post("/api/control", {"group": unit, "key": "mix", "value": 0.0})
+    _mixxx_post("/api/control", {
+        "group": unit,
+        "key": f"group_[Channel{deck}]_enable",
+        "value": 0,
+    })
+
+
+def do_echo_out(to_deck: int, duration: int = 32, bpm_after: str = "keep", glide_duration: int = 60) -> str:
+    """Echo out -- engage the Mixxx Echo effect on the outgoing deck, sweep
+    HPF up to cut bass, ramp wet/dry to ~80%, then cross-blend the new track
+    in under the echo tail.
+
+    Best for: energy shifts, key/BPM gaps, mood changes, dramatic moments.
+
+    Phase shape (over `duration` seconds):
+      A  0%-50%  : ramp echo wet/dry 0 → 0.8, sweep HPF up (cut bass on
+                   outgoing), volume held at ~0.9. New deck is playing
+                   silent + synced.
+      B  50%-90% : bring incoming volume 0 → 1.0; outgoing volume 0.9 → 0.1;
+                   echo wet/dry stays high so the tail rings under the blend.
+      C  90%-100%: outgoing volume → 0 (echo continues to ring out from FX
+                   bus), incoming volume = 1.0.
+      Tail        : let echo ring 6 beats at the post-transition BPM, then
+                   disengage FX, eject outgoing deck.
 
     Args:
         to_deck: Deck to transition TO (1 or 2).
-        duration: How long the echo fade takes in seconds (10-45).
+        duration: How long the echo fade takes in seconds (10-64). Default 32
+            is ~16 bars at 120 BPM, which is the canonical pro echo-out.
         bpm_after: "keep", "reset", or a target BPM string.
         glide_duration: Seconds for BPM glide (used when bpm_after != "keep").
     """
     import time as _time
 
-    duration = max(10, min(45, duration))
+    duration = max(10, min(64, duration))
     out_deck = 1 if to_deck == 2 else 2
 
+    # Pre-flight ABORT (mirrors do_transition's discipline).
     status = _mixxx_get("/api/status")
+    if err := _mixxx_failed(status):
+        return f"ABORTED: cannot reach Mixxx: {err}"
     if status:
         deck_state = status.get(f"deck{to_deck}", {})
         if not deck_state.get("track_loaded", False):
-            return f"ABORTED: Deck {to_deck} has no track loaded!"
+            return f"ABORTED: Deck {to_deck} has no track loaded! Load a track first."
+        remaining_to = float(deck_state.get("remaining_seconds", 0) or 0)
+        if remaining_to < 30:
+            return f"ABORTED: Deck {to_deck} track has only {remaining_to:.0f}s left -- load a fresh track first."
 
-    # Move crossfader to center so both decks are audible
+    # Outgoing BPM (used for tail-ring beat math).
+    out_bpm = 120.0
+    if status:
+        try:
+            out_bpm = float(status.get(f"deck{out_deck}", {}).get("bpm", 120.0) or 120.0)
+        except Exception:
+            out_bpm = 120.0
+    if out_bpm <= 0:
+        out_bpm = 120.0
+
+    # Center the crossfader so both decks share the master via the FX bus.
     _mixxx_post("/api/crossfade", {"position": 0.5})
 
-    # Start incoming silently -- it will be revealed after outgoing fades
-    _mixxx_post("/api/volume", {"deck": to_deck, "level":0.0})
+    # Start incoming silently + synced.
+    _mixxx_post("/api/volume", {"deck": to_deck, "level": 0.0})
     _mixxx_post("/api/sync", {"deck": to_deck})
     _mixxx_post("/api/play", {"deck": to_deck})
+    _time.sleep(0.2)
+    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "beatsync_phase", "value": 1})
 
-    # Fade out outgoing with filter closing (simulates echo decay)
+    # Engage echo on the outgoing deck.
+    _echo_engage(out_deck)
+
     fps = 10
     total = int(duration * fps)
+
+    # Full ramp loop. Phase boundaries computed once.
+    PHASE_A_END = 0.50
+    PHASE_B_END = 0.90
+
     for i in range(total + 1):
-        t = i / total
+        t = i / total if total else 1.0
 
-        # Close filter on outgoing (muffled decay)
-        _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5 * (1 - t)})
+        if t <= PHASE_A_END:
+            # Phase A: ramp wet 0→0.8, sweep HPF up (filter knob 0.5→0.8 on
+            # the deck quick-effect filter — values >0.5 = HPF in Mixxx's
+            # default QuickEffect). Volume held at 0.9.
+            a = t / PHASE_A_END  # 0..1 inside phase
+            wet = 0.8 * a
+            hpf = 0.5 + 0.3 * a  # 0.5 (neutral) → 0.8 (HPF, bass cut)
+            _mixxx_post("/api/control", {
+                "group": "[EffectRack1_EffectUnit1]",
+                "key": "mix",
+                "value": round(wet, 3),
+            })
+            _mixxx_post("/api/filter", {"deck": out_deck, "value": round(hpf, 3)})
+            _mixxx_post("/api/volume", {"deck": out_deck, "level": 0.9})
 
-        # Fade volume on outgoing
-        _mixxx_post("/api/volume", {"deck": out_deck, "level":1.0 - t})
+        elif t <= PHASE_B_END:
+            # Phase B: cross-blend under echo tail. Wet stays high, HPF keeps
+            # climbing slightly (0.8→0.9). Outgoing vol 0.9→0.1, incoming
+            # vol 0.0→1.0.
+            b = (t - PHASE_A_END) / (PHASE_B_END - PHASE_A_END)
+            hpf = 0.8 + 0.1 * b
+            out_vol = 0.9 - 0.8 * b
+            in_vol = b
+            _mixxx_post("/api/filter", {"deck": out_deck, "value": round(hpf, 3)})
+            _mixxx_post("/api/volume", {"deck": out_deck, "level": round(out_vol, 3)})
+            _mixxx_post("/api/volume", {"deck": to_deck, "level": round(in_vol, 3)})
 
-        _time.sleep(1 / fps)
+        else:
+            # Phase C: outgoing vol → 0, incoming pinned at 1.0. Wet still
+            # high so any remaining audio rings into the FX bus.
+            c = (t - PHASE_B_END) / (1.0 - PHASE_B_END)
+            out_vol = 0.1 * (1.0 - c)
+            _mixxx_post("/api/volume", {"deck": out_deck, "level": round(out_vol, 3)})
+            _mixxx_post("/api/volume", {"deck": to_deck, "level": 1.0})
 
-    # Outgoing silent -- bring in incoming clean
-    _mixxx_post("/api/pause", {"deck": out_deck})
-    # Quick volume rise on incoming (0.5s clean drop-in)
-    for s in range(5):
-        _mixxx_post("/api/volume", {"deck": to_deck, "level":round((s + 1) / 5, 2)})
-        _time.sleep(0.1)
+        _time.sleep(1.0 / fps)
 
-    # Glide crossfader to final position
+    # Glide crossfader to final position (1s). Echo tail still ringing.
     xf_target = 0.0 if to_deck == 1 else 1.0
-    for s in range(10):
-        xf = 0.5 + (xf_target - 0.5) * ((s + 1) / 10)
+    steps = 10
+    for s in range(steps + 1):
+        xf = 0.5 + (xf_target - 0.5) * (s / steps)
         _mixxx_post("/api/crossfade", {"position": round(xf, 2)})
         _time.sleep(0.1)
 
+    # Pause outgoing — its audio is already at 0 but the deck transport
+    # was still playing into the FX send. Tail will continue from the
+    # echo unit's internal buffer.
+    _mixxx_post("/api/pause", {"deck": out_deck})
+
+    # Let echo tail ring for ~6 beats at outgoing BPM, then ramp wet down.
+    tail_seconds = (60.0 / out_bpm) * 6.0
+    tail_seconds = max(1.5, min(4.0, tail_seconds))
+    tail_steps = max(8, int(tail_seconds * fps))
+    for s in range(tail_steps + 1):
+        a = s / tail_steps
+        wet = 0.8 * (1.0 - a)
+        _mixxx_post("/api/control", {
+            "group": "[EffectRack1_EffectUnit1]",
+            "key": "mix",
+            "value": round(wet, 3),
+        })
+        _time.sleep(tail_seconds / tail_steps)
+
+    # Tear down FX + reset outgoing deck state.
+    _echo_disengage(out_deck)
     _mixxx_post("/api/volume", {"deck": out_deck, "level": 1.0})
+    _mixxx_post("/api/volume", {"deck": to_deck, "level": 1.0})
     _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5})
+    _mixxx_post("/api/filter", {"deck": to_deck, "value": 0.5})
+    for band in ["hi", "mid", "lo"]:
+        _mixxx_post("/api/eq", {"deck": out_deck, band: 1.0})
+        _mixxx_post("/api/eq", {"deck": to_deck, band: 1.0})
+
     _apply_bpm_after(to_deck, bpm_after, glide_duration)
     _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
 
