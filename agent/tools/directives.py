@@ -61,6 +61,41 @@ def set_planner_directive(instruction: str) -> str:
     return f"Planner directive set: {instruction}"
 
 
+def replace_deck(deck: int, instruction: str = "") -> str:
+    """Force-replace the track on a deck. Ejects whatever is on `deck` and
+    triggers the planner to load the rank-1 downloaded candidate from its
+    next plan onto that deck.
+
+    Use this when the listener says things like "remove this track from
+    deck 2" or "this is wrong, swap it" or "eject deck 1 and find better."
+    Bypasses the planner's "idle deck has fresh cued track, skip load"
+    gate.
+
+    Args:
+        deck: Which deck to replace (1 or 2).
+        instruction: Optional planner directive describing what to load
+            instead (e.g. "something with more energy"). When set, also
+            updates the planner directive so the next plan reflects intent.
+    """
+    import json
+    import time
+    sess = _session()
+    if sess is None:
+        return "Session not available — replace not signaled"
+    if deck not in (1, 2):
+        return f"Invalid deck {deck} — must be 1 or 2"
+    sess.user_intent = json.dumps({
+        "action": "replace_deck",
+        "deck": int(deck),
+        "instruction": instruction,
+        "ts": time.time(),
+    })
+    if instruction:
+        sess.planner_directive = instruction
+    log.info(f"replace_deck signal set: deck={deck} instruction={instruction[:80]}")
+    return f"Replace signal sent — deck {deck} will be ejected and reloaded on next planner tick"
+
+
 def set_mood(mood: str) -> str:
     """Change the current mood/genre for the entire set.
 

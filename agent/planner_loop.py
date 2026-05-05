@@ -17,6 +17,31 @@ import httpx
 log = logging.getLogger("dj-treta")
 
 
+# Hard-genre gate: when the resolved mood is in this map, candidates must
+# match at least one of the listed substrings against subgenre/genre. Keeps
+# bolly-vocal tech-house tracks from polluting a `techno` plan when they
+# happen to land inside the BPM/energy window.
+#
+# Moods NOT in this map are intentionally cross-genre (bollyafro, fusion,
+# experimental) and don't get a hard gate.
+HARD_GENRE_GATE = {
+    "techno":          ("techno",),
+    "techno-deep":     ("techno",),
+    "deep-techno":     ("techno",),
+    "melodic-techno":  ("techno", "melodic"),
+    "minimal-techno":  ("techno", "minimal"),
+    "peak-techno":     ("techno",),
+    "dark-techno":     ("techno",),
+    "psytrance":       ("psy", "trance"),
+    "psy-trance":      ("psy", "trance"),
+    "trance":          ("trance",),
+    "afro-house":      ("afro",),
+    "deep-house":      ("deep house", "house"),
+    "tech-house":      ("tech house",),
+    "drum-and-bass":   ("drum", "bass", "dnb"),
+}
+
+
 def _format_current_timeline(current_meta: dict | None) -> str:
     """Render the current track's section timeline for the v9 planner prompt.
 
@@ -200,6 +225,19 @@ class PlannerMixin:
         intent = self.user_intent or ""
         if intent:
             self.user_intent = ""
+
+        # Detect a replace_deck intent before the planner LLM call so we
+        # can act on it after the playlist is generated. Replace intents
+        # are JSON dicts; bare strings flow through unchanged as free-form
+        # intent text for the prompt.
+        replace_intent = None
+        if intent and intent.lstrip().startswith("{"):
+            try:
+                parsed = json.loads(intent)
+                if isinstance(parsed, dict) and parsed.get("action") == "replace_deck":
+                    replace_intent = parsed
+            except Exception:
+                pass
 
         feedback_line = ""
         try:
@@ -449,6 +487,12 @@ class PlannerMixin:
                 f"Planner wrote playlist: {len(validated['tracks'])} candidates, "
                 f"mood_snapshot={validated.get('mood_snapshot', '')}"
             )
+
+            # Replace-deck intent: bypass the "idle deck has fresh cued
+            # track" auto-load gate and directly eject + load the rank-1
+            # downloaded candidate from the freshly written playlist.
+            if replace_intent:
+                self._execute_replace_intent(replace_intent, validated)
             if hasattr(self, '_ws_broadcast'):
                 self._ws_broadcast("log", {
                     "text": f"Planner: {len(validated['tracks'])} candidates planned"
@@ -628,6 +672,31 @@ class PlannerMixin:
             return []
 
         self._emit_kb(f"union+dedup → {len(ktracks)} unique candidates")
+
+        # Hard genre gate. When the mood has a strict genre family
+        # (techno, psytrance, etc), drop candidates whose subgenre doesn't
+        # match — even if their BPM/energy fit. Cross-genre moods skip this.
+        gate = HARD_GENRE_GATE.get(mood_slug.lower())
+        if gate:
+            before = len(ktracks)
+            def _passes_gate(t):
+                fields = " ".join([
+                    (getattr(t, "subgenre", "") or ""),
+                    (getattr(t, "primary_genre", "") or ""),
+                    (getattr(t, "label", "") or ""),
+                ]).lower()
+                return any(g in fields for g in gate)
+            ktracks = [t for t in ktracks if _passes_gate(t)]
+            self._emit_kb(
+                f"hard genre gate ({mood_slug}, allow={list(gate)}) "
+                f"→ {len(ktracks)}/{before}"
+            )
+            if not ktracks:
+                self._emit_kb(
+                    f"genre gate emptied candidate pool — falling back to v8",
+                    level="WARN",
+                )
+                return []
 
         merged = merge_candidates_against_local(ktracks)
         n_dl = sum(1 for m in merged if getattr(m, "downloaded", False))
@@ -886,6 +955,74 @@ class PlannerMixin:
                 "log", {"text": f"Loaded deck {idle_deck}: {title_display[:50]}"}
             )
         refresh_duration(self.config.mixxx.url, idle_deck, track_path)
+
+    def _execute_replace_intent(self, intent: dict, playlist: dict) -> bool:
+        """Force-replace a track on a specific deck.
+
+        Triggered when the Being calls replace_deck() (which writes a
+        structured intent into session.user_intent). Bypasses the planner's
+        usual "idle deck has a fresh cued track, skip load" gate so a clear
+        user intent ("get this off deck 2") actually changes what's there.
+
+        Strategy: pick the highest-rank downloaded candidate from the
+        freshly-written playlist, eject the target deck, then load. The
+        downloaded restriction means listener feedback is immediate
+        (no 30-120s YouTube fetch wait).
+        """
+        from .playback_applier import load_on_deck, refresh_duration
+
+        deck = int(intent.get("deck", 0))
+        if deck not in (1, 2):
+            log.warning(f"replace_deck: invalid deck {deck}")
+            return False
+        tracks = (playlist or {}).get("tracks") or []
+        pick = None
+        for t in sorted(tracks, key=lambda x: x.get("rank", 99)):
+            if t.get("downloaded") and t.get("path"):
+                pick = t
+                break
+        if not pick:
+            log.warning(
+                f"replace_deck: no downloaded candidate in playlist "
+                f"(have {len(tracks)} entries) — skipping eject"
+            )
+            return False
+
+        track_path = pick["path"]
+        title_display = pick.get("title") or Path(track_path).stem
+
+        # Step 1: eject. Mixxx clears the deck's loaded track. Done first
+        # so even if the load fails, the wrong-track is gone (silence is
+        # better than the wrong song).
+        try:
+            httpx.post(
+                f"{self.config.mixxx.url}/api/control",
+                json={"group": f"[Channel{deck}]", "key": "eject", "value": 1},
+                timeout=3,
+            )
+        except Exception as exc:
+            log.warning(f"replace_deck: eject failed for deck {deck}: {exc}")
+
+        # Step 2: load the new pick. load_on_deck handles the /api/load
+        # POST and waits for Mixxx to confirm.
+        ok = load_on_deck(self.config.mixxx.url, deck, track_path)
+        if not ok:
+            log.warning(f"replace_deck: load_on_deck failed for {track_path!r}")
+            return False
+        try:
+            refresh_duration(self.config.mixxx.url, deck, track_path)
+        except Exception:
+            pass
+
+        log.info(
+            f"replace_deck: deck {deck} ← {title_display[:60]} "
+            f"(rank {pick.get('rank')})"
+        )
+        if hasattr(self, '_ws_broadcast'):
+            self._ws_broadcast("log", {
+                "text": f"Replaced deck {deck}: {title_display[:50]}"
+            })
+        return True
 
     def _auto_load_track(self, filepath):
         """Load a freshly generated track on the idle deck."""

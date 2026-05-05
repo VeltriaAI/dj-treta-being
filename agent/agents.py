@@ -33,7 +33,7 @@ from .tools import (
     # Meta tools
     read_file, write_file, save_learning, recall_learnings,
     # Directive tools (Being → Agent communication)
-    set_dj_directive, set_planner_directive, set_mood,
+    set_dj_directive, set_planner_directive, set_mood, replace_deck,
     get_directives, clear_directives, defer_decision,
     # Evolution tools
     evolve, propose_change, review_evolution,
@@ -344,6 +344,10 @@ YOUR TOOLS:
 - set_dj_directive(instruction) — tell DJ agent what to do next
 - set_planner_directive(instruction) — tell Planner what to find/generate
 - set_mood(mood) — change the set's mood/genre (updates everything)
+- replace_deck(deck, instruction) — force-eject + reload a specific deck
+  (use when listener says "remove this", "wrong track", "swap deck N",
+  or whenever the cued/playing track on a deck is wrong and a directive
+  alone won't fix it because the deck holds a fresh-but-wrong track)
 - get_dj_status() — see what's playing on the decks
 - hear_music() — listen to what's actually playing right now
 - save_learning() / recall_learnings() — your memory system
@@ -366,6 +370,10 @@ Example: "yaar bhojpuri bajao"
 Example: "energy badhao"
 → set_dj_directive("Next transition use bass_swap, keep energy high")
 → Respond: "Samajh gaya, energy pump kar rahi hoon!"
+
+Example: "deck 2 se yeh hata, kuch aur lagao"
+→ replace_deck(deck=2, instruction="something with more energy at 130 BPM")
+→ Respond: "Hata diya, naya track aa raha hai!"
 
 CONVERSATION RULES:
 - Be brief, warm, direct. Hindi/Hinglish with Manish.
@@ -582,6 +590,7 @@ say so in reasoning_summary so the Being can signal the library manager."""
     # --- Being agent (the brain — conversation + directives) ---
     being_tools = [
         _wrap(set_dj_directive), _wrap(set_planner_directive), _wrap(set_mood),
+        _wrap(replace_deck),
         _wrap(get_directives), _wrap(clear_directives),
         _wrap(get_dj_status), _wrap(get_live_data),
         _wrap(hear_music),
