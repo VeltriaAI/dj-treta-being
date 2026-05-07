@@ -691,6 +691,27 @@ def do_echo_out(to_deck: int, duration: int = 32, bpm_after: str = "keep", glide
     if out_bpm <= 0:
         out_bpm = 120.0
 
+    # Clamp `duration` to fit within the outgoing track's remaining audio.
+    # Without this, a long echo_out (e.g. 32s) on a track with only 20s
+    # left runs PAST the audio cliff: outgoing file ends mid-Phase-B while
+    # incoming is still ramping up — listener hears "one deck ended while
+    # the other is still rising". 4s safety margin lets the tail breathe
+    # without riding the cliff.
+    if status:
+        try:
+            out_remaining = float(
+                status.get(f"deck{out_deck}", {}).get("remaining_seconds", 0) or 0
+            )
+        except Exception:
+            out_remaining = 0.0
+        if out_remaining > 0 and duration > out_remaining - 4:
+            new_duration = max(10, int(out_remaining - 4))
+            log.warning(
+                f"[ECHO-OUT] clamping duration {duration}s → {new_duration}s "
+                f"because outgoing deck{out_deck} only has {out_remaining:.1f}s left"
+            )
+            duration = new_duration
+
     # Center the crossfader so both decks share the master via the FX bus.
     _mixxx_post("/api/crossfade", {"position": 0.5})
 
