@@ -112,7 +112,26 @@ def asset_paths(mbid: str) -> dict:
 
 
 # ── Tier 1: Download ──────────────────────────────────────────────────
+YT_COOKIES_PATH = Path("/opt/yt_cookies.txt")
+
+
+def _ensure_cookies():
+    """Download YT cookies from GCS once at startup. Required for yt-dlp to
+    bypass YouTube's "Sign in to confirm you're not a bot" challenge that
+    triggers under high-volume parallel ingest."""
+    if YT_COOKIES_PATH.exists() and YT_COOKIES_PATH.stat().st_size > 1000:
+        return
+    try:
+        blob = gcs().blob("v6/secrets/yt_cookies.txt")
+        if blob.exists():
+            blob.download_to_filename(str(YT_COOKIES_PATH))
+            log.info(f"yt cookies cached ({YT_COOKIES_PATH.stat().st_size} bytes)")
+    except Exception as e:
+        log.warning(f"could not fetch yt cookies: {e}")
+
+
 def download_audio(video_id: str, dest: Path) -> bool:
+    _ensure_cookies()
     url = f"https://music.youtube.com/watch?v={video_id}"
     cmd = [
         YT_DLP,
@@ -131,6 +150,8 @@ def download_audio(video_id: str, dest: Path) -> bool:
         str(dest),
         url,
     ]
+    if YT_COOKIES_PATH.exists():
+        cmd[1:1] = ["--cookies", str(YT_COOKIES_PATH)]
     try:
         r = subprocess.run(cmd, capture_output=True, timeout=180)
         return r.returncode == 0 and dest.exists() and dest.stat().st_size > 100_000
@@ -599,19 +620,10 @@ def process_one(row: dict) -> dict | None:
             except Exception:
                 pass
 
-        # Tier 11 — Whisper on vocals stem
-        if "vocals" in stems_paths:
-            tx = transcribe_vocals(stems_paths["vocals"])
-            if tx:
-                lyrics_local = LOCAL_TMP / f"{mbid}_lyrics.json"
-                lyrics_local.write_text(json.dumps(tx))
-                try:
-                    bucket.blob(paths["lyrics"]).upload_from_filename(str(lyrics_local))
-                    result["lyrics_path"] = paths["lyrics"]
-                    result["lyrics_language"] = tx.get("language")
-                    lyrics_local.unlink()
-                except Exception:
-                    pass
+        # Tier 11 — Whisper lyrics — DISABLED for v6-prod throughput. Reactivate
+        # if lyrics-based search becomes a feature; until then skip the ~30s/track
+        # cost. Vocal segments still tracked via silero-vad (Tier 5).
+        pass
 
         # Tier 12 — mel spectrogram
         if audio_arr is not None:
@@ -723,12 +735,32 @@ def main():
     for i, row in enumerate(rows):
         splits[i % WORKERS_PER_VM].append(row)
 
-    procs = []
+    # Respawn-on-crash supervisor. Child procs sometimes die from OOM
+    # (long Discogs tracks blow demucs memory) or C-extension segfaults.
+    # Without this, the parent just waits on dead joins and runs at 1/N
+    # capacity. With this, a crashed child is restarted on the same row
+    # list — the inner loop skips already-done mbids via GCS checkpoints,
+    # so a restart costs only the in-flight track.
+    def supervised(wid: int, rows: list[dict]):
+        max_restarts = 20
+        restart_count = 0
+        while restart_count < max_restarts:
+            p = mp.Process(target=worker_process, args=(wid, rows))
+            p.start()
+            p.join()
+            if p.exitcode == 0:
+                return
+            restart_count += 1
+            log.warning(f"worker {wid} crashed (exit {p.exitcode}, restart {restart_count}/{max_restarts}); restarting in 5s")
+            time.sleep(5)
+        log.error(f"worker {wid} crashed {max_restarts}× — giving up")
+
+    sup_procs = []
     for wid in range(WORKERS_PER_VM):
-        p = mp.Process(target=worker_process, args=(wid, splits[wid]))
+        p = mp.Process(target=supervised, args=(wid, splits[wid]))
         p.start()
-        procs.append(p)
-    for p in procs:
+        sup_procs.append(p)
+    for p in sup_procs:
         p.join()
 
     gcs().blob(f"{DATASET_VERSION}/done/{RUN_ID}/shard_{SHARD_ID:03d}.done").upload_from_string(
