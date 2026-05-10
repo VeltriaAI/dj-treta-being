@@ -116,6 +116,41 @@ from .spawn import (
     get_spawn_result,
 )
 
+# Evolution: visibility + memory + agency + meta-control
+from .visibility import (
+    get_subagent_activity,
+    tail_thinking_log,
+)
+from .listener import (
+    get_listener_pulse,
+    get_listener_profile,
+)
+from .scheduling import (
+    schedule_self,
+    cancel_self_schedule,
+    list_self_schedule,
+)
+from .arc import (
+    plan_set_arc,
+    progress_set_arc,
+    clear_set_arc,
+)
+from .meta_control import (
+    pause_subagent,
+    resume_subagent,
+    force_replan,
+    restart_subagent,
+    get_subagent_pause_state,
+)
+# Memory recall tools — wrap the agent.memory module (LanceDB-backed)
+# in single-import shims so they can be _wrap()-ed by ADK like other tools.
+from ..memory import (
+    recall_similar_interaction,
+    recall_similar_set,
+    recall_journal,
+    recall_thoughts,
+)
+
 __all__ = [
     # helpers
     "_SELF_DIR", "_music_dir", "_roots", "_is_under_allowed_roots",
@@ -147,4 +182,13 @@ __all__ = [
     # evolution
     "evolve", "propose_change", "review_evolution",
     "spawn_agent", "get_spawn_result",
+    # evolution — visibility / memory / agency / meta-control
+    "get_subagent_activity", "tail_thinking_log",
+    "get_listener_pulse", "get_listener_profile",
+    "schedule_self", "cancel_self_schedule", "list_self_schedule",
+    "plan_set_arc", "progress_set_arc", "clear_set_arc",
+    "pause_subagent", "resume_subagent", "force_replan",
+    "restart_subagent", "get_subagent_pause_state",
+    "recall_similar_interaction", "recall_similar_set",
+    "recall_journal", "recall_thoughts",
 ]

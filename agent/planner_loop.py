@@ -110,6 +110,12 @@ class PlannerMixin:
         time.sleep(5)  # let heartbeat boot first
         while self._running:
             try:
+                # Meta-control: Treta can pause the planner when she
+                # wants direct control. Cycle sleeps and re-checks.
+                if getattr(self.session, "planner_paused", False):
+                    time.sleep(5)
+                    continue
+
                 from .observability import tick as _obs_tick
                 _obs_tick("planner")
                 status = _get_status(self.config.mixxx.url)

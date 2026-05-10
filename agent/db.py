@@ -203,10 +203,104 @@ def init_db():
         consecutive_errors INTEGER DEFAULT 0,
         thread_alive INTEGER DEFAULT 1
     );
+
+    -- Listener profile (cross-session). Flat KV that survives daemon
+    -- restarts. Updated incrementally by like/dislike/skip handlers.
+    -- Treta reads this at session-start to know who Manish is *before*
+    -- they start chatting. See evolution plan Tier 1.5.
+    CREATE TABLE IF NOT EXISTS listener_profile (
+        key TEXT PRIMARY KEY,
+        value TEXT,
+        updated_at REAL DEFAULT (strftime('%s','now')),
+        calibration_count INTEGER DEFAULT 0
+    );
     """)
     _migrate_tracks_canonical(db)
     db.commit()
     db.close()
+
+
+# ── Listener profile helpers ───────────────────────────────────────
+
+
+def get_listener_profile_kv(key: str, default: str = "") -> str:
+    """Read a single listener-profile value."""
+    db = get_db()
+    try:
+        row = db.execute(
+            "SELECT value FROM listener_profile WHERE key = ?", (key,)
+        ).fetchone()
+        return row["value"] if row else default
+    finally:
+        db.close()
+
+
+def set_listener_profile_kv(key: str, value: str) -> None:
+    """Set a listener-profile value. Bumps calibration_count + updated_at."""
+    import time as _t
+    db = get_db()
+    try:
+        db.execute(
+            """
+            INSERT INTO listener_profile (key, value, updated_at, calibration_count)
+            VALUES (?, ?, ?, 1)
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = excluded.updated_at,
+                calibration_count = listener_profile.calibration_count + 1
+            """,
+            (key, str(value), _t.time()),
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
+def increment_listener_profile_kv(key: str, delta: int = 1) -> int:
+    """Atomically increment an integer-valued profile key. Returns new value."""
+    import time as _t
+    db = get_db()
+    try:
+        row = db.execute(
+            "SELECT value FROM listener_profile WHERE key = ?", (key,)
+        ).fetchone()
+        cur = int(row["value"]) if (row and row["value"]) else 0
+        new = cur + delta
+        db.execute(
+            """
+            INSERT INTO listener_profile (key, value, updated_at, calibration_count)
+            VALUES (?, ?, ?, 1)
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = excluded.updated_at,
+                calibration_count = listener_profile.calibration_count + 1
+            """,
+            (key, str(new), _t.time()),
+        )
+        db.commit()
+        return new
+    finally:
+        db.close()
+
+
+def get_listener_profile_all() -> dict:
+    """Snapshot every listener-profile key → value, with metadata."""
+    db = get_db()
+    try:
+        rows = db.execute(
+            "SELECT key, value, updated_at, calibration_count "
+            "FROM listener_profile ORDER BY key"
+        ).fetchall()
+        return {
+            r["key"]: {
+                "value": r["value"],
+                "updated_at": r["updated_at"],
+                "calibration_count": r["calibration_count"],
+            }
+            for r in rows
+        }
+    finally:
+        db.close()
 
 
 def _migrate_tracks_canonical(db):
@@ -609,16 +703,58 @@ def get_set_tracks(set_id: str) -> list[dict]:
 
 
 def add_feedback(track_title: str, feedback: str, track_path: str = "", set_id: str = ""):
-    """Record like/dislike feedback for a track."""
+    """Record like/dislike feedback for a track + bump listener profile."""
     db = get_db()
     try:
         db.execute(
             "INSERT INTO feedback (track_title, track_path, feedback, set_id) VALUES (?, ?, ?, ?)",
             (track_title, track_path, feedback, set_id)
         )
+        # Update listener profile counters. Look up the track's genre to
+        # build per-genre like/dislike running totals — this is what
+        # Treta reads via get_listener_profile() to know "Manish skips
+        # 73% of vocal house at peak hours".
+        try:
+            row = db.execute(
+                "SELECT genre FROM tracks WHERE title LIKE '%' || ? || '%' LIMIT 1",
+                (track_title,)
+            ).fetchone()
+            genre = (row["genre"] if row and row["genre"] else "unknown").lower()
+        except Exception:
+            genre = "unknown"
         db.commit()
     finally:
         db.close()
+    # Profile updates use their own helpers (own connections).
+    if feedback == "like":
+        increment_listener_profile_kv(f"total_likes_{genre}", 1)
+        increment_listener_profile_kv("total_likes_all", 1)
+    elif feedback == "dislike":
+        increment_listener_profile_kv(f"total_dislikes_{genre}", 1)
+        increment_listener_profile_kv("total_dislikes_all", 1)
+
+
+def record_skip(track_title: str, reason: str = "", set_id: str = ""):
+    """Record a skip event in the listener profile counters.
+
+    Skips are a softer signal than dislikes — they say "not now",
+    not "never". Tracked separately so Treta can distinguish between
+    "Manish actively skipped this" vs "this just didn't fit the
+    moment". Genre is best-effort lookup against tracks table.
+    """
+    db = get_db()
+    try:
+        row = db.execute(
+            "SELECT genre FROM tracks WHERE title LIKE '%' || ? || '%' LIMIT 1",
+            (track_title,)
+        ).fetchone()
+        genre = (row["genre"] if row and row["genre"] else "unknown").lower()
+    except Exception:
+        genre = "unknown"
+    finally:
+        db.close()
+    increment_listener_profile_kv(f"total_skips_{genre}", 1)
+    increment_listener_profile_kv("total_skips_all", 1)
 
 
 def get_liked_tracks(limit: int = 20) -> list[dict]:

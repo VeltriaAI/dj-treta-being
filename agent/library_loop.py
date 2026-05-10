@@ -64,6 +64,12 @@ class LibraryMixin:
 
         while self._running:
             try:
+                # Meta-control: Treta can pause the library when she
+                # wants to halt downloads (e.g. during quiet talk).
+                if getattr(self.session, "library_paused", False):
+                    time.sleep(5)
+                    continue
+
                 from .observability import tick as _obs_tick
                 _obs_tick("library")
                 need = getattr(self.session, "library_need", None)

@@ -45,6 +45,15 @@ CRITICAL_FIELDS = frozenset({
     # Typed directive queue — surgical actions (load_track, transition_now)
     # must be durable across crash windows or the named track is lost.
     "directives",
+    # Self-scheduling — Treta wakes herself for reasons. Must persist or
+    # she forgets her own intent across daemon restarts.
+    "self_schedule",
+    # Set-arc plan — pre-committed energy curve for the set. Persisted so
+    # progress checks survive restarts.
+    "set_arc",
+    # Meta-control flags — pause/resume of subagents. Read at top of
+    # each loop; durable so an in-progress pause survives a restart.
+    "planner_paused", "dj_paused", "library_paused",
     # Deck-ownership signals (Phase A1) — consumers may depend on these
     # being durable before the next heartbeat tick, so sync-flush on write.
     "idle_needs_load", "user_skip", "set_ending",
@@ -130,6 +139,35 @@ _FIELD_DEFAULTS: dict[str, Any] = {
     # rendering and TUI/WS observability. Surgical kinds (load_track,
     # transition_now) are consumed programmatically, never via prompt.
     "directives": list,
+
+    # Self-scheduling queue — Treta wakes herself at specific times for
+    # specific reasons. Each entry:
+    #   {at_ts, reason, callback_directive, fired, created_at}
+    # Heartbeat reads at top of every tick and fires due entries. A fired
+    # entry stays in the list until pruned (so we can audit what Treta
+    # asked herself to do).
+    "self_schedule": list,
+
+    # Pre-committed set arc — energy curve + ending style for the set
+    # Treta is currently running. Heartbeat reads progress against arc
+    # and auto-emits shape directives when drift > 20%. Schema:
+    #   {target_minutes, energy_curve, ending_style, started_at,
+    #    checkpoints: [{at_pct, expected_energy, hit_at, observed_energy}]}
+    # None when no arc is in flight.
+    "set_arc": None,
+
+    # Reflection log — synthesized output from the 15-min reflection
+    # loop. Capped at 20 entries (FIFO). Each entry:
+    #   {ts, went_well: [], to_improve: [], next_intent: str,
+    #    mood_drift: str, listener_engagement_delta: int}
+    "reflections": list,
+
+    # Meta-control flags — Treta pauses subagents when she wants to
+    # take direct control. Each subagent loop checks its flag at the
+    # top of its cycle and skips work when paused. Defaults False.
+    "planner_paused": False,
+    "dj_paused": False,
+    "library_paused": False,
 
     # Playback state
     "tracks_played": list,

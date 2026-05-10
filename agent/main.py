@@ -474,6 +474,32 @@ class DJTretaBeing(
         # Producer loop — generates originals on session.producer_need (v8 Phase 6)
         threading.Thread(target=self._producer_loop, daemon=True).start()
 
+        # ── Evolution: multi-loop consciousness ────────────────────
+        # Three new loops layered on the existing heartbeat-driven cycle.
+        # Each runs in its own daemon thread and reads session/memory.
+        # Reflection: 15 min cadence — synthesizes recent activity.
+        # Dream: 6 hr OR 5 min idle — daily journal entry.
+        # Intention: weekly (Sun 23:00) — meta intentions for next week.
+        # See evolution plan Tier 2.4/2.5/2.6.
+        try:
+            from .reflection_loop import ReflectionLoop
+            self._reflection_loop = ReflectionLoop(self)
+            self._reflection_loop.start()
+        except Exception as exc:
+            log.warning(f"reflection loop failed to start (non-fatal): {exc}")
+        try:
+            from .dream_loop import DreamLoop
+            self._dream_loop = DreamLoop(self)
+            self._dream_loop.start()
+        except Exception as exc:
+            log.warning(f"dream loop failed to start (non-fatal): {exc}")
+        try:
+            from .intention_loop import IntentionLoop
+            self._intention_loop = IntentionLoop(self)
+            self._intention_loop.start()
+        except Exception as exc:
+            log.warning(f"intention loop failed to start (non-fatal): {exc}")
+
         # Session callback: when mood changes, do three things.
         # 1. Update the current set's mood/genre fields (for DB + relay).
         # 2. Force planner replan on next tick.

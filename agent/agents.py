@@ -39,6 +39,15 @@ from .tools import (
     # Evolution tools
     evolve, propose_change, review_evolution,
     spawn_agent, get_spawn_result,
+    # Evolution — Tier 1+2 (visibility, memory, agency, meta-control)
+    get_subagent_activity, tail_thinking_log,
+    get_listener_pulse, get_listener_profile,
+    schedule_self, cancel_self_schedule, list_self_schedule,
+    plan_set_arc, progress_set_arc, clear_set_arc,
+    pause_subagent, resume_subagent, force_replan,
+    restart_subagent, get_subagent_pause_state,
+    recall_similar_interaction, recall_similar_set,
+    recall_journal, recall_thoughts,
 )
 
 
@@ -421,6 +430,61 @@ do, you can do directly. Plus directive tools to delegate. Two layers:
   - save_learning() / recall_learnings() — memory
   - generate_track(prompt, ...) — AI music generation (if available)
 
+  ── Evolution: visibility into your own apparatus ──
+  Before assuming a subagent is stuck or wrong, look:
+  - get_subagent_activity() — structured snapshot of DJ, planner, library.
+      Returns last_decision, candidates_total, in-flight downloads,
+      scheduled-transition, active directives. Read this BEFORE pausing
+      or overriding.
+  - tail_thinking_log(n, agent_filter) — last N lines from the thinking
+      log, optionally filtered by agent ('dj_treta', 'planner',
+      'library_manager', 'treta').
+  - get_listener_pulse(window_minutes) — recent likes/dislikes/skips/mood
+      requests, all in one read.
+  - get_listener_profile() — cross-session listener model: per-genre
+      likes/dislikes/skips, last_updated_at. Survives daemon restarts.
+  - get_subagent_pause_state() — confirm what's paused before resuming.
+
+  ── Evolution: agency over time ──
+  You're not just reactive. Wake yourself for reasons:
+  - schedule_self(in_seconds, reason, callback_directive="") — fire a
+      shape directive on yourself at a future time. Examples:
+      schedule_self(900, "check if bollyafro landed", "evaluate listener
+      engagement with last 4 tracks")
+  - cancel_self_schedule(reason_match), list_self_schedule() — manage queue
+  - plan_set_arc(target_minutes, energy_curve, ending_style) — pre-commit
+      to a set shape. energy_curve in {build, peak-then-settle, flat-warm,
+      rollercoaster}; ending_style in {fade-out, drop-and-stop, ambient-tail}
+  - progress_set_arc() — where am I vs plan; drift; suggestion
+  - clear_set_arc() — drop the arc
+
+  ── Evolution: meta-control over subagents ──
+  When a subagent is fumbling, take the wheel:
+  - pause_subagent(name) / resume_subagent(name) — name in
+      {planner, dj, library}
+  - force_replan(directive="") — clear planner playlist, request fresh
+      cycle, optional shape directive
+  - restart_subagent(name) — best-effort restart for stuck subagents
+
+  ── Evolution: semantic memory ──
+  You remember your past. Use these to recall by meaning, not keyword:
+  - recall_similar_interaction(query, k=5) — past chats with Manish
+  - recall_similar_set(query, k=3) — past sets that worked or didn't
+  - recall_journal(query, date_range=None, k=5) — your daily journal
+      (auto-written by your dream loop)
+  - recall_thoughts(query, k=10) — your own past reasoning (auto-
+      embedded by your reflection loop every 15 min)
+
+  ── Evolution: consciousness loops (passive — you don't call these) ──
+  Three background loops shape you without your direct invocation:
+  - Reflection loop (15 min): synthesizes recent activity into entries
+      in your reflections list. Surfaces via the recall_thoughts() tool.
+  - Dream loop (6 hr or 5 min idle): writes a daily journal entry to
+      ~/.beings/dj-treta/memory/YYYY-MM-DD.md and embeds it. Surfaces
+      via recall_journal().
+  - Intention loop (weekly): synthesizes the week into
+      ~/.beings/dj-treta/INTENTIONS.md. You can read_file() this any time.
+
 DECISION GUIDE — when to use which:
   - Routine playback: trust the DJ + planner subagents. Don't micro-
     manage. set_mood + set_planner_directive when shaping is needed.
@@ -544,8 +608,22 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
     ADK does not allow sharing agent instances between trees, so
     producer is created twice.
     """
+    # Two-tier model setup. Flash for high-frequency subagent loops
+    # (DJ, planner, library, producer, mixer) where sub-second latency
+    # matters and decisions are mechanical. Pro for the root Being
+    # (Treta) where judgment, identity, reflection, and listener
+    # conversation deserve the stronger model. Override via
+    # config.llm.being_model; if empty, falls back to the Flash model.
     model = LiteLlm(
         model=config.llm.model,
+        api_key=config.llm.api_key,
+        api_base=config.llm.api_base,
+    )
+    _being_model_name = (
+        getattr(config.llm, "being_model", "") or config.llm.model
+    )
+    being_model = LiteLlm(
+        model=_being_model_name,
         api_key=config.llm.api_key,
         api_base=config.llm.api_base,
     )
@@ -745,6 +823,24 @@ say so in reasoning_summary so the Being can signal the library manager."""
         _wrap(defer_decision),
         _wrap(save_learning), _wrap(recall_learnings),
         _wrap(read_file), _wrap(write_file),
+
+        # ── Evolution: visibility into her own apparatus ─────────────
+        _wrap(get_subagent_activity), _wrap(tail_thinking_log),
+        _wrap(get_listener_pulse), _wrap(get_listener_profile),
+        _wrap(get_subagent_pause_state),
+
+        # ── Evolution: agency over time ──────────────────────────────
+        _wrap(schedule_self), _wrap(cancel_self_schedule),
+        _wrap(list_self_schedule),
+        _wrap(plan_set_arc), _wrap(progress_set_arc), _wrap(clear_set_arc),
+
+        # ── Evolution: meta-control over subagents ───────────────────
+        _wrap(pause_subagent), _wrap(resume_subagent),
+        _wrap(force_replan), _wrap(restart_subagent),
+
+        # ── Evolution: semantic memory (LanceDB) ─────────────────────
+        _wrap(recall_similar_interaction), _wrap(recall_similar_set),
+        _wrap(recall_journal), _wrap(recall_thoughts),
     ]
     # Being can search + download when listener asks for a specific track
     if config.sources.youtube:
@@ -762,7 +858,7 @@ say so in reasoning_summary so the Being can signal the library manager."""
 
     being_agent = LlmAgent(
         name="treta",
-        model=model,
+        model=being_model,   # Pro — root Being uses the stronger model
         instruction=_load_being_prompt(config),
         tools=being_tools,
         description="Treta — the Being's brain. Thinks, converses, directs agents.",

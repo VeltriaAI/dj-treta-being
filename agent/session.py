@@ -260,23 +260,87 @@ class SessionMixin:
                             self._deck_track[dk] = path
                             self._deck_start_time[dk] = time.time()
                         if title and not any(t.get("title") == title for t in self.tracks_played):
-                            # BUG-8 fix (Phase A2 dry run #2 2026-04-19):
-                            # include `path` so downstream dedup (BUG-6
-                            # played-path filter in planner_loop) can match
-                            # canonical library paths stably. Previously
-                            # only {title, time} was recorded, so any
-                            # path-based comparison matched nothing.
-                            self.tracks_played.append({
+                            # Enriched per-track ledger record. Foundation
+                            # for Tier 1.2 of evolution plan: set archives,
+                            # reflection, listener-pattern learning all
+                            # read from this list. The legacy {title, path,
+                            # time} keys are preserved for back-compat;
+                            # new keys are additive.
+                            entry = {
                                 "title": title,
                                 "path": path,
-                                "time": time.time(),
-                            })
+                                "time": time.time(),                # legacy
+                                # Enriched fields:
+                                "track_id": f"t{int(time.time() * 1000)}",
+                                "artist": tinfo.get("artist", "") or "",
+                                "deck": dk,
+                                "loaded_at": time.time(),
+                                "played_from_at": time.time(),
+                                "ended_at": None,
+                                "bpm": status.get(f"deck{dk}", {}).get("bpm", 0) or 0,
+                                "key_camelot": tinfo.get("key", "") or "",
+                                "energy": tinfo.get("energy_peak"),
+                                "transition_in": None,   # set by transition tools post-flight
+                                "transition_out": None,
+                                "listener_feedback": None,
+                            }
+                            self.tracks_played.append(entry)
                             # Record in DB set_history
                             if self.current_set:
                                 from .db import add_track_to_set
                                 add_track_to_set(self.current_set["id"], title, dk, path)
+                            # Best-effort archive: when in-memory list grows
+                            # past 200, slice old half to JSONL on disk so
+                            # the live list stays fast. See archive helper.
+                            if len(self.tracks_played) > 200:
+                                try:
+                                    self._archive_old_tracks()
+                                except Exception as exc:
+                                    log.debug(f"tracks_played archive skipped: {exc}")
         except Exception:
             pass
+
+    def _archive_old_tracks(self):
+        """Move oldest half of tracks_played to a daily JSONL archive.
+
+        Keeps the in-memory list bounded so reads stay fast. Archive
+        files at ~/.beings/dj-treta/history/YYYY-MM-DD.jsonl. Idempotent:
+        re-running on the same day appends; never rewrites.
+        """
+        if len(self.tracks_played) <= 200:
+            return
+        archive_dir = (
+            Path(__file__).parent.parent / ".beings" / "dj-treta" / "history"
+        )
+        archive_dir.mkdir(parents=True, exist_ok=True)
+
+        # Slice off the oldest half.
+        half = len(self.tracks_played) // 2
+        old_entries = list(self.tracks_played[:half])
+        keep_entries = list(self.tracks_played[half:])
+
+        # Group by date (UTC for stability).
+        from collections import defaultdict
+        from datetime import datetime, timezone
+        by_date = defaultdict(list)
+        for e in old_entries:
+            ts = e.get("loaded_at") or e.get("time") or time.time()
+            day = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
+            by_date[day].append(e)
+
+        for day, entries in by_date.items():
+            path = archive_dir / f"{day}.jsonl"
+            with path.open("a") as f:
+                for e in entries:
+                    f.write(json.dumps(e, default=str) + "\n")
+
+        # Replace in-memory list (use clear+extend so ObservedList fires).
+        self.tracks_played.clear()
+        self.tracks_played.extend(keep_entries)
+        log.info(
+            f"[history] archived {len(old_entries)} tracks "
+            f"to {archive_dir}, kept {len(keep_entries)} in memory"
+        )
 
     def _agent_reflect(self):
         """Periodic self-evolution — reflect on recent tracks."""

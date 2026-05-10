@@ -152,6 +152,44 @@ class HeartbeatMixin:
         except Exception as exc:
             log.debug(f"directive expire_stale failed: {exc}")
 
+        # ── Self-schedule fire ─────────────────────────────────────
+        # Treta can wake herself via schedule_self(). Fire any entries
+        # whose at_ts has passed; inject callback_directive as a shape
+        # directive she'll see on the next chat tick. See evolution
+        # plan Tier 2.1.
+        try:
+            now = time.time()
+            fired_any = False
+            for entry in self.session.self_schedule:
+                if not entry.get("fired") and now >= entry.get("at_ts", 0):
+                    entry["fired"] = True
+                    entry["fired_at"] = now
+                    fired_any = True
+                    reason = entry.get("reason", "")
+                    callback = entry.get("callback_directive", "")
+                    if callback:
+                        self.session.add_directive(
+                            kind="shape",
+                            target="dj",
+                            payload={"text": f"[self-schedule] {reason}: {callback}"},
+                            ttl_seconds=90.0,
+                            supersede_kinds=[],   # don't supersede other shape; this is its own thread
+                        )
+                    log.info(f"[self-schedule] fired: {reason[:80]}")
+            # Force a flush after firing so the fired=True state persists.
+            if fired_any:
+                self.session.flush()
+        except Exception as exc:
+            log.debug(f"self_schedule check failed: {exc}")
+
+        # ── Meta-control: dj_paused ────────────────────────────────
+        # Treta can pause the DJ to take direct control. We still run
+        # the silence-recovery safety net below; pause only skips the
+        # creative DJ-invoke (P4). See evolution plan Tier 2.3.
+        # Note: silence recovery (P1) and scheduled-transition exec (P3)
+        # remain active — pausing DJ shouldn't kill the music if Treta
+        # forgets to do anything.
+
         status = _get_status(self.config.mixxx.url)
         if not status:
             _ensure_mixxx(self.config)
@@ -283,7 +321,9 @@ class HeartbeatMixin:
         transition_window = idle_ready and remaining > 0
         # Issue #76: respect defer_decision — DJ told us to ask later.
         deferred_until = getattr(self.session, "dj_deferred_until", 0.0) or 0.0
-        if time.time() < deferred_until:
+        if getattr(self.session, "dj_paused", False):
+            log.debug("P4 DJ invoke skipped — dj_paused (Treta has the wheel)")
+        elif time.time() < deferred_until:
             log.debug(
                 f"P4 DJ invoke skipped — deferred until {deferred_until:.0f} "
                 f"({deferred_until - time.time():.0f}s left)"
