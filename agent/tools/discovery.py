@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import re
 import subprocess
 import threading
@@ -257,7 +258,7 @@ def _enrich_track(filepath: Path, genre: str, yt_meta: dict = None):
             pass
 
 
-def download_track(url: str, genre: str = "deep") -> str:
+def download_track(url: str, genre: str = "deep") -> dict:
     """Download a track from YouTube into the music library.
 
     Three-layer dedup to avoid duplicates:
@@ -266,6 +267,17 @@ def download_track(url: str, genre: str = "deep") -> str:
       3. Download with canonical filename + store canonical fields in DB
 
     Auto-analyzes in background (BPM, key, energy, sections, ID3 tags).
+
+    Returns:
+        dict with shape:
+          {ok: bool, path: str | None, message: str}
+        - ok=True with `path` set: track is on disk at that absolute path.
+          Pass `path` directly into play_specific_track — DO NOT construct
+          paths from your head, ever. The returned path IS authoritative.
+        - ok=False: download failed. `message` explains why.
+
+        Note: "ALREADY EXISTS" is treated as ok=True with the existing
+        path returned, so the caller can play it without re-downloading.
 
     Args:
         url: YouTube URL to download.
@@ -281,9 +293,20 @@ def download_track(url: str, genre: str = "deep") -> str:
     # Layer 1: URL already in library?
     existing = find_track_by_source_url(url)
     if existing:
-        return (f"ALREADY EXISTS (URL match): "
-                f"{existing.get('title') or existing.get('path')}. "
-                f"Search for a DIFFERENT track.")
+        existing_path = existing.get("path") or ""
+        # Resolve to absolute path so play_specific_track can use it
+        # directly without _resolve_track_path lookup gymnastics.
+        if existing_path and not os.path.isabs(existing_path):
+            existing_path = str(_music_dir() / existing_path)
+        return {
+            "ok": True,
+            "path": existing_path,
+            "message": (
+                f"ALREADY EXISTS (URL match): "
+                f"{existing.get('title') or existing_path}. "
+                f"Use this path with play_specific_track."
+            ),
+        }
 
     # Fetch YouTube metadata WITHOUT downloading
     yt_meta = {}
@@ -313,10 +336,19 @@ def download_track(url: str, genre: str = "deep") -> str:
             track_id=existing["id"], source_url=url,
             original_title=yt_title, original_uploader=yt_uploader,
         )
-        return (f"ALREADY EXISTS (canonical match): "
+        existing_path = existing.get("path") or ""
+        if existing_path and not os.path.isabs(existing_path):
+            existing_path = str(_music_dir() / existing_path)
+        return {
+            "ok": True,
+            "path": existing_path,
+            "message": (
+                f"ALREADY EXISTS (canonical match): "
                 f"{canon['canonical_artist']} - {canon['canonical_song']} "
                 f"({canon.get('canonical_version') or 'Original'}). "
-                f"URL recorded as alias. Search for a DIFFERENT track.")
+                f"URL recorded as alias. Use this path with play_specific_track."
+            ),
+        }
 
     # Layer 3: download with canonical filename
     genre_norm = (genre or "").strip().lower() or "unsorted"
@@ -333,16 +365,30 @@ def download_track(url: str, genre: str = "deep") -> str:
         capture_output=True, text=True, timeout=120,
     )
     if result.returncode != 0:
-        return f"Download failed: {result.stderr[:200]}"
+        return {
+            "ok": False,
+            "path": None,
+            "message": f"Download failed: {result.stderr[:200]}",
+        }
 
     # Find the actual file — yt-dlp may sanitize chars in filename
     after = set(genre_dir.glob("*.mp3"))
     new_files = after - before
     if not new_files:
         if "has already been downloaded" in result.stdout:
-            return ("File with this name already on disk but not in DB — "
-                    "run rescan_library or manual cleanup.")
-        return f"Downloaded to {genre_norm}/ folder (couldn't identify new file)"
+            return {
+                "ok": False,
+                "path": None,
+                "message": (
+                    "File with this name already on disk but not in DB — "
+                    "run rescan_library or manual cleanup."
+                ),
+            }
+        return {
+            "ok": False,
+            "path": None,
+            "message": f"Downloaded to {genre_norm}/ folder (couldn't identify new file)",
+        }
 
     actual_path = next(iter(new_files))
 
@@ -365,5 +411,11 @@ def download_track(url: str, genre: str = "deep") -> str:
         target=_enrich_track, args=(actual_path, genre_norm, yt_meta), daemon=True
     ).start()
 
-    return (f"Downloaded: {canon['canonical_artist']} - {canon['canonical_song']}"
-            f" [{genre_norm}] (confidence {canon['canonical_confidence']:.2f})")
+    return {
+        "ok": True,
+        "path": str(actual_path),
+        "message": (
+            f"Downloaded: {canon['canonical_artist']} - {canon['canonical_song']}"
+            f" [{genre_norm}] (confidence {canon['canonical_confidence']:.2f})"
+        ),
+    }

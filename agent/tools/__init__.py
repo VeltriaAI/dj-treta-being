@@ -98,6 +98,7 @@ from .directives import (
     set_planner_directive,
     set_mood,
     replace_deck,
+    play_specific_track,
     get_directives,
     clear_directives,
     defer_decision,
@@ -141,7 +142,8 @@ __all__ = [
     "save_learning", "recall_learnings",
     # directives
     "set_dj_directive", "set_planner_directive", "set_mood",
-    "replace_deck", "get_directives", "clear_directives", "defer_decision",
+    "replace_deck", "play_specific_track",
+    "get_directives", "clear_directives", "defer_decision",
     # evolution
     "evolve", "propose_change", "review_evolution",
     "spawn_agent", "get_spawn_result",

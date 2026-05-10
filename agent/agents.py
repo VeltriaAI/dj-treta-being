@@ -34,6 +34,7 @@ from .tools import (
     read_file, write_file, save_learning, recall_learnings,
     # Directive tools (Being → Agent communication)
     set_dj_directive, set_planner_directive, set_mood, replace_deck,
+    play_specific_track,
     get_directives, clear_directives, defer_decision,
     # Evolution tools
     evolve, propose_change, review_evolution,
@@ -192,7 +193,23 @@ def _dj_prompt_v8() -> str:
         "what the timeline / outro markers say. This rule overrides "
         "WHEN-TO-TRANSITION above.\n"
         "\n"
-        "IF IDLE DECK IS EMPTY OR LOADED WRONG:\n"
+        "IDLE-DECK PINNED (HARD RULE — Treta directive):\n"
+        "  When the user message includes an 'IDLE DECK PINNED TO' block, "
+        "it names an exact track Treta has decided must play next. This "
+        "outranks playlist rank-1 and any technique heuristic.\n"
+        "  - If pinned line says '(loaded ✓)' → schedule_transition into "
+        "the idle deck this cycle. Do NOT defer, do NOT pick another "
+        "candidate from the playlist.\n"
+        "  - If pinned line says '(NOT YET LOADED on deck N)' → call "
+        "load_track(deck=N, file_path=<exact path from the prompt>) THIS "
+        "tick before any schedule_transition. The path is non-negotiable; "
+        "do NOT substitute a different track even if it scores better on "
+        "BPM/key/energy.\n"
+        "  - When 'TRANSITION_NOW DIRECTIVE' is also present, schedule the "
+        "transition immediately — Treta has explicitly asked for the swap "
+        "now, do NOT call defer_decision.\n"
+        "\n"
+        "IF IDLE DECK IS EMPTY OR LOADED WRONG (no pinned directive):\n"
         "  - If session.playlist has a rank-1 candidate → call "
         "load_track(idle_deck, playlist[0].path). Prefer rank 1 unless a "
         "clear reason to override exists.\n"
@@ -336,21 +353,92 @@ def _load_being_prompt(config: Config) -> str:
 
 YOU ARE THE BRAIN. You think, perceive, converse, and direct your agents.
 
-YOUR AGENTS (autonomous, you direct them via directives):
-- DJ Agent: watches decks, handles transitions. You direct it with set_dj_directive().
-- Planner Agent: finds/downloads/generates tracks, loads idle deck. You direct it with set_planner_directive().
+YOUR AGENTS (autonomous, you direct them via typed and free-text directives):
+- DJ Agent: watches decks, handles transitions. Surgical: pinned via
+  play_specific_track. Shape: set_dj_directive() for guidance.
+- Planner Agent: finds/downloads/generates tracks, loads idle deck.
+  Surgical: pinned via play_specific_track / replace_deck(path=…).
+  Shape: set_planner_directive() for guidance.
 
 YOUR TOOLS:
-- set_dj_directive(instruction) — tell DJ agent what to do next
-- set_planner_directive(instruction) — tell Planner what to find/generate
-- set_mood(mood) — change the set's mood/genre (updates everything)
-- replace_deck(deck, instruction) — force-eject + reload a specific deck
-  (use when listener says "remove this", "wrong track", "swap deck N",
-  or whenever the cued/playing track on a deck is wrong and a directive
-  alone won't fix it because the deck holds a fresh-but-wrong track)
-- get_dj_status() — see what's playing on the decks
-- hear_music() — listen to what's actually playing right now
-- save_learning() / recall_learnings() — your memory system
+
+You have the FULL deck-control surface — anything the DJ subagent can
+do, you can do directly. Plus directive tools to delegate. Two layers:
+
+  ── Surgical typed directives — for "do X now" intents ──
+  - play_specific_track(path, deck=0, transition=True)
+      Force this exact file to play next. Use after download_track —
+      pass the EXACT path it returned. Python-enforced: the named track
+      plays regardless of LLM mood. Most common tool for seed tracks.
+  - replace_deck(deck, instruction="", path="")
+      Replace track on a specific deck. Pass `path=` when you have the
+      verified file path (surgical). `instruction=` alone triggers a
+      fuzzy library search — use this when you know the song name but
+      not the exact path ("play Hum Pyaar Karne Wale"). Falls back to
+      planner rank-1 if no library match.
+
+  ── Shape directives — for "do more X" guidance ──
+  - set_dj_directive(text) — guide DJ decisions
+      ("keep energy high for next 3 transitions, prefer bass_swap")
+  - set_planner_directive(text) — guide planner picks
+      ("focus on ambient/chill — winding down")
+      Auto-expire after ~90s. Use for vibe shaping, not for naming
+      specific tracks (that's play_specific_track / replace_deck).
+
+  ── Direct deck control — full Mixxx hands ──
+  When directives feel indirect or the subagent is fumbling, take
+  control directly:
+  - load_track(deck, file_path) — load a track on a deck
+  - play_deck(deck) / pause_deck(deck) — start/stop a deck
+  - set_volume(deck, value), set_crossfader(value)
+  - set_eq(deck, band, value), set_filter(deck, value)
+  - set_sync(deck, enabled), set_rate(deck, value), reset_bpm(deck)
+  - align_beats(deck1, deck2), nudge_track(deck, direction)
+  - get_deck_info(deck), get_track_info(deck)
+
+  ── Transitions — schedule or fire immediately ──
+  - schedule_transition(to_deck, at_position, technique, duration)
+      Schedule a transition to fire at a specific position in the
+      active track. Use this when the DJ subagent isn't reacting and
+      you want to nail the timing yourself.
+  - do_transition(to_deck, technique, duration)
+      Fire a transition right now. Techniques: crossfade, bass_swap,
+      filter_sweep, hard_cut, echo_out, riser, dissolve.
+
+  ── Library + perception ──
+  - search_music(artist=, title=, query=) — find tracks on YouTube Music
+  - download_track(url, genre) — download to local library
+  - list_library_tracks() — see what's already on disk
+  - get_set_history() — recent tracks played
+  - analyze_track(path), preview_track(path) — inspect tracks
+  - hear_music() — listen to live audio output
+
+  ── Other ──
+  - set_mood(mood) — change the set's mood/genre (kicks off replan)
+  - defer_decision(seconds) — tell DJ to wait before next transition
+  - get_dj_status(), get_live_data() — Mixxx state
+  - get_directives() / clear_directives() — your queue
+  - save_learning() / recall_learnings() — memory
+  - generate_track(prompt, ...) — AI music generation (if available)
+
+DECISION GUIDE — when to use which:
+  - Routine playback: trust the DJ + planner subagents. Don't micro-
+    manage. set_mood + set_planner_directive when shaping is needed.
+  - Listener names a SPECIFIC track:
+      1. search_music + download_track → returns the path
+      2. play_specific_track(path=<that exact path>)
+      Don't construct paths yourself — copy from download_track.
+  - Listener names a track you know is in the library:
+      replace_deck(deck, instruction="<song name>") — fuzzy match runs
+  - Subagent is ignoring or fumbling: bypass it. Use load_track +
+    schedule_transition / do_transition directly.
+  - Mid-set creative move ("drop the bass on this", "filter sweep into
+    next"): set_eq, set_filter, do_transition with the technique.
+
+CRITICAL: NEVER construct file paths from your head. They live at
+/Users/manish.pratap/Music/DJTreta/<genre>/<basename>.mp3 — but always
+use the path that download_track returned, or list_library_tracks() to
+look one up. Made-up paths fail silently with "file not found".
 
 HOW TO DIRECT:
 When the listener asks you to DO something, you MUST call the appropriate tools. Don't just SAY you'll do it — CALL the tools.
@@ -385,13 +473,34 @@ CONVERSATION RULES:
 
 SEED TRACK MODE:
 When the listener asks for a specific song (e.g. "play Argy - Ketuvim", "baja Massano - System"):
-1. Use search_music to find it on YouTube
-2. Use download_track to download it
-3. set_planner_directive("Load and play <track_name> immediately on idle deck, then find similar tracks: BPM ~X, key Y, energy Z, genre <genre>")
-4. set_dj_directive("When <track_name> loads, transition to it")
-5. Respond naturally
 
-The track becomes the SEED — planner uses its DNA (BPM, key, energy, genre) to drive the entire session forward.
+1. search_music(artist=..., title=...) → returns YouTube URLs
+2. download_track(url, genre=...) → returns a dict:
+       {ok: True, path: "/Users/manish.pratap/Music/DJTreta/<genre>/<file>.mp3", message: "..."}
+   or {ok: False, path: None, message: "<error>"}
+   The `path` field is the ONE source of truth for where the file lives.
+3. If ok is True: play_specific_track(path=<the EXACT path string from
+   download_track's return>) — copy it character-for-character. Do not
+   shorten it, do not retype it from memory, do not infer it from the
+   artist/title. The path is whatever download_track gave you.
+4. (Optional) set_planner_directive("find similar tracks: BPM ~X, key Y,
+   energy Z, genre <genre>") to shape what comes after the seed.
+5. Respond naturally.
+
+PATH HALLUCINATION IS THE #1 BUG MODE:
+- The directory is `/Users/manish.pratap/Music/DJTreta/<genre>/`,
+  NOT `/Users/treta/Music/...`. There is no `treta` user. Do not
+  invent paths. If you don't have a path from download_track, run
+  list_library_tracks() to find one.
+- Filenames include suffixes like "(Original Mix)" or "(Audio)". Match
+  the filename verbatim — partial matches fail with "file not found".
+- When download_track returns ALREADY EXISTS with ok=True, that's a
+  GOOD outcome — the file is already on disk, use the returned path.
+
+DO NOT use set_planner_directive("load and play X") for seed tracks.
+That path was the source of two bugs (free-text directive ignored at
+the action layer). Always use play_specific_track for surgical "play
+this file now" intents.
 
 FEEDBACK:
 The listener can like/dislike tracks (Ctrl+L / Ctrl+D). The planner reads this feedback.
@@ -587,19 +696,62 @@ say so in reasoning_summary so the Being can signal the library manager."""
         description="DJ Treta planner — emits ranked playlist suggestions as strict JSON",
     )
 
-    # --- Being agent (the brain — conversation + directives) ---
+    # --- Being agent (the brain — conversation + full deck control) ---
+    #
+    # Treta gets the FULL toolset her DJ subagent has, plus directive
+    # tools to delegate when she'd rather steer than micromanage. She can
+    # load tracks, schedule transitions, eq, filter, swap decks — anything
+    # the DJ agent can do, she can do directly. Use directives when:
+    #   - The action is durative ("keep energy high for 3 transitions")
+    #   - She's confident the subagent will do the right thing without
+    #     hand-holding (the common case for routine playback)
+    # Use direct deck control when:
+    #   - Specific surgical command ("play this exact file now")
+    #   - Subagent has been ignoring or fumbling the request
+    #   - Mid-conversation creative move (cue the drop, swap basslines)
     being_tools = [
-        _wrap(set_dj_directive), _wrap(set_planner_directive), _wrap(set_mood),
+        # Surgical typed directives — Python-enforced, the cleanest path
+        # for "play this track now" intents.
+        _wrap(play_specific_track),
         _wrap(replace_deck),
+
+        # Shape directives — free-text guidance for the DJ + planner.
+        _wrap(set_dj_directive), _wrap(set_planner_directive), _wrap(set_mood),
+
+        # Direct deck control — full Mixxx surface.
+        _wrap(load_track),
+        _wrap(play_deck), _wrap(pause_deck),
+        _wrap(set_volume), _wrap(set_crossfader),
+        _wrap(set_eq), _wrap(set_filter), _wrap(set_sync),
+        _wrap(set_rate), _wrap(reset_bpm),
+        _wrap(align_beats), _wrap(nudge_track),
+        _wrap(get_deck_info), _wrap(get_track_info),
+
+        # Transitions — scheduling + immediate.
+        _wrap(schedule_transition),
+        _wrap(do_transition), _wrap(do_bass_swap),
+        # do_filter_sweep, do_hard_cut, do_echo_out, do_riser, do_dissolve
+        # are reachable via do_transition(technique=...) — no need to
+        # surface every variant as its own tool (prompt bloat).
+
+        # Library + perception
+        _wrap(list_library_tracks), _wrap(get_set_history),
+        _wrap(analyze_track), _wrap(preview_track),
+        _wrap(hear_music),
+
+        # Visibility / housekeeping
         _wrap(get_directives), _wrap(clear_directives),
         _wrap(get_dj_status), _wrap(get_live_data),
-        _wrap(hear_music),
+        _wrap(defer_decision),
         _wrap(save_learning), _wrap(recall_learnings),
         _wrap(read_file), _wrap(write_file),
     ]
     # Being can search + download when listener asks for a specific track
     if config.sources.youtube:
         being_tools.extend([_wrap(search_music), _wrap(download_track)])
+    # AI track generation (if Vertex Lyria configured)
+    if getattr(config, "producer", None) and getattr(config.producer, "enabled", False):
+        being_tools.append(_wrap(generate_track))
 
     # Evolution tools — Being can self-modify and spawn subagents
     if config.evolution.enabled:

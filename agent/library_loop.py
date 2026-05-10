@@ -153,12 +153,20 @@ class LibraryMixin:
         try:
             result = download_track(url, genre=genre)
         except Exception as exc:
-            result = f"Download failed: {exc}"
+            result = {"ok": False, "path": None, "message": f"Download failed: {exc}"}
 
-        result_str = str(result or "")
-        is_failure = result_str.startswith("Download failed")
-        is_already = result_str.startswith("ALREADY EXISTS")
-        # "Downloaded: ..." on success.
+        # download_track now returns a dict; flatten back into the
+        # boolean signals this loop cares about. The string form is
+        # preserved for log lines + downstream text-only consumers.
+        if isinstance(result, dict):
+            result_str = result.get("message", "") or ""
+            is_failure = not result.get("ok", False)
+            is_already = "ALREADY EXISTS" in result_str
+        else:
+            # Defensive: handle pre-refactor string returns just in case.
+            result_str = str(result or "")
+            is_failure = result_str.startswith("Download failed")
+            is_already = result_str.startswith("ALREADY EXISTS")
 
         if is_failure:
             attempts += 1

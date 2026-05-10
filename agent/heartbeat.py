@@ -143,6 +143,15 @@ class HeartbeatMixin:
         # Sync co-being deck ownership (Phase 7) before any decisions.
         self._sync_deck_ownership()
 
+        # Retire stale shape directives so prompt rendering doesn't show
+        # an expired DIRECTIVE FROM TRETA line. Surgical (load_track,
+        # transition_now) directives don't auto-expire — they retire via
+        # satisfaction or supersession. See plan: atomic-cuddling-manatee.
+        try:
+            self.session.expire_stale()
+        except Exception as exc:
+            log.debug(f"directive expire_stale failed: {exc}")
+
         status = _get_status(self.config.mixxx.url)
         if not status:
             _ensure_mixxx(self.config)
@@ -388,6 +397,62 @@ class HeartbeatMixin:
                 if o != "treta"
             ]
 
+            # Pinned-idle directive — when Treta has issued a play_specific_track
+            # or replace_deck(path=…), surface the named title/path so the DJ
+            # prompt renders an unambiguous "IDLE DECK PINNED TO" block. Belt
+            # to the planner's suspenders; the planner usually loads the pinned
+            # track first, but if it hasn't yet (race, deck contention) the DJ
+            # gets an explicit instruction to load_track before transitioning.
+            # See plan: atomic-cuddling-manatee.
+            pinned_idle_title = ""
+            pinned_idle_path = ""
+            pinned_idle_loaded = False
+            transition_now_pending = False
+            try:
+                d_load = self.session.find_active_directive(
+                    "load_track", target="planner", deck=idle_deck,
+                )
+                if d_load:
+                    p = d_load.get("payload") or {}
+                    pinned_idle_path = p.get("path", "") or ""
+                    pinned_idle_title = p.get("title", "") or ""
+                    if pinned_idle_path and idle_file:
+                        pinned_idle_loaded = (
+                            pinned_idle_path == idle_file
+                            or pinned_idle_path.endswith("/" + idle_file)
+                            or idle_file.endswith(
+                                "/" + pinned_idle_path.rsplit("/", 1)[-1]
+                            )
+                        )
+                d_trans = self.session.find_active_directive(
+                    "transition_now", target="dj", deck=idle_deck,
+                )
+                if d_trans:
+                    # Only surface as pending when the bound load is satisfied
+                    # (or there's no bound load). Otherwise we'd ask DJ to
+                    # transition into a track that isn't loaded yet.
+                    bound_id = (d_trans.get("payload") or {}).get("bound_to")
+                    if bound_id:
+                        # Check the bound load_track directive's status.
+                        bound = next(
+                            (d for d in self.session.directives
+                             if d.get("id") == bound_id),
+                            None,
+                        )
+                        if bound and bound.get("status") == "satisfied":
+                            transition_now_pending = True
+                    else:
+                        transition_now_pending = True
+                # One-and-done: once surfaced (bound load is loaded on the
+                # idle deck), mark the directive satisfied. The DJ gets the
+                # prompt rule this cycle; subsequent cycles fall back to
+                # normal transition logic. This avoids re-asserting the
+                # directive on every heartbeat after it's done its job.
+                if transition_now_pending and d_trans:
+                    self.session.mark_satisfied(d_trans.get("id"))
+            except Exception as exc:
+                log.debug(f"pinned-idle resolve failed: {exc}")
+
             instruction = build_dj_user_message(
                 active_track=active_track,
                 position=position,
@@ -419,6 +484,10 @@ class HeartbeatMixin:
                 idle_mix_in=idle_mix_in,
                 idle_mix_out=idle_mix_out,
                 idle_already_played=_idle_already_played,
+                pinned_idle_title=pinned_idle_title,
+                pinned_idle_path=pinned_idle_path,
+                pinned_idle_loaded=pinned_idle_loaded,
+                transition_now_pending=transition_now_pending,
             )
 
             self._agent_busy = True
@@ -433,10 +502,12 @@ class HeartbeatMixin:
                         log.info(f"DJ decision: {result[:500]}")
                         if hasattr(self, '_ws_broadcast'):
                             self._ws_broadcast("log", {"text": f"DJ decision: {result[:200]}"})
-                    # Clear directive after DJ has read it
-                    if self.dj_directive:
-                        log.info(f"DJ directive consumed: {self.dj_directive[:80]}")
-                        self.dj_directive = ""
+                    # Shape directives no longer cleared here — they have
+                    # a TTL and auto-expire via session.expire_stale().
+                    # The transition_now directive (if present) will be
+                    # marked satisfied when schedule_transition fires
+                    # (handled in the transition tool, not here).
+                    # See plan: atomic-cuddling-manatee.
                     self._record_playing_tracks()
                     self._check_set_duration()
                 except Exception as e:
@@ -513,6 +584,25 @@ class HeartbeatMixin:
         """
         sched_file = runtime_path("scheduled-transition.json")
         lock_file = runtime_path("transition-pending.lock")
+
+        # Stale-lock TTL guard: a transition-pending.lock file that's
+        # older than 120s is almost always orphaned (transition aborted
+        # mid-execution, daemon crashed before unlinking, etc.). Without
+        # this, the lock blocks user_skip indefinitely (observed live
+        # 8 May — skip silently failed for 14 minutes until manual rm).
+        # 120s is well past the longest plausible transition duration
+        # (echo_out caps at ~64s, crossfade at ~60s) plus generous slack.
+        try:
+            if lock_file.exists():
+                age = time.time() - lock_file.stat().st_mtime
+                if age > 120:
+                    log.warning(
+                        f"[SIGNAL] stale transition lock ({age:.0f}s old) "
+                        f"— unlinking before signal exec"
+                    )
+                    lock_file.unlink(missing_ok=True)
+        except Exception as exc:
+            log.debug(f"stale lock check failed: {exc}")
 
         # Phase 7: if idle deck is externally owned, Python signals MUST NOT
         # write into it. DJ still manages treta-owned decks normally, but

@@ -179,6 +179,27 @@ def do_transition(to_deck: int, duration: int = 60, bpm_after: str = "keep", gli
 
     duration = max(10, min(120, duration))
 
+    # Clamp `duration` to fit within the OUTGOING track's remaining audio.
+    # Without this, a long crossfade (e.g. 60s) on a track with 30s left
+    # runs past the audio cliff — the safety-belt watchdog (Patch C below)
+    # catches the cliff but only after a noticeable mid-fade jump. Clamping
+    # up front gives a smooth fade for the whole duration. 4s margin so
+    # the tail breathes; floor at 10s to keep the fade musical.
+    if status:
+        try:
+            out_rem = float(
+                status.get(f"deck{out_deck}", {}).get("remaining_seconds", 0) or 0
+            )
+        except Exception:
+            out_rem = 0.0
+        if out_rem > 0 and duration > out_rem - 4:
+            new_duration = max(10, int(out_rem - 4))
+            log.warning(
+                f"[CROSSFADE] clamping duration {duration}s → {new_duration}s "
+                f"because outgoing deck{out_deck} only has {out_rem:.1f}s left"
+            )
+            duration = new_duration
+
     # Sync + play + phase align (let Mixxx handle BPM matching naturally)
     _mixxx_post("/api/sync", {"deck": to_deck})
     _mixxx_post("/api/play", {"deck": to_deck})
@@ -302,6 +323,25 @@ def do_bass_swap(to_deck: int, duration: int = 60, bpm_after: str = "keep", glid
         remaining = float(deck_state.get("remaining_seconds", 0) or 0)
         if remaining < 30:
             return f"ABORTED: Deck {to_deck} track has only {remaining:.0f}s left -- load a fresh track first."
+
+    # Clamp `duration` to fit within the OUTGOING track's remaining audio.
+    # bass_swap floor is 20s (smaller than crossfade) because the swap
+    # itself only needs ~1 bar; the surrounding fade can be tighter. 4s
+    # margin matches crossfade + echo_out for consistency.
+    if status:
+        try:
+            out_rem = float(
+                status.get(f"deck{out_deck}", {}).get("remaining_seconds", 0) or 0
+            )
+        except Exception:
+            out_rem = 0.0
+        if out_rem > 0 and duration > out_rem - 4:
+            new_duration = max(20, int(out_rem - 4))
+            log.warning(
+                f"[BASS-SWAP] clamping duration {duration}s → {new_duration}s "
+                f"because outgoing deck{out_deck} only has {out_rem:.1f}s left"
+            )
+            duration = new_duration
 
     # Outgoing BPM → 1-bar duration (used to size the quantized swap window)
     out_bpm = 120.0

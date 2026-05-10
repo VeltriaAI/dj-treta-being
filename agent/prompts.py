@@ -85,6 +85,20 @@ def build_dj_user_message(
     # DJ scheduled crossfades into already-played tracks (replay) because the
     # info was buried in implicit playlist filtering.
     idle_already_played: bool = False,
+    # Typed-directive surfacing (atomic-cuddling-manatee plan).
+    # When Treta has issued a play_specific_track / replace_deck(path=…)
+    # directive, the heartbeat passes the resolved title + path here so the
+    # DJ prompt renders an unambiguous "IDLE DECK PINNED TO" block. The
+    # planner has usually already loaded the pinned track by the time DJ
+    # runs, but this is the belt-and-suspenders rule that catches the case
+    # where the loaded title doesn't match (deck contention, stale state).
+    pinned_idle_title: str = "",
+    pinned_idle_path: str = "",
+    pinned_idle_loaded: bool = False,
+    # transition_now directive present and consumable. When True, DJ
+    # should schedule a transition into idle this cycle (no "let it
+    # breathe" deferral) — Treta has explicitly asked for the swap.
+    transition_now_pending: bool = False,
 ) -> str:
     """Build the user message for DJ agent heartbeat decisions.
 
@@ -204,6 +218,42 @@ def build_dj_user_message(
     else:
         idle_status_line = f"IDLE DECK STATUS: FRESH (deck {idle_deck} OK to mix into)\n"
 
+    # ── Pinned-idle directive (atomic-cuddling-manatee fix) ─────────
+    # When Treta has called play_specific_track or replace_deck(path=…),
+    # the planner has loaded that exact track on the idle deck. The DJ
+    # MUST honour this: schedule a transition into the pinned track,
+    # don't pick another candidate from the playlist.
+    pinned_block = ""
+    if pinned_idle_path:
+        if pinned_idle_loaded:
+            pinned_block = (
+                f"IDLE DECK PINNED TO: '{pinned_idle_title[:60]}' (loaded ✓)\n"
+                f"  → Treta directive: this exact track must play next. "
+                f"Schedule the transition into deck {idle_deck} now; do NOT "
+                f"defer or pick another candidate.\n"
+            )
+        else:
+            pinned_block = (
+                f"IDLE DECK PINNED TO: '{pinned_idle_title[:60]}' "
+                f"(NOT YET LOADED on deck {idle_deck})\n"
+                f"  → Treta directive: load this exact path on deck "
+                f"{idle_deck} BEFORE scheduling any transition. Call "
+                f"load_track(deck={idle_deck}, "
+                f"file_path={pinned_idle_path!r}). Path is non-negotiable.\n"
+            )
+
+    # When Treta has emitted a transition_now directive (typically as part
+    # of play_specific_track), surface it so the DJ doesn't sit on
+    # "wait for outro" when the listener has explicitly asked for the
+    # swap right now.
+    transition_now_block = ""
+    if transition_now_pending:
+        transition_now_block = (
+            f"TRANSITION_NOW DIRECTIVE: schedule a transition into deck "
+            f"{idle_deck} this cycle. Pick a sensible technique + duration "
+            f"based on the music, but do NOT call defer_decision.\n"
+        )
+
     # ── BAR-COUNT REFERENCE (v8.2 — pro DJs think in bars, not seconds) ──
     # Use active_bpm if > 0, fall back to idle_bpm or a 120 BPM placeholder.
     _ref_bpm = active_bpm if active_bpm and active_bpm > 0 else (idle_bpm or 120)
@@ -276,7 +326,9 @@ def build_dj_user_message(
         f"NEXT: '{idle_track[:40]}' on deck {idle_deck}{idle_dur_str} "
         f"(BPM:{idle_bpm:.0f} file:{idle_file_bpm:.0f}, "
         f"Camelot:{idle_camelot_str} {idle_energy_str})\n"
+        f"{pinned_block}"
         f"{idle_status_line}"
+        f"{transition_now_block}"
         f"{idle_points_block}"
         f"  TIMELINE: {idle_timeline}\n"
         f"{ideal_hint}\n"
@@ -284,6 +336,10 @@ def build_dj_user_message(
         f"{playlist_block}"
         f"{pending_info}\n"
         f"Decide now. Your options:\n"
+        f"  - HARD RULE: if IDLE DECK PINNED TO names a path that does NOT "
+        f"match the currently loaded idle, you MUST call load_track FIRST "
+        f"on deck {idle_deck} with that exact path before any "
+        f"schedule_transition. Pinned-idle outranks all other candidates.\n"
         f"  - HARD RULE: if IDLE DECK STATUS = ALREADY PLAYED, do NOT call "
         f"schedule_transition to deck {idle_deck}. Call "
         f"defer_decision(seconds=15) and wait for a fresh load.\n"
