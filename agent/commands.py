@@ -170,12 +170,50 @@ class CommandsMixin:
             context = self._build_context(_get_status(self.config.mixxx.url))
             history = self._format_history()
 
+            # Boot-replay: on the first Treta invocation after fresh daemon
+            # boot, prepend a "RECENT CONVERSATION" block built from today's
+            # chat JSONL. This gives her continuity across restarts. The
+            # flag flips False after first use so subsequent prompts stay
+            # clean (ADK session accumulates new turns normally).
+            replay_prefix = ""
+            if getattr(self, "_chat_replay_pending", False):
+                try:
+                    from .chat_persistence import load_recent_turns, format_replay_block
+                    recent = load_recent_turns(n=20, max_age_hours=24.0)
+                    replay_prefix = format_replay_block(recent, max_chars=4000)
+                    if replay_prefix:
+                        log.info(
+                            f"[chat-replay] prepending {len(recent)} prior turns "
+                            f"({len(replay_prefix)} chars) to Treta's first prompt"
+                        )
+                except Exception as _replay_exc:
+                    log.debug(f"chat replay failed (non-fatal): {_replay_exc}")
+                # Always flip the flag after attempt — don't retry replay
+                # on subsequent invocations.
+                self._chat_replay_pending = False
+
+            # Pull active self_suggestion directives so they surface in
+            # Treta's prompt as an INNER NUDGE block. Skipped in readonly
+            # mode (web listener should never see Treta's inner state).
+            active_suggestions = []
+            if not readonly:
+                try:
+                    from .tools.suggestions import list_self_suggestions
+                    active_suggestions = list_self_suggestions()
+                except Exception as _sug_exc:
+                    log.debug(
+                        f"list_self_suggestions failed (non-fatal): {_sug_exc}"
+                    )
+
             being_msg = build_being_user_message(
                 context=context,
                 history=history,
                 message=message,
                 readonly=readonly,
+                self_suggestions=active_suggestions,
             )
+            if replay_prefix:
+                being_msg = replay_prefix + "\n" + being_msg
 
             with self._talk_lock:
                 result = self._invoke_being(
@@ -187,6 +225,42 @@ class CommandsMixin:
             self._chat_history.append((message, result))
             if len(self._chat_history) > 10:
                 self._chat_history = self._chat_history[-10:]
+
+            # Compute durable-storage args once (LanceDB + JSONL share them).
+            set_id = ""
+            if self.current_set and isinstance(self.current_set, dict):
+                set_id = str(self.current_set.get("id") or "")
+            mood = getattr(self.session, "mood", "") or ""
+
+            # Durable semantic memory — embed this turn so Treta can
+            # recall it across daemon restarts via
+            # recall_similar_interaction(). Best-effort; failures
+            # never break the chat flow. Set evolution plan Tier 1.4.
+            try:
+                from .memory import store_interaction
+                store_interaction(
+                    message_text=message,
+                    treta_response=result,
+                    set_id=set_id,
+                    mood=mood,
+                )
+            except Exception as _mem_exc:
+                log.debug(f"store_interaction failed (non-fatal): {_mem_exc}")
+
+            # Ordered + auditable JSONL — daily file under
+            # ~/.beings/dj-treta/sessions/. Replayed on next daemon boot
+            # as a context block prepended to Treta's first prompt,
+            # giving her conversation continuity across restarts.
+            try:
+                from .chat_persistence import append_chat_turn
+                append_chat_turn(
+                    message=message,
+                    response=result,
+                    set_id=set_id,
+                    mood=mood,
+                )
+            except Exception as _jsonl_exc:
+                log.debug(f"chat JSONL append failed (non-fatal): {_jsonl_exc}")
 
             self._last_command_id = cmd_id
             self._last_result = result

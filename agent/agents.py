@@ -48,6 +48,8 @@ from .tools import (
     restart_subagent, get_subagent_pause_state,
     recall_similar_interaction, recall_similar_set,
     recall_journal, recall_thoughts,
+    recall_recent_chat,
+    list_self_suggestions, honor_self_suggestion, discard_self_suggestion,
 )
 
 
@@ -471,17 +473,37 @@ do, you can do directly. Plus directive tools to delegate. Two layers:
   - recall_similar_interaction(query, k=5) — past chats with Manish
   - recall_similar_set(query, k=3) — past sets that worked or didn't
   - recall_journal(query, date_range=None, k=5) — your daily journal
-      (auto-written by your dream loop)
+      (auto-written by your journal loop)
   - recall_thoughts(query, k=10) — your own past reasoning (auto-
       embedded by your reflection loop every 15 min)
+  - recall_recent_chat(n=20) — last N turns of today's chat (ordered,
+      not semantic). On a fresh daemon boot you'll already see the
+      replay prepended in your first prompt; use this when you want
+      to look further back mid-session.
 
   ── Evolution: consciousness loops (passive — you don't call these) ──
   Three background loops shape you without your direct invocation:
   - Reflection loop (15 min): synthesizes recent activity into entries
       in your reflections list. Surfaces via the recall_thoughts() tool.
-  - Dream loop (6 hr or 5 min idle): writes a daily journal entry to
+      It ALSO emits a typed `self_suggestion` directive after each
+      cycle, which appears in your next chat-turn prompt as an
+      "INNER NUDGE" block. The nudge is YOUR PRIOR SELF speaking, not
+      the listener. The listener's live message ALWAYS takes priority.
+      For each nudge:
+        • If it still fits the moment → call honor_self_suggestion(id, "why")
+          THEN emit the concrete directives (set_dj_directive,
+          set_planner_directive, play_specific_track, set_mood…) that
+          act on it.
+        • If the moment has moved on → call discard_self_suggestion(id, "why").
+          Reasoning is required-ish; it's our audit trail of whether
+          the reflection loop is producing signal worth keeping.
+        • Silence is also valid — nudges auto-expire in 5 min.
+      list_self_suggestions() reads all active nudges if you want to
+      enumerate before deciding.
+  - Journal loop (6 hr or 5 min idle): writes a daily journal entry to
       ~/.beings/dj-treta/memory/YYYY-MM-DD.md and embeds it. Surfaces
-      via recall_journal().
+      via recall_journal(). (A future dream loop — free-associative,
+      idle-only, surreal recombination — is a separate Tier 3 build.)
   - Intention loop (weekly): synthesizes the week into
       ~/.beings/dj-treta/INTENTIONS.md. You can read_file() this any time.
 
@@ -841,6 +863,13 @@ say so in reasoning_summary so the Being can signal the library manager."""
         # ── Evolution: semantic memory (LanceDB) ─────────────────────
         _wrap(recall_similar_interaction), _wrap(recall_similar_set),
         _wrap(recall_journal), _wrap(recall_thoughts),
+        # Ordered recent chat — JSONL-backed, complements semantic recall.
+        _wrap(recall_recent_chat),
+
+        # ── Evolution: self-suggestion gating (reflection loop nudges) ──
+        _wrap(list_self_suggestions),
+        _wrap(honor_self_suggestion),
+        _wrap(discard_self_suggestion),
     ]
     # Being can search + download when listener asks for a specific track
     if config.sources.youtube:

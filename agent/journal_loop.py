@@ -1,4 +1,4 @@
-"""Dream loop — every 6 hr OR after 5 min idle, synthesize the day.
+"""Journal loop — every 6 hr OR after 5 min idle, synthesize the day.
 
 Pulls reflections + set archives + listener interactions from the last
 6 hr, calls Gemini with 'synthesize the day' prompt, writes journal
@@ -7,6 +7,13 @@ LanceDB.journal_entries.
 
 Idle detection: if Mixxx decks 1+2 not playing OR chat_history hasn't
 grown in 5 min, treat as idle and fire early.
+
+Naming note: this was originally `dream_loop`, but the implementation
+is linear daily synthesis — analytical, structured, first-person. A
+true dream loop (random recombination across memory, idle-only, high
+temperature, surreal connection-finding) is a separate Tier 3 build
+that needs weeks of accumulated memory to be meaningful. This module
+is the journal layer. See SOUL.md "Evolution Log" + plan file.
 """
 
 from __future__ import annotations
@@ -24,13 +31,13 @@ import httpx
 
 log = logging.getLogger("dj-treta")
 
-DREAM_INTERVAL_S = 6 * 3600          # 6 hours
+JOURNAL_INTERVAL_S = 6 * 3600          # 6 hours
 IDLE_TRIGGER_S = 5 * 60              # 5 min of idle → fire early
 TICK_INTERVAL_S = 60                 # check idle every 60s
 JOURNAL_DIR = Path.home() / ".beings" / "dj-treta" / "memory"
 
 
-class DreamLoop:
+class JournalLoop:
     def __init__(self, being):
         self.being = being
         self._stop = threading.Event()
@@ -41,16 +48,16 @@ class DreamLoop:
 
     def start(self):
         self._thread = threading.Thread(
-            target=self._run, daemon=True, name="dream-loop"
+            target=self._run, daemon=True, name="journal-loop"
         )
         self._thread.start()
-        log.info("[dream] started")
+        log.info("[journal] started")
 
     def stop(self):
         self._stop.set()
 
     def _run(self):
-        # Wait an initial period before considering a dream cycle.
+        # Wait an initial period before considering a journal cycle.
         if self._stop.wait(TICK_INTERVAL_S * 5):
             return
         self._last_run_ts = time.time()
@@ -61,21 +68,21 @@ class DreamLoop:
                     self._last_run_ts = time.time()
                     self._idle_since = 0.0
             except Exception as exc:
-                log.warning(f"[dream] cycle error: {exc}")
+                log.warning(f"[journal] cycle error: {exc}")
             if self._stop.wait(TICK_INTERVAL_S):
                 return
 
     def _should_fire(self) -> bool:
         now = time.time()
         # Periodic: 6 hr since last run.
-        if now - self._last_run_ts >= DREAM_INTERVAL_S:
+        if now - self._last_run_ts >= JOURNAL_INTERVAL_S:
             return True
         # Idle: 5 min of no music + no new chat.
         if self._is_idle(now):
             if self._idle_since == 0.0:
                 self._idle_since = now
             elif now - self._idle_since >= IDLE_TRIGGER_S:
-                # Don't fire too often — require at least 30 min since last dream.
+                # Don't fire too often — require at least 30 min since last journal.
                 if now - self._last_run_ts >= 30 * 60:
                     return True
         else:
@@ -110,12 +117,12 @@ class DreamLoop:
 
     def _run_once(self):
         if getattr(self.being.session, "dj_paused", False):
-            log.debug("[dream] dj_paused — skipping cycle")
+            log.debug("[journal] dj_paused — skipping cycle")
             return
 
         slice_data = self._gather_slice()
         if not slice_data["any_activity"]:
-            log.debug("[dream] no activity in window — skipping")
+            log.debug("[journal] no activity in window — skipping")
             return
 
         body, themes = self._synthesize(slice_data)
@@ -127,24 +134,24 @@ class DreamLoop:
         try:
             self._write_markdown(today, body, themes)
         except Exception as exc:
-            log.warning(f"[dream] markdown write failed: {exc}")
+            log.warning(f"[journal] markdown write failed: {exc}")
 
         # Embed into LanceDB.journal_entries (best-effort).
         try:
             from .memory import store_journal_entry
             store_journal_entry(date=today, body=body, themes=themes)
         except Exception as exc:
-            log.debug(f"[dream] journal embed failed (non-fatal): {exc}")
+            log.debug(f"[journal] journal embed failed (non-fatal): {exc}")
 
         log.info(
-            f"[dream] journal entry recorded ({len(body)} chars, "
+            f"[journal] journal entry recorded ({len(body)} chars, "
             f"themes={themes})"
         )
 
     def _gather_slice(self) -> dict:
         """Pull last 6 hr of activity into structured input."""
         now = time.time()
-        cutoff = now - DREAM_INTERVAL_S
+        cutoff = now - JOURNAL_INTERVAL_S
         sess = self.being.session
 
         # Tracks played in window.
@@ -228,7 +235,7 @@ class DreamLoop:
             body, themes = self._parse_themes(response.strip())
             return body, themes
         except Exception as exc:
-            log.warning(f"[dream] LLM/parse failed: {exc}")
+            log.warning(f"[journal] LLM/parse failed: {exc}")
             return "", []
 
     def _parse_themes(self, text: str):
@@ -264,7 +271,7 @@ class DreamLoop:
             r.raise_for_status()
             return r.json()["choices"][0]["message"]["content"]
         except Exception as exc:
-            log.warning(f"[dream] LLM call failed: {exc}")
+            log.warning(f"[journal] LLM call failed: {exc}")
             return ""
 
     def _write_markdown(self, date: str, body: str, themes: list):

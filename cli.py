@@ -488,6 +488,19 @@ def _reset(hard=False):
     DJ_HOME = Path.home() / "beings" / "dj-treta"
     (DJ_HOME / ".beings" / "session.json").unlink(missing_ok=True)
 
+    # Truncate today's chat JSONL — listener wanted reset to wipe
+    # conversation continuity along with everything else. Older daily
+    # JSONLs stay on disk for audit (they're part of Treta's long-term
+    # narrative). Hard reset wipes everything anyway via the LanceDB
+    # nuke below (when wired); for now soft-reset just truncates today.
+    try:
+        from agent.chat_persistence import truncate_today_jsonl
+        bytes_removed = truncate_today_jsonl()
+        if bytes_removed:
+            console.print(f"  Chat JSONL truncated ({bytes_removed} bytes)")
+    except Exception as exc:
+        console.print(f"[dim]chat JSONL truncate skipped: {exc}[/dim]")
+
     # Defensive: clear the mood_profile_cache so a stale entry from a prior
     # session (e.g. an earlier "techno-deep" default that resolved into the
     # cache) can't be served back to a fresh "melodic-techno" boot. Hard

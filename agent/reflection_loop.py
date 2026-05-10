@@ -24,6 +24,12 @@ log = logging.getLogger("dj-treta")
 REFLECTION_INTERVAL_S = 15 * 60       # 15 min
 MAX_REFLECTIONS_RETAINED = 20
 
+# Self-suggestion directive TTL — how long the inner-nudge sits in Treta's
+# queue before auto-expiring. 5 min matches the reflection cadence's
+# usefulness window: by the time the next reflection runs, any prior
+# nudge that Treta didn't act on is stale.
+SELF_SUGGESTION_TTL_S = 5 * 60
+
 
 class ReflectionLoop:
     def __init__(self, being):
@@ -70,6 +76,14 @@ class ReflectionLoop:
             return
 
         self._record(synthesis)
+
+        # Emit a typed self_suggestion directive for Treta to evaluate
+        # on her next chat turn. Gated: skipped when dj_paused (she has
+        # the wheel and doesn't need nagging) or when the suggestion is
+        # vacuous (no next_intent, no to_improve bullets). New
+        # suggestions supersede prior unresolved ones — listener gets
+        # the freshest nudge, not a stale backlog.
+        self._emit_self_suggestion(synthesis)
 
         # Embed into LanceDB treta_thoughts (best-effort).
         try:
@@ -207,6 +221,70 @@ class ReflectionLoop:
         except Exception as exc:
             log.warning(f"[reflection] LLM call failed: {exc}")
             return ""
+
+    def _emit_self_suggestion(self, synthesis: dict) -> None:
+        """Append a self_suggestion directive Treta will see on next chat turn.
+
+        Gating rules:
+          - skip if `dj_paused` (Treta has the wheel)
+          - skip if both next_intent AND to_improve are empty (vacuous)
+          - supersede prior unresolved self_suggestion directives
+            (only one active inner-nudge at a time)
+          - TTL ~5 min — if Treta doesn't see it before then, it's stale
+        """
+        sess = self.being.session
+        if getattr(sess, "dj_paused", False):
+            log.debug("[reflection] dj_paused — not emitting self_suggestion")
+            return
+
+        next_intent = (synthesis.get("next_intent") or "").strip()
+        to_improve = synthesis.get("to_improve") or []
+        if not next_intent and not to_improve:
+            log.debug("[reflection] vacuous synthesis — no self_suggestion emitted")
+            return
+
+        try:
+            sug_id = sess.add_directive(
+                kind="self_suggestion",
+                target="treta",
+                payload={
+                    "next_intent": next_intent,
+                    "to_improve": to_improve,
+                    "went_well": synthesis.get("went_well") or [],
+                    "mood_drift": synthesis.get("mood_drift", ""),
+                    "engagement_delta": synthesis.get(
+                        "listener_engagement_delta"
+                    ),
+                    "from_reflection_ts": time.time(),
+                },
+                ttl_seconds=SELF_SUGGESTION_TTL_S,
+                supersede_kinds=["self_suggestion"],
+            )
+            log.info(
+                f"[reflection] emitted self_suggestion {sug_id}: "
+                f"{next_intent[:80]}"
+            )
+            # Audit trail — log the emission alongside Treta's later
+            # honor/discard decision, so we can review whether the
+            # reflection loop is producing signal worth acting on.
+            try:
+                from .memory import store_thought
+                store_thought(
+                    ts=time.time(),
+                    agent_id="treta:reflection-suggestion",
+                    decision_text=(
+                        f"Emitted self_suggestion: '{next_intent[:160]}'. "
+                        f"Awaiting Treta's gate."
+                    ),
+                    context={
+                        "directive_id": sug_id,
+                        "synthesis": synthesis,
+                    },
+                )
+            except Exception as exc:
+                log.debug(f"[reflection] suggestion-thought embed failed: {exc}")
+        except Exception as exc:
+            log.warning(f"[reflection] self_suggestion emit failed: {exc}")
 
     def _record(self, synthesis: dict):
         """Append to session.reflections, FIFO at MAX_REFLECTIONS_RETAINED."""

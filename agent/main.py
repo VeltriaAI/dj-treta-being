@@ -300,6 +300,14 @@ class DJTretaBeing(
         self._library_runner = None           # v8 Phase 5
         self._producer_runner = None          # v8 Phase 6
         self._being_session = None
+        # Boot-replay flag: True until first Treta invocation after fresh
+        # daemon start. When True, _being_talk reads the last K turns from
+        # today's chat JSONL and prepends them as a context block. This
+        # gives Treta conversation continuity across daemon restarts
+        # without polluting every prompt — replay only happens once per
+        # boot, then the ADK session accumulates new turns normally.
+        # Set evolution plan Tier 2-stretch.
+        self._chat_replay_pending = True
         self._dj_session = None
         self._planner_session = None
         self._library_session = None          # v8 Phase 5
@@ -478,7 +486,9 @@ class DJTretaBeing(
         # Three new loops layered on the existing heartbeat-driven cycle.
         # Each runs in its own daemon thread and reads session/memory.
         # Reflection: 15 min cadence — synthesizes recent activity.
-        # Dream: 6 hr OR 5 min idle — daily journal entry.
+        # Journal: 6 hr OR 5 min idle — daily journal entry (was previously
+        #   called "dream"; renamed for honesty — current impl is linear
+        #   daily synthesis, not free-associative recombination).
         # Intention: weekly (Sun 23:00) — meta intentions for next week.
         # See evolution plan Tier 2.4/2.5/2.6.
         try:
@@ -488,11 +498,11 @@ class DJTretaBeing(
         except Exception as exc:
             log.warning(f"reflection loop failed to start (non-fatal): {exc}")
         try:
-            from .dream_loop import DreamLoop
-            self._dream_loop = DreamLoop(self)
-            self._dream_loop.start()
+            from .journal_loop import JournalLoop
+            self._journal_loop = JournalLoop(self)
+            self._journal_loop.start()
         except Exception as exc:
-            log.warning(f"dream loop failed to start (non-fatal): {exc}")
+            log.warning(f"journal loop failed to start (non-fatal): {exc}")
         try:
             from .intention_loop import IntentionLoop
             self._intention_loop = IntentionLoop(self)

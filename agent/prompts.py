@@ -783,8 +783,17 @@ def build_being_user_message(
     history: str,
     message: str,
     readonly: bool = False,
+    self_suggestions: list[dict] | None = None,
 ) -> str:
-    """Build the user message for Being agent conversation."""
+    """Build the user message for Being agent conversation.
+
+    `self_suggestions`: optional list of active self_suggestion directives
+    surfaced from the reflection loop. Rendered as an INNER NUDGE block
+    above the listener message. Treta is expected to either
+    honor_self_suggestion(id, reason) or discard_self_suggestion(id, reason)
+    before responding — pure silence also leaves them to TTL-expire.
+    Skipped entirely in readonly mode (web listener).
+    """
     readonly_tag = ""
     if readonly:
         readonly_tag = (
@@ -794,8 +803,35 @@ def build_being_user_message(
             "Just chat, share your thoughts on the music, describe the vibe.\n"
         )
 
+    nudge_block = ""
+    if self_suggestions and not readonly:
+        lines = [
+            "── INNER NUDGE FROM YOUR REFLECTION LOOP ──",
+            "These are suggestions from your prior self, not from the listener.",
+            "Listener's live message ALWAYS takes priority. Honor a nudge only "
+            "if it still fits the moment; discard with a reason if it doesn't. "
+            "Use honor_self_suggestion(id, reasoning) or "
+            "discard_self_suggestion(id, reasoning) to gate each one before "
+            "you act. Silence is also fine — they auto-expire.",
+        ]
+        for s in self_suggestions[:3]:  # cap at 3 to keep prompt tight
+            ni = (s.get("next_intent") or "").strip()
+            ti = s.get("to_improve") or []
+            md = (s.get("mood_drift") or "").strip()
+            ed = s.get("engagement_delta")
+            lines.append(f"• id={s.get('id')} — intent: {ni or '(none)'}")
+            if ti:
+                lines.append(f"    to_improve: {ti}")
+            if md:
+                lines.append(f"    mood_drift: {md}")
+            if ed is not None:
+                lines.append(f"    listener_engagement_delta: {ed}")
+        lines.append("── END INNER NUDGE ──\n")
+        nudge_block = "\n".join(lines) + "\n"
+
     return (
         f"{context}\n\n{history}\n{readonly_tag}\n"
+        f"{nudge_block}"
         f'The listener says: "{message}"\n\n'
         f"Respond naturally. Set directives only if they asked you to DO something "
         f"(change mood, play something specific, etc)."

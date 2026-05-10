@@ -142,6 +142,12 @@ from .meta_control import (
     restart_subagent,
     get_subagent_pause_state,
 )
+# Self-suggestion gating — Treta's gate over her own reflection loop.
+from .suggestions import (
+    list_self_suggestions,
+    honor_self_suggestion,
+    discard_self_suggestion,
+)
 # Memory recall tools — wrap the agent.memory module (LanceDB-backed)
 # in single-import shims so they can be _wrap()-ed by ADK like other tools.
 from ..memory import (
@@ -150,6 +156,9 @@ from ..memory import (
     recall_journal,
     recall_thoughts,
 )
+# Ordered recent chat (within today) — JSONL-backed, complements
+# the semantic-recall tools above.
+from ..chat_persistence import recall_recent_chat
 
 __all__ = [
     # helpers
@@ -189,6 +198,9 @@ __all__ = [
     "plan_set_arc", "progress_set_arc", "clear_set_arc",
     "pause_subagent", "resume_subagent", "force_replan",
     "restart_subagent", "get_subagent_pause_state",
+    "list_self_suggestions", "honor_self_suggestion",
+    "discard_self_suggestion",
     "recall_similar_interaction", "recall_similar_set",
     "recall_journal", "recall_thoughts",
+    "recall_recent_chat",
 ]
