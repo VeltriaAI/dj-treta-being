@@ -114,6 +114,30 @@ class WSServerMixin:
                 data = json.loads(sf.read_text()) if sf.exists() else {}
                 return _json_response(200, data)
 
+            if route == "/http/playlist":
+                # The planner's live queue (session.playlist) — feeds the
+                # "Planned" node of the DJ Treta library feature in Mixxx.
+                from .session_state import get_session
+                sess = get_session()
+                pl = getattr(sess, "playlist", None) if sess else None
+                tracks = []
+                for t in (pl or {}).get("tracks", []):
+                    p = t.get("path", "")
+                    if not p:
+                        continue
+                    tracks.append({
+                        "path": p,
+                        "title": t.get("title", ""),
+                        "bpm": t.get("bpm"),
+                        "key_camelot": t.get("key_camelot", ""),
+                    })
+                return _json_response(200, {
+                    "mood": (pl or {}).get("mood_snapshot", ""),
+                    "reasoning": (pl or {}).get("reasoning_summary", ""),
+                    "updated_at": getattr(sess, "playlist_updated_at", 0.0) if sess else 0.0,
+                    "tracks": tracks,
+                })
+
             if route == "/http/command":
                 qs = parse_qs(parts.query)
                 cmd = (qs.get("cmd", [""])[0] or "").strip()
