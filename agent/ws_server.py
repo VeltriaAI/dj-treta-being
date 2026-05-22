@@ -185,6 +185,10 @@ class WSServerMixin:
                     args["reason"] = qs["reason"][0]
                 if "mode" in qs:
                     args["mode"] = qs["mode"][0]
+                if "mood" in qs:
+                    args["mood"] = qs["mood"][0]
+                if "type" in qs:
+                    args["type"] = qs["type"][0]
                 if "suggestion_id" in qs:
                     args["suggestion_id"] = qs["suggestion_id"][0]
                 try:
