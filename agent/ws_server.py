@@ -138,6 +138,33 @@ class WSServerMixin:
                     "tracks": tracks,
                 })
 
+            if route == "/http/chat":
+                # Recent chat turns for the in-Mixxx chat window. JSONL-backed,
+                # oldest→newest.
+                try:
+                    from .chat_persistence import load_recent_turns
+                    n = int((parse_qs(parts.query).get("n", ["40"])[0]) or 40)
+                    turns = [
+                        {"ts": e.get("ts"), "role": e.get("role"), "content": e.get("content", "")}
+                        for e in load_recent_turns(n=n, max_age_hours=72.0)
+                    ]
+                except Exception:
+                    turns = []
+                return _json_response(200, {"turns": turns})
+
+            if route == "/http/talk":
+                # Send a message to Treta from the Mixxx chat window. Threaded
+                # (the talk command returns immediately); the reply lands in the
+                # JSONL and surfaces on the next /http/chat poll.
+                msg = (parse_qs(parts.query).get("msg", [""])[0] or "").strip()
+                if not msg:
+                    return _json_response(400, {"ok": False, "message": "missing msg"})
+                try:
+                    result = self._handle_command("talk", {"message": msg}, cmd_id="mixxx-chat")
+                except Exception as exc:
+                    return _json_response(500, {"ok": False, "message": str(exc)})
+                return _json_response(200, {"ok": True, "status": str(result)})
+
             if route == "/http/command":
                 qs = parse_qs(parts.query)
                 cmd = (qs.get("cmd", [""])[0] or "").strip()
