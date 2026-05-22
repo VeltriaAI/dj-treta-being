@@ -138,6 +138,16 @@ class WSServerMixin:
                     "tracks": tracks,
                 })
 
+            if route == "/http/activity":
+                # Treta's recent thinking + tool calls, for the chat's
+                # visibility feed. From the in-memory ring (ts-stamped above).
+                try:
+                    n = int((parse_qs(parts.query).get("n", ["60"])[0]) or 60)
+                    hist = list(getattr(self, "_thinking_history", []) or [])[-n:]
+                except Exception:
+                    hist = []
+                return _json_response(200, {"activity": hist})
+
             if route == "/http/chat":
                 # Recent chat turns for the in-Mixxx chat window. JSONL-backed,
                 # oldest→newest.
@@ -420,6 +430,10 @@ class WSServerMixin:
         # otherwise a daemon running with no live TUI for a while accumulates
         # nothing, and the next client to attach gets a blank pane.
         if event == "thinking" and hasattr(self, "_thinking_history"):
+            # Stamp a timestamp so the in-Mixxx chat can interleave activity
+            # (thinking + tool calls) with chat turns by time.
+            if isinstance(data, dict) and "ts" not in data:
+                data["ts"] = time.time()
             self._thinking_history.append(data)
         elif event == "log" and hasattr(self, "_log_history"):
             self._log_history.append(data)
