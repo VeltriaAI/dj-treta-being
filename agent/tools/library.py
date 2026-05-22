@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from .helpers import _music_dir
+from ..audio_files import is_audio_file
 from ..runtime_paths import runtime_path
 
 def list_library_tracks() -> list:
@@ -14,7 +15,7 @@ def list_library_tracks() -> list:
             continue
         genre = genre_dir.name
         for f in sorted(genre_dir.iterdir()):
-            if f.suffix.lower() in ('.mp3', '.wav', '.flac', '.ogg', '.m4a'):
+            if is_audio_file(f):
                 tracks.append({
                     "path": str(f),
                     "filename": f.stem,

@@ -516,7 +516,20 @@ def _reset(hard=False):
             for child in music_dir.iterdir():
                 if child.name == "knowledge":
                     continue  # preserve knowledge cache + LanceDB
-                if child.is_dir():
+                if child.is_symlink():
+                    # Symlinked genre dir (e.g. psytrance-hitech → external lib).
+                    # shutil.rmtree refuses symlinks, so clear the TARGET's
+                    # contents and keep the link itself intact.
+                    target = child.resolve()
+                    if target.is_dir():
+                        for item in target.iterdir():
+                            if item.is_dir() and not item.is_symlink():
+                                shutil.rmtree(item)
+                            else:
+                                item.unlink(missing_ok=True)
+                    else:
+                        child.unlink()  # dangling or file symlink — drop the link
+                elif child.is_dir():
                     shutil.rmtree(child)
                 else:
                     child.unlink(missing_ok=True)

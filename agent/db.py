@@ -15,6 +15,8 @@ import sqlite3
 import time
 from pathlib import Path
 
+from .audio_files import is_audio_file
+
 
 def _resolve_db_path() -> Path:
     """Return the SQLite path. Resolution order:
@@ -525,7 +527,7 @@ def scan_library(music_path: Path):
         if not genre_dir.is_dir() or genre_dir.name.startswith('.'):
             continue
         for f in sorted(genre_dir.iterdir()):
-            if f.suffix.lower() in ('.mp3', '.wav', '.flac', '.ogg', '.m4a'):
+            if is_audio_file(f):
                 upsert_track(path=str(f), title=f.stem, genre=genre_dir.name)
 
 

@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 import httpx
+from .audio_files import is_audio_file
 from .runtime_paths import runtime_path
 
 log = logging.getLogger("dj-treta")
@@ -224,7 +225,7 @@ class SessionMixin:
             if not genre_dir.is_dir() or genre_dir.name.startswith('.'):
                 continue
             tracks = [f.stem[:40] for f in sorted(genre_dir.iterdir())
-                      if f.suffix.lower() in ('.mp3', '.wav', '.flac', '.ogg', '.m4a')]
+                      if is_audio_file(f)]
             if tracks:
                 lines.append(f"  {genre_dir.name}/: {', '.join(tracks)}")
         return "\n".join(lines) if lines else "  (empty)"
