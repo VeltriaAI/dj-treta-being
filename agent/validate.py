@@ -21,6 +21,8 @@ from pathlib import Path
 
 import httpx
 
+from .audio_files import is_audio_file
+
 
 @dataclass
 class Check:
@@ -45,7 +47,7 @@ def _check_music_dir(cfg) -> Check:
         for sub in p.iterdir()
         if sub.is_dir() and not sub.name.startswith(".")
         for f in sub.iterdir()
-        if f.suffix.lower() in (".mp3", ".wav", ".flac", ".ogg", ".m4a")
+        if is_audio_file(f)
     )
     if n_audio == 0:
         return Check(

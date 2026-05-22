@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+from ..audio_files import is_audio_file
 from .helpers import (
     _music_dir, _normalize_for_search,
     _mixxx_failed, _mixxx_get,
@@ -126,7 +127,7 @@ def analyze_track(track_path: str) -> str:
             if not genre_dir.is_dir() or genre_dir.name.startswith('.'):
                 continue
             for f in sorted(genre_dir.iterdir()):
-                if f.suffix.lower() in ('.mp3', '.wav', '.flac', '.ogg', '.m4a'):
+                if is_audio_file(f):
                     if query in _normalize_for_search(f.stem):
                         path = f
                         break
@@ -333,7 +334,7 @@ def preview_track(track_path: str, position: int = 30, duration: int = 10) -> st
             if not genre_dir.is_dir() or genre_dir.name.startswith('.'):
                 continue
             for f in sorted(genre_dir.iterdir()):
-                if f.suffix.lower() in ('.mp3', '.wav', '.flac', '.ogg', '.m4a'):
+                if is_audio_file(f):
                     if query in f.stem.lower():
                         found = f
                         break

@@ -23,6 +23,7 @@ from pathlib import Path
 
 import httpx
 
+from .audio_files import is_audio_file
 from .config import load_config, Config
 from .agents import create_agents
 from google.adk.apps.app import App
@@ -268,7 +269,7 @@ def _count_tracks(music_dir: Path) -> int:
         return 0
     for d in music_dir.iterdir():
         if d.is_dir() and not d.name.startswith('.'):
-            n += sum(1 for f in d.iterdir() if f.suffix.lower() in ('.mp3', '.wav', '.flac', '.ogg', '.m4a'))
+            n += sum(1 for f in d.iterdir() if is_audio_file(f))
     return n
 
 
