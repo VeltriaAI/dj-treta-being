@@ -136,6 +136,68 @@ class HeartbeatMixin:
         except Exception as exc:
             log.warning(f"deck_ownership sync failed: {exc}")
 
+    def _detect_manual_transition(self, status, active_deck, idle_deck):
+        """Sarathi: infer when Manish is driving a transition on the FLX4.
+
+        The FLX4 writes the same Mixxx ControlObjects Treta reads via the API,
+        so his physical crossfader moves show up here for free. We watch two
+        signals, tick-over-tick:
+          1. Crossfader moved a lot (Δ>0.15) while no Treta transition is in
+             flight → he's mid-move. Set manish_in_motion (gates P4 so she
+             doesn't talk over him) for a 90s window.
+          2. Active deck role flipped while he was in motion → he completed it
+             himself. Mark any pending suggestion 'manish_executed_manually'
+             (revealed preference) and log it for learning.
+        Only meaningful in sarathi_mode; no-op otherwise.
+        """
+        if not getattr(self.session, "sarathi_mode", False):
+            return
+        try:
+            xfader = float(status.get("crossfader", 0) or 0)
+            prev_xfader = getattr(self, "_last_xfader", None)
+            prev_active = getattr(self, "_last_active_deck", None)
+            self._last_xfader = xfader
+            self._last_active_deck = active_deck
+            now = time.time()
+
+            # His transition just executed (we executed nothing) — attribute it.
+            if (prev_active is not None and prev_active != active_deck
+                    and getattr(self.session, "manish_in_motion", False)
+                    and not self._transition_pending):
+                log.info(f"[sarathi] Manish completed a manual transition (deck {prev_active}→{active_deck})")
+                self._record_playing_tracks()
+                for d in list(self.session.directives):
+                    if d.get("status") == "active" and d.get("kind") == "transition_suggestion":
+                        p = d.get("payload") or {}
+                        self.session.mark_satisfied(d.get("id"))
+                        try:
+                            from .memory import store_thought
+                            store_thought(
+                                ts=now, agent_id="treta:learning",
+                                decision_text=(
+                                    f"Manish took the transition himself (deck {prev_active}→{active_deck}); "
+                                    f"I had suggested {p.get('technique')} → deck {p.get('to_deck')}."
+                                ),
+                                context={"decision": "manish_executed_manually", "payload": p},
+                            )
+                        except Exception:
+                            pass
+                if self.current_set and isinstance(self.current_set.get("energy_arc"), list):
+                    self.current_set["energy_arc"].append({
+                        "t": round(now - self.current_set["started_at"]),
+                        "event": "transition", "technique": "manual_flx4", "to_deck": active_deck,
+                    })
+                self.session.manish_in_motion = False
+
+            # Big crossfader move, nothing of ours scheduled → he's working it.
+            if (prev_xfader is not None and abs(xfader - prev_xfader) > 0.15
+                    and not self._transition_pending):
+                self.session.manish_in_motion = True
+                self.session.manish_motion_until = now + 90
+                log.info(f"[sarathi] manual transition in progress (xfader {prev_xfader:.2f}→{xfader:.2f}) — going quiet 90s")
+        except Exception as exc:
+            log.debug(f"[sarathi] manual-transition detect failed (non-fatal): {exc}")
+
     def _heartbeat(self):
         """Pure Python heartbeat. Reads mix_out from DB. No flags, no timers."""
         from .main import _get_status, _active_idle_decks, _ensure_mixxx
@@ -196,6 +258,11 @@ class HeartbeatMixin:
             return
 
         active_deck, idle_deck = _active_idle_decks(status)
+
+        # Sarathi: detect Manish working a transition on the FLX4 (crossfader
+        # / deck-role deltas read straight from the ControlObjects he moves).
+        self._detect_manual_transition(status, active_deck, idle_deck)
+
         d_active = status.get(f"deck{active_deck}", {})
         d_idle = status.get(f"deck{idle_deck}", {})
         position = float(d_active.get("position_seconds", 0) or 0)
@@ -235,7 +302,13 @@ class HeartbeatMixin:
                 f"P2 auto-transition skipped — deck {active_deck} owner={owner_a}, "
                 f"deck {idle_deck} owner={owner_i}"
             )
-        elif (idle_ready and remaining < 30 and remaining > 0 and playing
+        # Sarathi Mode: tighten the emergency safety net. In autonomous mode
+        # Treta catches at <30s; in Sarathi, Manish owns the transition so we
+        # only rescue when he's clearly missed it (<12s) — music never stops,
+        # but he gets the full window to do it himself first.
+        elif (idle_ready
+                and remaining < (12 if getattr(self.session, "sarathi_mode", False) else 30)
+                and remaining > 0 and playing
                 and not self._agent_busy and not self._transition_pending):
             log.info(f"Auto-transition (track ending): {remaining:.0f}s left, crossfading to deck {idle_deck}")
             if hasattr(self, '_ws_broadcast'):
@@ -323,6 +396,9 @@ class HeartbeatMixin:
         deferred_until = getattr(self.session, "dj_deferred_until", 0.0) or 0.0
         if getattr(self.session, "dj_paused", False):
             log.debug("P4 DJ invoke skipped — dj_paused (Treta has the wheel)")
+        elif (getattr(self.session, "manish_in_motion", False)
+                and time.time() < getattr(self.session, "manish_motion_until", 0.0)):
+            log.debug("P4 DJ invoke skipped — manish_in_motion (he's working a transition on the FLX4)")
         elif time.time() < deferred_until:
             log.debug(
                 f"P4 DJ invoke skipped — deferred until {deferred_until:.0f} "
@@ -529,6 +605,21 @@ class HeartbeatMixin:
                 pinned_idle_loaded=pinned_idle_loaded,
                 transition_now_pending=transition_now_pending,
             )
+
+            # Sarathi Mode: prepend a MODE line so the DJ agent suggests
+            # instead of schedules. The system prompt branches on this.
+            if getattr(self.session, "sarathi_mode", False):
+                instruction = (
+                    "MODE: SARATHI — Manish drives transitions on the FLX4. "
+                    "Call suggest_transition (NOT schedule_transition). You "
+                    "propose the moment + technique with a plain-language "
+                    "reason; he executes, or says 'do it' and it fires.\n\n"
+                ) + instruction
+            else:
+                instruction = (
+                    "MODE: AUTONOMOUS — you execute transitions via "
+                    "schedule_transition.\n\n"
+                ) + instruction
 
             self._agent_busy = True
 

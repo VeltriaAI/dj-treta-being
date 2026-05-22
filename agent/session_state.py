@@ -54,6 +54,9 @@ CRITICAL_FIELDS = frozenset({
     # Meta-control flags — pause/resume of subagents. Read at top of
     # each loop; durable so an in-progress pause survives a restart.
     "planner_paused", "dj_paused", "library_paused",
+    # Sarathi Mode flag — durable so the daemon boots back into the
+    # same mode after a restart mid-set.
+    "sarathi_mode",
     # Deck-ownership signals (Phase A1) — consumers may depend on these
     # being durable before the next heartbeat tick, so sync-flush on write.
     "idle_needs_load", "user_skip", "set_ending",
@@ -168,6 +171,23 @@ _FIELD_DEFAULTS: dict[str, Any] = {
     "planner_paused": False,
     "dj_paused": False,
     "library_paused": False,
+
+    # Sarathi Mode — copilot. Manish drives transitions on the FLX4;
+    # Treta does everything else (load, plan, library) and SUGGESTS
+    # transitions rather than executing them. Default ON — autonomous
+    # is the opt-in (djtreta mode autonomous). See docs/sarathi-mode.md.
+    # When True:
+    #   - DJ agent emits suggest_transition (transition_suggestion
+    #     directive) instead of schedule_transition
+    #   - heartbeat P2 emergency safety net tightens to remaining<12s
+    #   - heartbeat P4 skips while manish_in_motion
+    "sarathi_mode": True,
+    # True while Manish is physically working a transition on the FLX4
+    # (detected via crossfader/deck deltas). Suppresses P4 + new
+    # suggestions so Treta stays quiet during his mix. Auto-clears at
+    # manish_motion_until.
+    "manish_in_motion": False,
+    "manish_motion_until": 0.0,
 
     # Playback state
     "tracks_played": list,

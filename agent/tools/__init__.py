@@ -148,6 +148,13 @@ from .suggestions import (
     honor_self_suggestion,
     discard_self_suggestion,
 )
+# Sarathi Mode — Treta suggests transitions; Manish executes on the FLX4.
+from .sarathi import (
+    suggest_transition,
+    confirm_suggestion,
+    reject_suggestion,
+    list_pending_suggestions,
+)
 # Memory recall tools — wrap the agent.memory module (LanceDB-backed)
 # in single-import shims so they can be _wrap()-ed by ADK like other tools.
 from ..memory import (
@@ -200,6 +207,9 @@ __all__ = [
     "restart_subagent", "get_subagent_pause_state",
     "list_self_suggestions", "honor_self_suggestion",
     "discard_self_suggestion",
+    # sarathi mode
+    "suggest_transition", "confirm_suggestion", "reject_suggestion",
+    "list_pending_suggestions",
     "recall_similar_interaction", "recall_similar_set",
     "recall_journal", "recall_thoughts",
     "recall_recent_chat",

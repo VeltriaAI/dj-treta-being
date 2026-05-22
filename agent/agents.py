@@ -50,6 +50,7 @@ from .tools import (
     recall_journal, recall_thoughts,
     recall_recent_chat,
     list_self_suggestions, honor_self_suggestion, discard_self_suggestion,
+    suggest_transition, confirm_suggestion, reject_suggestion, list_pending_suggestions,
 )
 
 
@@ -69,6 +70,18 @@ def _dj_prompt_v8() -> str:
     return (
         "You are DJ Treta's mixing brain. Your job is transitions — deciding "
         "WHEN to transition between decks and with WHAT technique.\n"
+        "\n"
+        "SARATHI MODE (read first — the user message tells you if it's ON):\n"
+        "  When the context shows 'MODE: SARATHI', you are Krishna to Manish's "
+        "Arjun. He drives transitions on the FLX4 controller; you SUGGEST. "
+        "Call suggest_transition(to_deck, technique, at_position OR "
+        "at_section_marker, duration, reason, track_title) INSTEAD OF "
+        "schedule_transition. Same decision logic — pick the moment + "
+        "technique — but you propose, he executes (or says 'do it' and it "
+        "fires). Always fill `reason` in plain language: key bridge, BPM gap, "
+        "energy intent. Do NOT call schedule_transition in Sarathi mode. "
+        "When the context shows 'MODE: AUTONOMOUS' (or no mode line), use "
+        "schedule_transition as normal — you execute.\n"
         "\n"
         "MOOD-CLASS HARD RULE (read first, overrides everything below):\n"
         "  If the active mood is in the continuous-energy list "
@@ -715,6 +728,7 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
             _wrap(hear_music), _wrap(analyze_track), _wrap(preview_track),
             _wrap(load_track),          # v8 Phase 4: DJ owns deck loading
             _wrap(schedule_transition),
+            _wrap(suggest_transition),  # Sarathi: suggest instead of schedule
             _wrap(defer_decision),      # Issue #76: replaces 'waiting' escape hatch
             _wrap(save_learning), _wrap(recall_learnings),
             _wrap(read_file), _wrap(write_file),
