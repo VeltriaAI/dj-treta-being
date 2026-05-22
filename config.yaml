@@ -5,7 +5,9 @@ mixxx:
   # Leave empty to use defaults: ~/workspace/mixxx-treta/build/mixxx (macOS)
   binary: ""
   resource_path: ""
-  settings_path: ""
+  # Mixxx 3.0 fresh profile — keeps the live 2.7 profile untouched (3.0 refuses
+  # to share a 2.7 profile: data-corruption risk). Re-map FLX4 + audio here.
+  settings_path: "~/Library/Application Support/Mixxx-3.0"
 
 llm:
   model: "openai/gemini-3-flash"
