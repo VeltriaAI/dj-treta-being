@@ -784,8 +784,14 @@ def build_being_user_message(
     message: str,
     readonly: bool = False,
     self_suggestions: list[dict] | None = None,
+    sarathi_block: str = "",
 ) -> str:
     """Build the user message for Being agent conversation.
+
+    `sarathi_block`: optional pre-rendered MODE: SARATHI header (+ any live
+    transition suggestion in front of Manish). When present, Treta reads
+    "do it" as confirm_suggestion, "no/darker/something else" as
+    reject_suggestion, and "i've got this" as leave-it-alone.
 
     `self_suggestions`: optional list of active self_suggestion directives
     surfaced from the reflection loop. Rendered as an INNER NUDGE block
@@ -831,6 +837,7 @@ def build_being_user_message(
 
     return (
         f"{context}\n\n{history}\n{readonly_tag}\n"
+        f"{sarathi_block}"
         f"{nudge_block}"
         f'The listener says: "{message}"\n\n'
         f"Respond naturally. Set directives only if they asked you to DO something "

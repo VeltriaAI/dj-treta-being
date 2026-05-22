@@ -157,6 +157,31 @@ class CommandsMixin:
             self._run_async(_reinit())
             return f"Source {source} → {'on' if enabled else 'off'} (agents rebuilt)"
 
+        elif cmd == "set_mode":
+            mode = (args.get("mode", "") or "").lower().strip()
+            if mode not in ("sarathi", "autonomous"):
+                return f"Unknown mode '{mode}' — use sarathi | autonomous"
+            self.session.sarathi_mode = (mode == "sarathi")
+            if mode == "autonomous":
+                # Drop any in-flight motion gate so she resumes the wheel.
+                self.session.manish_in_motion = False
+            log.info(f"Mode → {mode} (sarathi_mode={self.session.sarathi_mode})")
+            return (
+                f"Mode: {mode}. "
+                + ("Manish drives transitions; Treta suggests."
+                   if mode == "sarathi"
+                   else "Treta executes transitions autonomously.")
+            )
+
+        elif cmd in ("confirm_transition", "reject_transition"):
+            from .tools.sarathi import confirm_suggestion, reject_suggestion
+            sid = args.get("suggestion_id", "")
+            if cmd == "confirm_transition":
+                res = confirm_suggestion(suggestion_id=sid)
+            else:
+                res = reject_suggestion(suggestion_id=sid, reason=args.get("reason", ""))
+            return res.get("message", str(res))
+
         else:
             return f"Unknown: {cmd}"
 
@@ -205,12 +230,45 @@ class CommandsMixin:
                         f"list_self_suggestions failed (non-fatal): {_sug_exc}"
                     )
 
+            # Sarathi: surface the mode + any live transition suggestion so
+            # she reads "do it" as confirm and "darker / no" as reject.
+            sarathi_block = ""
+            if not readonly and getattr(self.session, "sarathi_mode", False):
+                lines = [
+                    "── MODE: SARATHI ──",
+                    "Manish drives transitions on the FLX4. You suggest; you do "
+                    "NOT execute unless he hands you the wheel.",
+                ]
+                try:
+                    from .tools.sarathi import list_pending_suggestions
+                    pend = list_pending_suggestions()
+                except Exception:
+                    pend = []
+                if pend:
+                    s = pend[-1]
+                    lines.append(
+                        f"Live suggestion in front of him: id={s.get('id')} — "
+                        f"{s.get('technique')} → deck {s.get('to_deck')} "
+                        f"({s.get('track_title') or 'next track'}); "
+                        f"{(s.get('reason') or '')[:100]}"
+                    )
+                    lines.append(
+                        '"do it"/"kar do"/"haan" → confirm_suggestion(); '
+                        '"no"/"darker"/"doosra" → reject_suggestion(reason=…); '
+                        '"i\'ve got this" → leave it, he\'s driving.'
+                    )
+                else:
+                    lines.append("No live suggestion right now.")
+                lines.append("── END SARATHI ──\n")
+                sarathi_block = "\n".join(lines) + "\n"
+
             being_msg = build_being_user_message(
                 context=context,
                 history=history,
                 message=message,
                 readonly=readonly,
                 self_suggestions=active_suggestions,
+                sarathi_block=sarathi_block,
             )
             if replay_prefix:
                 being_msg = replay_prefix + "\n" + being_msg
