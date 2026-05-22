@@ -149,12 +149,32 @@ def _ensure_litellm(config):
     log.warning("LiteLLM failed to start")
 
 
+_mixxx_launch_lock = threading.Lock()
+
+
+def _mixxx_process_running(mixxx_bin: Path) -> bool:
+    """True if a Mixxx process already exists (even if its API isn't up yet).
+
+    Used to avoid spawning a second instance while the first is still booting —
+    multiple instances fight over the settings DB + port 7778 and none bind,
+    causing an unbounded spawn cascade.
+    """
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", str(mixxx_bin)],
+            capture_output=True, text=True, timeout=2,
+        )
+        return result.returncode == 0 and result.stdout.strip() != ""
+    except Exception:
+        return False
+
+
 def _ensure_mixxx(config: Config):
     """Start Mixxx if not running (when mixxx.auto_start is true)."""
     url = config.mixxx.url
     try:
         httpx.get(f"{url}/api/status", timeout=2)
-        return  # already running
+        return  # already running + API up
     except Exception:
         pass
 
@@ -162,33 +182,52 @@ def _ensure_mixxx(config: Config):
         log.warning("Mixxx not reachable — auto_start is false; start Mixxx manually")
         return
 
-    log.info("Mixxx not running — starting it")
-    default_bin = Path.home() / "workspace" / "mixxx-treta" / "build" / "mixxx"
-    default_res = Path.home() / "workspace" / "mixxx-treta" / "res"
-    default_settings = Path.home() / "Library" / "Application Support" / "Mixxx"
-
-    mixxx_bin = Path(config.mixxx.binary).expanduser() if config.mixxx.binary.strip() else default_bin
-    resource = Path(config.mixxx.resource_path).expanduser() if config.mixxx.resource_path.strip() else default_res
-    settings = Path(config.mixxx.settings_path).expanduser() if config.mixxx.settings_path.strip() else default_settings
-
-    if not mixxx_bin.exists():
-        log.error(f"Mixxx not found: {mixxx_bin}")
+    # Serialize launch attempts. Concurrent heartbeat ticks must NOT each spawn
+    # their own Mixxx — that's the multi-instance cascade. Non-blocking acquire:
+    # if a launch is already in flight, bail immediately.
+    if not _mixxx_launch_lock.acquire(blocking=False):
+        log.debug("Mixxx launch already in progress — skipping duplicate spawn")
         return
+    try:
+        default_bin = Path.home() / "workspace" / "mixxx-treta" / "build" / "mixxx"
+        default_res = Path.home() / "workspace" / "mixxx-treta" / "res"
+        default_settings = Path.home() / "Library" / "Application Support" / "Mixxx"
 
-    subprocess.Popen(
-        [str(mixxx_bin), "--resourcePath", str(resource), "--settingsPath", str(settings)],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
-    for i in range(30):
-        time.sleep(0.5)
-        try:
-            httpx.get(f"{url}/api/status", timeout=2)
-            log.info(f"Mixxx up after {(i+1)*0.5:.1f}s — waiting for audio engine...")
-            time.sleep(15)  # audio engine needs time after HTTP API is ready
+        mixxx_bin = Path(config.mixxx.binary).expanduser() if config.mixxx.binary.strip() else default_bin
+        resource = Path(config.mixxx.resource_path).expanduser() if config.mixxx.resource_path.strip() else default_res
+        settings = Path(config.mixxx.settings_path).expanduser() if config.mixxx.settings_path.strip() else default_settings
+
+        if not mixxx_bin.exists():
+            log.error(
+                f"Mixxx not found: {mixxx_bin} — rebuild with: "
+                f"cd ~/workspace/mixxx-treta && source tools/macos_buildenv.sh setup && "
+                f"cmake -B build -DHTTPAPI=ON && cmake --build build -j8"
+            )
             return
-        except Exception:
-            pass
-    log.error("Mixxx failed to start")
+
+        # If a Mixxx process already exists (booting, API not up yet), DO NOT
+        # spawn another — just wait for its API to come online.
+        if _mixxx_process_running(mixxx_bin):
+            log.info("Mixxx process already running (booting) — waiting for API, not spawning another")
+        else:
+            log.info("Mixxx not running — starting it")
+            subprocess.Popen(
+                [str(mixxx_bin), "--resourcePath", str(resource), "--settingsPath", str(settings)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+
+        for i in range(60):  # up to 30s for API to come online
+            time.sleep(0.5)
+            try:
+                httpx.get(f"{url}/api/status", timeout=2)
+                log.info(f"Mixxx API up after {(i+1)*0.5:.1f}s — waiting for audio engine...")
+                time.sleep(15)  # audio engine needs time after HTTP API is ready
+                return
+            except Exception:
+                pass
+        log.error("Mixxx failed to start (API never came up within 30s)")
+    finally:
+        _mixxx_launch_lock.release()
 
 
 def _get_status(url: str) -> dict | None:
