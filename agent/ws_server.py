@@ -148,6 +148,67 @@ class WSServerMixin:
                     hist = []
                 return _json_response(200, {"activity": hist})
 
+            if route == "/http/log":
+                # Recent daemon log lines for the cockpit tabs (Activity / DJ /
+                # Planner / Library / Issues — client filters by keyword/tag).
+                out = []
+                for e in list(getattr(self, "_log_history", []) or [])[-int((parse_qs(parts.query).get("n", ["120"])[0]) or 120):]:
+                    if isinstance(e, dict):
+                        out.append({"ts": e.get("ts"), "text": e.get("text", "")})
+                    else:
+                        out.append({"ts": None, "text": str(e)})
+                return _json_response(200, {"log": out})
+
+            if route == "/http/billing":
+                from .runtime_paths import runtime_path
+                bf = runtime_path("billing.json")
+                data = {}
+                try:
+                    if bf.exists():
+                        data = json.loads(bf.read_text())
+                except Exception:
+                    data = {}
+                return _json_response(200, data)
+
+            if route == "/http/reflections":
+                from .session_state import get_session
+                sess = get_session()
+                refl = list(getattr(sess, "reflections", []) or []) if sess else []
+                return _json_response(200, {"reflections": refl[-20:]})
+
+            if route == "/http/tracklist":
+                # Played tracks of the current live set (for the cockpit set
+                # view): title + transition + 👍/👎. Energy lives in the tracks
+                # table — omitted in v1.
+                tracks = []
+                set_title = ""
+                try:
+                    from .db import get_current_set, get_set_tracks, get_db
+                    cs = get_current_set()
+                    if cs:
+                        set_title = cs.get("title", "")
+                        sid = cs.get("id")
+                        fb = {}
+                        try:
+                            _db = get_db()
+                            for r in _db.execute(
+                                    "SELECT track_title, feedback FROM feedback WHERE set_id=?",
+                                    (sid,)).fetchall():
+                                fb[r["track_title"]] = r["feedback"]
+                            _db.close()
+                        except Exception:
+                            pass
+                        for r in get_set_tracks(sid):
+                            t = r.get("title", "")
+                            tracks.append({
+                                "title": t,
+                                "transition": r.get("transition_type", ""),
+                                "feedback": fb.get(t, ""),
+                            })
+                except Exception:
+                    tracks = []
+                return _json_response(200, {"set": set_title, "tracks": tracks})
+
             if route == "/http/chat":
                 # Recent chat turns for the in-Mixxx chat window. JSONL-backed,
                 # oldest→newest.
@@ -440,6 +501,8 @@ class WSServerMixin:
                 data["ts"] = time.time()
             self._thinking_history.append(data)
         elif event == "log" and hasattr(self, "_log_history"):
+            if isinstance(data, dict) and "ts" not in data:
+                data["ts"] = time.time()
             self._log_history.append(data)
 
         if not hasattr(self, '_ws_clients') or not self._ws_clients:
