@@ -300,6 +300,10 @@ class DJTretaBeing(
         session_path = Path(__file__).parent.parent / ".beings" / "session.json"
         self.session = Session.load(session_path)
         register_session(self.session)
+        # Back-reference so session-scoped tools (e.g. Sarathi suggest/confirm)
+        # can reach _ws_broadcast. Underscore-prefixed → bypasses the session
+        # observer and is never serialized to session.json.
+        object.__setattr__(self.session, "_being_ref", self)
 
         # Command bookkeeping — internal, not user-facing
         self._last_command = ""

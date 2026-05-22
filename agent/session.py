@@ -108,6 +108,20 @@ class SessionMixin:
             except Exception:
                 sched_transition = None
 
+            # Sarathi: surface the latest live transition suggestion so a TUI
+            # attaching mid-window renders the panel without waiting for the
+            # next broadcast event.
+            sarathi_mode = bool(getattr(self.session, "sarathi_mode", False))
+            pending_suggestion = None
+            if sarathi_mode:
+                try:
+                    from .tools.sarathi import list_pending_suggestions
+                    pend = list_pending_suggestions()
+                    if pend:
+                        pending_suggestion = pend[-1]
+                except Exception:
+                    pending_suggestion = None
+
             state_payload = {
                 "phase": phase,
                 "mood": self.mood,
@@ -128,6 +142,8 @@ class SessionMixin:
                 "last_command_result": self._last_result,
                 "billing": billing_str,
                 "scheduled_transition": sched_transition,
+                "sarathi_mode": sarathi_mode,
+                "pending_suggestion": pending_suggestion,
                 "sources": {
                     "youtube": self.config.sources.youtube,
                     "treta_originals": self.config.sources.treta_originals,

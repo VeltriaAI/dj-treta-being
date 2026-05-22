@@ -919,6 +919,27 @@ class BrainWidget(Static):
             if now_next:
                 lines.append("  " + "  ".join(now_next))
 
+        # ── Sarathi: Treta's transition suggestion in front of Manish ──
+        if state.get("sarathi_mode"):
+            sug = state.get("pending_suggestion")
+            if sug:
+                tech = str(sug.get("technique", "crossfade")).upper().replace("_", " ")
+                to_deck = sug.get("to_deck", "?")
+                title = sug.get("track_title") or "next track"
+                reason = (sug.get("reason") or "").strip()
+                exp = sug.get("expires_in_s")
+                tail = f" · {exp}s left" if isinstance(exp, int) and exp >= 0 else ""
+                line = (
+                    f"  [bold magenta]✋ SARATHI[/bold magenta] she suggests "
+                    f"[bold]{tech} → deck {to_deck}[/bold] ([cyan]{title}[/cyan])"
+                )
+                if reason:
+                    line += f" — [italic dim]{reason[:70]}[/italic dim]"
+                line += f"{tail}  [dim](ctrl+y do it · ctrl+x no)[/dim]"
+                lines.append(line)
+            else:
+                lines.append("  [magenta]✋ SARATHI[/magenta] [dim]you drive — no suggestion live[/dim]")
+
         # ── Line 4: Track timeline ──
         ct = state.get("current_track", {})
         file_path = ct.get("file_path", "")
@@ -1068,6 +1089,10 @@ class DJTretaApp(App):
         Binding("ctrl+s", "skip", "Skip", priority=True),
         Binding("ctrl+l", "like", "👍"),
         Binding("ctrl+d", "dislike", "👎"),
+        # Sarathi: accept / reject Treta's live transition suggestion. ctrl+
+        # combos so the prompt Input doesn't swallow them.
+        Binding("ctrl+y", "accept_suggestion", "Do it", priority=True),
+        Binding("ctrl+x", "reject_suggestion", "No", priority=True),
         Binding("f6", "tab_all", "All"),
         Binding("f7", "tab_treta", "Treta"),
         Binding("f8", "tab_dj", "DJ"),
@@ -2445,6 +2470,24 @@ class DJTretaApp(App):
     def action_dislike(self):
         self.run_brain_command("feedback", {"type": "dislike"})
         self.log_widget.write("[red]  👎 Disliked[/red]")
+
+    def action_accept_suggestion(self):
+        """Sarathi: 'do it' — Treta fires her latest pending suggestion."""
+        sug = (self._ws_state or {}).get("pending_suggestion") if hasattr(self, "_ws_state") else None
+        if not sug:
+            self.log_widget.write("[dim]  no transition suggestion to accept[/dim]")
+            return
+        self.run_brain_command("confirm_transition", {})
+        self.log_widget.write("[green]  ✋→🎚 doing it[/green]")
+
+    def action_reject_suggestion(self):
+        """Sarathi: reject the pending suggestion; Treta reshapes."""
+        sug = (self._ws_state or {}).get("pending_suggestion") if hasattr(self, "_ws_state") else None
+        if not sug:
+            self.log_widget.write("[dim]  no transition suggestion to reject[/dim]")
+            return
+        self.run_brain_command("reject_transition", {})
+        self.log_widget.write("[yellow]  ✋ dropped — reshaping[/yellow]")
 
     def action_show_tracks(self):
         self.show_tracks()
