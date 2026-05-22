@@ -210,9 +210,13 @@ def _ensure_mixxx(config: Config):
         if _mixxx_process_running(mixxx_bin):
             log.info("Mixxx process already running (booting) — waiting for API, not spawning another")
         else:
-            log.info("Mixxx not running — starting it")
+            launch_cmd = [str(mixxx_bin), "--resourcePath", str(resource), "--settingsPath", str(settings)]
+            if getattr(config.mixxx, "qml_ui", False):
+                # QML-UI mode renders the in-booth Sarathi panel (res/qml).
+                launch_cmd.append("--qml")
+            log.info(f"Mixxx not running — starting it ({'QML UI' if '--qml' in launch_cmd else 'QWidget skin'})")
             subprocess.Popen(
-                [str(mixxx_bin), "--resourcePath", str(resource), "--settingsPath", str(settings)],
+                launch_cmd,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
 

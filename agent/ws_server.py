@@ -73,10 +73,78 @@ class WSServerMixin:
         except Exception as e:
             log.error(f"WS server died: {e}")
 
+    async def _http_process_request(self, connection, request):
+        """Serve plain HTTP for the in-Mixxx QML Sarathi panel.
+
+        The QML panel can't open a WebSocket (QtWebSockets isn't linked) but
+        QML's XMLHttpRequest does HTTP GET fine. We answer two GET routes here
+        (before the WS upgrade); everything else falls through to the normal
+        WebSocket handshake by returning None.
+
+          GET /http/state                       → current state.json
+          GET /http/command?cmd=...&reason=...   → run a daemon command
+
+        Commands are GET (not POST) on purpose: websockets' opening-handshake
+        hook can read the request line + query but not a POST body. The
+        command set here is tiny + side-effect-guarded, so query params are
+        adequate. CORS is wide-open since this only ever binds to localhost.
+        """
+        try:
+            from websockets.http11 import Response
+            from websockets.datastructures import Headers
+            from urllib.parse import urlsplit, parse_qs
+
+            raw_path = getattr(request, "path", "/") or "/"
+            parts = urlsplit(raw_path)
+            route = parts.path.rstrip("/")
+
+            def _json_response(status, payload):
+                body = json.dumps(payload).encode("utf-8")
+                headers = Headers([
+                    ("Content-Type", "application/json"),
+                    ("Content-Length", str(len(body))),
+                    ("Access-Control-Allow-Origin", "*"),
+                    ("Cache-Control", "no-store"),
+                ])
+                return Response(status, "OK" if status == 200 else "ERR", headers, body)
+
+            if route == "/http/state":
+                from .runtime_paths import runtime_path
+                sf = runtime_path("state.json")
+                data = json.loads(sf.read_text()) if sf.exists() else {}
+                return _json_response(200, data)
+
+            if route == "/http/command":
+                qs = parse_qs(parts.query)
+                cmd = (qs.get("cmd", [""])[0] or "").strip()
+                if not cmd:
+                    return _json_response(400, {"ok": False, "message": "missing cmd"})
+                args = {}
+                if "reason" in qs:
+                    args["reason"] = qs["reason"][0]
+                if "mode" in qs:
+                    args["mode"] = qs["mode"][0]
+                if "suggestion_id" in qs:
+                    args["suggestion_id"] = qs["suggestion_id"][0]
+                try:
+                    result = self._handle_command(cmd, args, cmd_id="qml")
+                except Exception as exc:
+                    return _json_response(500, {"ok": False, "message": str(exc)})
+                return _json_response(200, {"ok": True, "result": str(result)})
+
+            # Not an HTTP route we handle → proceed to WebSocket handshake.
+            return None
+        except Exception as exc:
+            log.debug(f"http process_request failed (non-fatal): {exc}")
+            return None
+
     async def _ws_serve(self, loop=None):
         """Run the WebSocket server."""
         try:
-            async with serve(self._ws_handler, "localhost", WS_PORT):
+            async with serve(
+                self._ws_handler, "localhost", WS_PORT,
+                process_request=self._http_process_request,
+            ):
                 log.info(
                     f"WebSocket server listening on ws://localhost:{WS_PORT} "
                     f"(paths: /ws/state, /ws/command, /)"

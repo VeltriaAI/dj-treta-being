@@ -15,6 +15,11 @@ class MixxxConfig:
     binary: str = ""
     resource_path: str = ""
     settings_path: str = ""
+    # Launch Mixxx in QML-UI mode (mixxx --qml) so the in-booth Sarathi panel
+    # renders. The QML UI is the "new UI" in the fork; the same audio engine,
+    # HTTP API, and MIDI work regardless. Set False to fall back to the
+    # LateNight QWidget skin (no Sarathi panel).
+    qml_ui: bool = True
 
 
 @dataclass
