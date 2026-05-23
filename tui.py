@@ -1514,6 +1514,16 @@ class DJTretaApp(App):
         # Initial paint of any reflections that already exist on disk.
         self.refresh_reflections()
 
+        # Embed mode (DJTRETA_EMBED=1): hide the deck + mixer strip — Mixxx
+        # already shows the decks/mixer, so the embedded TUI shows only the
+        # brain Mixxx lacks (status/agents/playlist/logs/chat).
+        if os.environ.get("DJTRETA_EMBED"):
+            try:
+                self.query_one("#decks").display = False
+                self.query_one("#mixer").display = False
+            except Exception:
+                pass
+
     def _switch_tab(self, tab_id: str):
         tabs = self.query_one("#log-tabs", TabbedContent)
         tabs.active = tab_id

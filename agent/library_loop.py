@@ -93,6 +93,22 @@ class LibraryMixin:
                         else:
                             # Too soon after last fulfil — wait
                             pass
+
+                # Sarathi proactive deep-queue: Manish drives the decks, so she
+                # spends spare cycles growing the library to keep ≥10 unplayed
+                # current-mood tracks ready. Gated strictly on sarathi_mode so
+                # auto mode is untouched. Skips while a targeted/legacy download
+                # is in flight (busy flag). One track per ~25s tick.
+                if (getattr(self.session, "sarathi_mode", False)
+                        and not self._library_download_busy):
+                    now = time.time()
+                    if now - getattr(self, "_sarathi_dl_last", 0.0) >= 25:
+                        self._sarathi_dl_last = now
+                        self._library_download_busy = True
+                        threading.Thread(
+                            target=self._sarathi_proactive_download,
+                            daemon=True,
+                        ).start()
             except Exception as exc:
                 log.warning(f"Library loop error: {exc}")
             time.sleep(5)
@@ -230,6 +246,95 @@ class LibraryMixin:
         # rows that DJ can't load_track.
         self.session.replan_requested = True
 
+    # ── Sarathi: proactive deep-queue download ────────────────────────
+
+    def _sarathi_proactive_download(self) -> None:
+        """Grow the current-mood library one track per call while in Sarathi.
+
+        In Sarathi mode Manish drives the transitions, so the knowledge-graph
+        planner isn't surfacing dataset picks to download. This keeps the deck
+        deep: she searches YouTube Music for the current mood and pulls one new
+        track per tick (loop-throttled to ~25s) until the genre folder holds a
+        comfortable buffer (TARGET). Dedup is filename-based against what's
+        already on disk plus the DB canonical check inside download_track.
+
+        Always clears `_library_download_busy` in finally so the loop recovers.
+        """
+        TARGET = 25  # keep growing past the ~10-ahead floor Manish asked for
+        try:
+            from pathlib import Path
+            from .tools.helpers import _music_dir
+            from .tools.discovery import search_music, download_track
+
+            # Mood → genre slug (mirrors _library_handle_targeted logic).
+            mp = getattr(self.session, "mood_profile", None) or {}
+            slug = (mp.get("canonical_slug") or mp.get("canonical_genre")
+                    or getattr(self.session, "mood", "") or "melodic-techno")
+            slug = (slug or "melodic-techno").strip().lower() or "melodic-techno"
+
+            genre_dir = Path(_music_dir()) / slug
+            existing = []
+            if genre_dir.is_dir():
+                existing = [p.name.lower() for p in genre_dir.glob("*.mp3")
+                            if not p.name.startswith("._")]
+            if len(existing) >= TARGET:
+                log.debug(f"[sarathi] deep-queue full ({len(existing)}/{TARGET}) — skip")
+                return
+
+            # Search the current mood — anchor the query on the canonical genre
+            # so YouTube ranks electronic tracks first, not vocal-pop edits that
+            # happen to share a keyword. Bias toward DJ/club material.
+            genre_label = (mp.get("canonical_genre") or slug.replace("-", " ")).strip()
+            alts = [a for a in (mp.get("alternates") or []) if a][:1]
+            query = f"{genre_label} {' '.join(alts)}".strip()
+            results = search_music(query=query, limit=15) or []
+
+            from .canonicalize import genre_matches
+            picked = None
+            for r in results:
+                if not isinstance(r, dict) or not r.get("url"):
+                    continue
+                artist = (r.get("artist") or "").strip()
+                title = (r.get("title") or "").strip()
+                if not (artist or title):
+                    continue
+                # crude filename dedup — skip if a clear stem already on disk
+                stem = title.lower()[:18]
+                if stem and any(stem in fn for fn in existing):
+                    continue
+                # Genre gate — reject Bollywood / off-genre results that YT
+                # surfaces for a loose query. Strict flash check (fail-open).
+                if not genre_matches(artist, title, genre_label,
+                                     mp.get("alternates") or []):
+                    log.info(f"[sarathi] deep-queue: skip off-genre '{artist} - {title}'")
+                    continue
+                picked = r
+                break
+
+            if not picked:
+                log.debug(f"[sarathi] deep-queue: no on-genre result for '{query}'")
+                return
+
+            log.info(
+                f"[sarathi] deep-queue download ({len(existing)+1}/{TARGET}): "
+                f"{picked.get('artist','')} - {picked.get('title','')}"
+            )
+            try:
+                result = download_track(picked["url"], genre=slug)
+                ok = bool(result.get("ok")) if isinstance(result, dict) else False
+                msg = (result.get("message", "") if isinstance(result, dict)
+                       else str(result))[:120]
+                log.info(f"[sarathi] deep-queue result: ok={ok} {msg}")
+                if ok:
+                    # surface as LOCAL on next plan
+                    self.session.replan_requested = True
+            except Exception as exc:
+                log.warning(f"[sarathi] deep-queue download failed: {exc}")
+        except Exception as exc:
+            log.debug(f"[sarathi] proactive download error: {exc}")
+        finally:
+            self._library_download_busy = False
+
     def _k5_dedup_hit(self, mbid: str, canonical_artist: str,
                       canonical_song: str) -> bool:
         """Return True if a track with this mbid or canonical tuple is already in DB."""
@@ -361,6 +466,10 @@ class LibraryMixin:
             f"2. Craft 2-3 diverse YouTube search queries for {mood}.\n"
             f"3. Call search_music on each, pick {count} distinct tracks "
             f"(different artists, 2-10 min, no mixes/compilations).\n"
+            f"   STRICT genre rule: only pick tracks that are genuinely "
+            f"'{mood}' in an electronic/club sense. Reject Bollywood, "
+            f"Hindi/Punjabi film songs, and vocal-pop edits unless they are "
+            f"clearly an electronic remix — they pollute the crate.\n"
             f"4. Call download_track(url, genre='{mood}') for each.\n"
             f"5. Report a one-line summary of what you added.\n"
         )
