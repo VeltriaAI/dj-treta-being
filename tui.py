@@ -1815,6 +1815,8 @@ class DJTretaApp(App):
                 "  [cyan]/play[/cyan] [mood] [min]     Start a set (LOCAL only — remote runs continuously)\n"
                 "  [cyan]/stop[/cyan]                  Stop the set (LOCAL only)\n"
                 "  [cyan]/mood[/cyan] <name>           Change mood\n"
+                "  [cyan]/sarathi[/cyan]               Sarathi mode — you drive, Treta suggests\n"
+                "  [cyan]/auto[/cyan]                  Autonomous mode — Treta drives\n"
                 "  [cyan]/skip[/cyan]                  Skip (smooth transition)\n"
                 "  [bold]Mixer[/bold]\n"
                 "  [cyan]/pause[/cyan] [deck]          Pause a deck\n"
@@ -1853,6 +1855,12 @@ class DJTretaApp(App):
             self.run_brain_command("stop", {})
         elif cmd == "mood" and args:
             self.run_brain_command("change_mood", {"mood": args[0]})
+        elif cmd == "sarathi":
+            self.log_widget.write("[magenta]  Sarathi mode — you drive, Treta suggests.[/magenta]")
+            self.run_brain_command("set_mode", {"mode": "sarathi"})
+        elif cmd in ("auto", "autonomous"):
+            self.log_widget.write("[cyan]  Autonomous mode — Treta drives the decks.[/cyan]")
+            self.run_brain_command("set_mode", {"mode": "autonomous"})
         elif cmd == "skip":
             self.action_skip()
         elif cmd == "pause":
