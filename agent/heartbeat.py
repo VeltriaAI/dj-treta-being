@@ -284,11 +284,16 @@ class HeartbeatMixin:
             now_ts = time.time()
             if not getattr(self, "_silence_since", None):
                 self._silence_since = now_ts
-            # Sarathi: give Manish a grace window before rescuing — his cue
-            # gaps / between-track moves shouldn't trigger emergency play.
-            # Auto mode recovers instantly (music never stops). Genuine dead
-            # air past the grace still gets rescued.
+            # Sarathi: Manish drives. Two cases:
+            #  - COLD START (nothing has ever played this session) → never
+            #    auto-play; he starts the set himself. Just wait.
+            #  - MID-SET dropout (music was playing, then silence) → give an
+            #    8s grace + hold while he's mid-move, then rescue (a track
+            #    ended and he got distracted — music shouldn't stay dead).
+            # Auto mode recovers instantly in all cases (it owns the set).
             if _sarathi:
+                if not getattr(self, "_music_has_played", False):
+                    return  # cold start — wait for Manish to play deck 1
                 in_motion = (getattr(self.session, "manish_in_motion", False)
                              and now_ts < getattr(self.session, "manish_motion_until", 0.0))
                 if in_motion or (now_ts - self._silence_since) < 8.0:
@@ -298,8 +303,10 @@ class HeartbeatMixin:
                 self._emergency_running = True
                 threading.Thread(target=self._emergency_play, daemon=True).start()
             return
-        # Playing again → reset the silence timer.
+        # Playing → reset the silence timer + remember music has played (so
+        # Sarathi's mid-set rescue can tell a real dropout from a cold start).
         self._silence_since = None
+        self._music_has_played = True
 
         idle_ready = idle_loaded and idle_remaining > 60
         duration = float(d_active.get("duration", 0) or 0)
