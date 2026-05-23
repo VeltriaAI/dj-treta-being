@@ -39,6 +39,19 @@ def load_track(deck: int, track_path: str) -> str:
         deck: The deck number to load onto, either 1 or 2.
         track_path: Full file path OR partial track name to search for.
     """
+    # In Sarathi mode Treta does NOT load decks — Manish loads + mixes himself.
+    # She advises via suggest_transition instead. Refuse here so the agent can't
+    # drop a track onto the deck he's mid-transition into.
+    try:
+        from ..session_state import get_session
+        _s = get_session()
+        if _s is not None and getattr(_s, "sarathi_mode", False):
+            return ("SKIPPED: Sarathi mode — Manish loads the decks himself. "
+                    "Use suggest_transition() to recommend the next track instead "
+                    "of loading it.")
+    except Exception:
+        pass
+
     from ..playback_applier import resolve_track_path
 
     resolved = resolve_track_path(track_path)
