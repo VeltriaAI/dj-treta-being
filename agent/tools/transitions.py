@@ -149,20 +149,22 @@ def _apply_bpm_after(deck: int, bpm_after: str = "anchor", glide_duration: int =
     the deck has actually drifted. The ride runs after the crossfade completes
     (deck already audible solo), so blocking here is fine.
 
-    bpm_after="anchor" → (default) ride to mood BPM-range center; falls back to
-                         native file BPM when no mood range is known
-    bpm_after="keep"   → disable sync, leave rate untouched (explicit override)
-    bpm_after="reset"  → tempo ride back to native file BPM
-    bpm_after="126.5"  → tempo ride to a specific BPM (agent decision)
+    bpm_after="anchor" → (default) just release sync, leave the rate as-is.
+                         (Tempo-riding after a transition was disabled 2026-05-23:
+                         it produced audible gradual speed changes and fought
+                         tracks with mis-detected beatgrids — observed an 89-BPM-
+                         tagged track ridden toward 125. Cross-track drift, if it
+                         recurs, is better fixed by resetting rate to native at
+                         LOAD time, not by gliding a live deck.)
+    bpm_after="keep"   → disable sync, leave rate untouched (same as anchor now)
+    bpm_after="reset"  → tempo ride back to native file BPM (explicit only)
+    bpm_after="126.5"  → tempo ride to a specific BPM (explicit agent decision)
     """
     _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "sync_enabled", "value": 0})
 
-    if bpm_after == "keep":
+    if bpm_after in ("keep", "anchor"):
+        # Release sync (done above); do NOT tempo-ride the live deck.
         return
-    elif bpm_after == "anchor":
-        # None target → _tempo_ride falls back to native file BPM.
-        _tempo_ride(deck, target_bpm=_anchor_target_bpm(),
-                    duration_s=max(30, min(120, glide_duration)))
     elif bpm_after == "reset":
         _tempo_ride(deck, target_bpm=None, duration_s=max(30, min(120, glide_duration)))
     else:
