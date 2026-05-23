@@ -115,21 +115,54 @@ def _tempo_ride(deck: int, target_bpm: float = None, duration_s: float = 60.0):
     log.info(f"Tempo ride complete: deck {deck}, {current_bpm:.0f} → {goal_bpm:.0f} BPM over {duration_s:.0f}s")
 
 
-def _apply_bpm_after(deck: int, bpm_after: str = "keep", glide_duration: int = 60):
+def _anchor_target_bpm():
+    """The mood profile's BPM-range center, or None if unavailable.
+
+    This is the post-transition tempo anchor. Anchoring every transition to a
+    stable, mood-defined tempo stops cumulative sync drift: without it, each
+    transition syncs the incoming deck to the (possibly already-drifted) outgoing
+    deck and then "keep" leaves it there, so a half-detected/slow track becomes
+    the anchor and every later track sync-pulls toward it (observed +20.3% rate).
+    """
+    try:
+        from ..session_state import get_session
+        sess = get_session()
+        if sess is None:
+            return None
+        mp = getattr(sess, "mood_profile", None) or {}
+        if isinstance(mp, dict):
+            rng = mp.get("bpm_range")
+            if rng and len(rng) == 2 and all(isinstance(x, (int, float)) for x in rng):
+                return (float(rng[0]) + float(rng[1])) / 2.0
+    except Exception as e:
+        log.debug(f"[bpm-anchor] mood lookup failed: {e}")
+    return None
+
+
+def _apply_bpm_after(deck: int, bpm_after: str = "anchor", glide_duration: int = 60):
     """Post-transition BPM handling.
 
-    Default is "keep" — just disable sync, leave rate where it is.
-    BPM is a creative choice for the whole set, not something to reset per-track.
-    The DJ agent controls energy/BPM through track selection.
+    Default is "anchor" — gently tempo-ride the incoming deck back to the mood
+    profile's BPM-range center so per-transition sync drift can't accumulate
+    across a set. _tempo_ride no-ops when the deck is already within 0.5 BPM of
+    the target, so an on-tempo deck is never touched — the ride only fires when
+    the deck has actually drifted. The ride runs after the crossfade completes
+    (deck already audible solo), so blocking here is fine.
 
-    bpm_after="keep"   → disable sync, leave rate untouched (default, correct)
-    bpm_after="reset"  → tempo ride back to native file BPM (rarely needed)
+    bpm_after="anchor" → (default) ride to mood BPM-range center; falls back to
+                         native file BPM when no mood range is known
+    bpm_after="keep"   → disable sync, leave rate untouched (explicit override)
+    bpm_after="reset"  → tempo ride back to native file BPM
     bpm_after="126.5"  → tempo ride to a specific BPM (agent decision)
     """
     _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "sync_enabled", "value": 0})
 
     if bpm_after == "keep":
         return
+    elif bpm_after == "anchor":
+        # None target → _tempo_ride falls back to native file BPM.
+        _tempo_ride(deck, target_bpm=_anchor_target_bpm(),
+                    duration_s=max(30, min(120, glide_duration)))
     elif bpm_after == "reset":
         _tempo_ride(deck, target_bpm=None, duration_s=max(30, min(120, glide_duration)))
     else:
@@ -140,7 +173,7 @@ def _apply_bpm_after(deck: int, bpm_after: str = "keep", glide_duration: int = 6
             pass
 
 
-def do_transition(to_deck: int, duration: int = 60, bpm_after: str = "keep", glide_duration: int = 60, duration_bars: int = None) -> str:
+def do_transition(to_deck: int, duration: int = 60, bpm_after: str = "anchor", glide_duration: int = 60, duration_bars: int = None) -> str:
     """Execute a smooth crossfade transition to a deck.
     Uses Mixxx's C++ engine (20fps S-curve). After transition completes,
     the outgoing deck is paused and EQ/volume reset.
@@ -293,7 +326,7 @@ def do_transition(to_deck: int, duration: int = 60, bpm_after: str = "keep", gli
     return f"Transitioned to Deck {to_deck} over {duration}s (bpm_after={bpm_after}). Deck {out_deck} ejected."
 
 
-def do_bass_swap(to_deck: int, duration: int = 60, bpm_after: str = "keep", glide_duration: int = 60, swap_style: str = "trade") -> str:
+def do_bass_swap(to_deck: int, duration: int = 60, bpm_after: str = "anchor", glide_duration: int = 60, swap_style: str = "trade") -> str:
     """Execute a bass-swap transition.
     Phase 1: Bring incoming volume up with bass cut + slight MID dip.
     Phase 2: Quantized 1-bar bass swap on a downbeat (kill or trade).
@@ -445,7 +478,7 @@ def do_bass_swap(to_deck: int, duration: int = 60, bpm_after: str = "keep", glid
     return f"Bass-swapped to Deck {to_deck} over {duration}s (bpm_after={bpm_after}). Deck {out_deck} ejected."
 
 
-def do_filter_sweep(to_deck: int, duration: int = 45, bpm_after: str = "keep", glide_duration: int = 60, duration_bars: int = None) -> str:
+def do_filter_sweep(to_deck: int, duration: int = 45, bpm_after: str = "anchor", glide_duration: int = 60, duration_bars: int = None) -> str:
     """Filter sweep transition -- outgoing rises into HP shimmer while incoming opens from LP.
     Best for: progressive, melodic, atmospheric tracks.
 
@@ -537,7 +570,7 @@ def do_filter_sweep(to_deck: int, duration: int = 45, bpm_after: str = "keep", g
     return f"Filter-swept to Deck {to_deck} over {duration}s (bpm_after={bpm_after}). Deck {out_deck} ejected."
 
 
-def do_hard_cut(to_deck: int, bpm_after: str = "keep", glide_duration: int = 60, align: str = "downbeat") -> str:
+def do_hard_cut(to_deck: int, bpm_after: str = "anchor", glide_duration: int = 60, align: str = "downbeat") -> str:
     """Hard cut -- instant switch to the other deck. No blend, no crossfade.
     Best for: genre changes, drop moments, high energy transitions.
 
@@ -670,7 +703,7 @@ def _echo_disengage(deck: int) -> None:
     })
 
 
-def do_echo_out(to_deck: int, duration: int = 32, bpm_after: str = "keep", glide_duration: int = 60, freeze: bool = False, wait_for_incoming_drop: bool = True) -> str:
+def do_echo_out(to_deck: int, duration: int = 32, bpm_after: str = "anchor", glide_duration: int = 60, freeze: bool = False, wait_for_incoming_drop: bool = True) -> str:
     """Echo out -- a wash-blend, not a hard cut. Echo wet ramps up on the
     outgoing during Phase A; through Phase B the outgoing fader rides DOWN
     while the incoming fader rides UP simultaneously, with the echo wash
@@ -974,7 +1007,7 @@ def do_echo_out(to_deck: int, duration: int = 32, bpm_after: str = "keep", glide
     return f"Echo-out to Deck {to_deck} over {duration}s (bpm_after={bpm_after}). Deck {out_deck} ejected."
 
 
-def do_riser(to_deck: int, duration: int = 32, bpm_after: str = "keep", glide_duration: int = 60, duration_bars: int = None) -> str:
+def do_riser(to_deck: int, duration: int = 32, bpm_after: str = "anchor", glide_duration: int = 60, duration_bars: int = None) -> str:
     """Riser transition (inspired by djay's "Riser") — outgoing rides into a
     high-pass + resonance "zap" build while incoming swells underneath, then
     outgoing kills and incoming opens up.
@@ -1097,7 +1130,7 @@ def do_riser(to_deck: int, duration: int = 32, bpm_after: str = "keep", glide_du
     return f"Riser to Deck {to_deck} over {duration}s (bpm_after={bpm_after}). Deck {out_deck} ejected."
 
 
-def do_dissolve(to_deck: int, duration: int = 16, bpm_after: str = "keep", glide_duration: int = 60, duration_bars: int = None) -> str:
+def do_dissolve(to_deck: int, duration: int = 16, bpm_after: str = "anchor", glide_duration: int = 60, duration_bars: int = None) -> str:
     """Dissolve transition — short volume-only crossfade with neutral EQ.
     Faster than `do_transition` (60s default) but smoother than `do_hard_cut`.
 
@@ -1163,7 +1196,7 @@ def do_dissolve(to_deck: int, duration: int = 16, bpm_after: str = "keep", glide
     return f"Dissolved to Deck {to_deck} over {duration}s (bpm_after={bpm_after}). Deck {out_deck} ejected."
 
 
-def schedule_transition(to_deck: int, at_position: int, technique: str = "crossfade", duration: int = 45, bpm_after: str = "keep", glide_duration: int = 60, at_section_marker: str = "") -> str:
+def schedule_transition(to_deck: int, at_position: int, technique: str = "crossfade", duration: int = 45, bpm_after: str = "anchor", glide_duration: int = 60, at_section_marker: str = "") -> str:
     """Schedule a transition at a specific track position. Returns immediately --
     Python executes the transition in the background when the track reaches at_position.
 

@@ -76,7 +76,7 @@ def suggest_transition(
     reason: str = "",
     track_title: str = "",
     at_section_marker: str = "",
-    bpm_after: str = "keep",
+    bpm_after: str = "anchor",
 ) -> dict:
     """Suggest a transition to Manish (Sarathi Mode). Does NOT execute it.
 
@@ -95,7 +95,7 @@ def suggest_transition(
         reason: plain-language justification shown to Manish
         track_title: human-readable name of the incoming track (for the panel)
         at_section_marker: "mix_out" / "next_breakdown" etc (overrides at_position)
-        bpm_after: "keep" / "reset" / a number
+        bpm_after: "anchor" (default — ride to mood BPM center, prevents drift) / "keep" / "reset" / a number
 
     Returns:
         {ok, suggestion_id, message}
@@ -216,7 +216,7 @@ def confirm_suggestion(suggestion_id: str = "") -> dict:
             at_position=p.get("at_position", 0),
             technique=p.get("technique", "crossfade"),
             duration=p.get("duration", 45),
-            bpm_after=p.get("bpm_after", "keep"),
+            bpm_after=p.get("bpm_after", "anchor"),
             at_section_marker=p.get("at_section_marker", ""),
         )
     except Exception as exc:
