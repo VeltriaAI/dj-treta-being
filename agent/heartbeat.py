@@ -856,9 +856,42 @@ class HeartbeatMixin:
             # shows up in TUI without spamming production runs.
             log.debug(f"[REPLAY-GUARD] auto-detect skipped: {_exc}")
 
+        # ── Surgical load_track directive overrides the gates below ──────────
+        # An active load_track directive for the idle deck (from replace_deck /
+        # play_specific_track) is an EXPLICIT instruction. It must outrank both
+        # the owned-external drop and the idle-stale gate — otherwise "change
+        # deck N to X" silently no-ops whenever the deck already holds a valid,
+        # unplayed track (BUG: replace_deck never lands; the directive check
+        # lived inside _load_next_on_idle, which the gates never reached).
+        _force_directive_load = False
+        try:
+            import os as _os
+            _d_load = self.session.find_active_directive(
+                "load_track", target="planner", deck=idle_deck,
+            )
+            if _d_load:
+                _want = (_d_load.get("payload") or {}).get("path", "")
+                from .playback_applier import get_deck_paths as _gdp
+                _idle_now = (_gdp(self.config.mixxx.url) or {}).get(idle_deck, "") or ""
+                # directive path is absolute; get_deck_paths is relative — compare basenames.
+                if _want and _os.path.basename(_want) != _os.path.basename(_idle_now):
+                    _force_directive_load = True
+        except Exception:
+            pass
+
         # ── idle_needs_load → load rank-1 via existing helper (BUG-17 dedup) ──
         idle_needs_load = getattr(self.session, "idle_needs_load", False)
-        if idle_needs_load and idle_owned_external:
+        if _force_directive_load and not self._transition_pending:
+            try:
+                log.info(
+                    f"[DIRECTIVE] surgical load_track on idle deck {idle_deck} — "
+                    f"bypassing ownership/stale gates (explicit replace)"
+                )
+                self._load_next_on_idle(status)
+                self.session.idle_needs_load = False
+            except Exception as e:
+                log.error(f"[DIRECTIVE] surgical load failed: {e}")
+        elif idle_needs_load and idle_owned_external:
             owner = self.session.deck_ownership.get(int(idle_deck))
             log.debug(
                 f"[SIGNAL] idle_needs_load dropped — deck {idle_deck} owned by {owner}"
