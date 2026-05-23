@@ -153,6 +153,16 @@ class SessionMixin:
             }
             STATE_FILE.write_text(json.dumps(state_payload, indent=2))
 
+            # Keep the in-Mixxx sidebar's Library/Planned/Suggestions symlink
+            # folders in sync (best-effort, throttled to ~every 5th tick).
+            self._browse_sync_ctr = getattr(self, "_browse_sync_ctr", 0) + 1
+            if self._browse_sync_ctr % 5 == 1:
+                try:
+                    from .browse_folders import sync_browse_folders
+                    sync_browse_folders(self.config.library.music_dir, self.session)
+                except Exception:
+                    pass
+
             # Broadcast state via WebSocket — same shape as STATE_FILE so the
             # TUI's state-source can treat WS frames and disk reads identically.
             if hasattr(self, '_ws_broadcast'):
