@@ -274,14 +274,32 @@ class HeartbeatMixin:
         nothing_playing = (not status.get("deck1", {}).get("playing")
                            and not status.get("deck2", {}).get("playing"))
 
+        # Sarathi Mode flag — Manish drives; the deterministic systems below
+        # back off so they don't fight him. Auto mode is unaffected.
+        _sarathi = bool(getattr(self.session, "sarathi_mode", False))
+
         # === PRIORITY 1: SILENCE — emergency recovery (ALWAYS runs, even if agent busy) ===
         if nothing_playing:
             self._next_sleep = 5
+            now_ts = time.time()
+            if not getattr(self, "_silence_since", None):
+                self._silence_since = now_ts
+            # Sarathi: give Manish a grace window before rescuing — his cue
+            # gaps / between-track moves shouldn't trigger emergency play.
+            # Auto mode recovers instantly (music never stops). Genuine dead
+            # air past the grace still gets rescued.
+            if _sarathi:
+                in_motion = (getattr(self.session, "manish_in_motion", False)
+                             and now_ts < getattr(self.session, "manish_motion_until", 0.0))
+                if in_motion or (now_ts - self._silence_since) < 8.0:
+                    return  # hold — he may be cueing / working the deck
             # Emergency runs regardless of _agent_busy — music must never stop
             if not getattr(self, '_emergency_running', False):
                 self._emergency_running = True
                 threading.Thread(target=self._emergency_play, daemon=True).start()
             return
+        # Playing again → reset the silence timer.
+        self._silence_since = None
 
         idle_ready = idle_loaded and idle_remaining > 60
         duration = float(d_active.get("duration", 0) or 0)
@@ -302,12 +320,13 @@ class HeartbeatMixin:
                 f"P2 auto-transition skipped — deck {active_deck} owner={owner_a}, "
                 f"deck {idle_deck} owner={owner_i}"
             )
-        # Sarathi Mode: tighten the emergency safety net. In autonomous mode
-        # Treta catches at <30s; in Sarathi, Manish owns the transition so we
-        # only rescue when he's clearly missed it (<12s) — music never stops,
-        # but he gets the full window to do it himself first.
-        elif (idle_ready
-                and remaining < (12 if getattr(self.session, "sarathi_mode", False) else 30)
+        # Sarathi Mode: do NOT auto-transition — Manish owns every transition
+        # on the FLX4. If he misses one entirely and the track ends, P1 silence
+        # recovery (with its grace window) is the only safety net. Auto mode
+        # keeps the <30s watchdog crossfade.
+        elif (not _sarathi
+                and idle_ready
+                and remaining < 30
                 and remaining > 0 and playing
                 and not self._agent_busy and not self._transition_pending):
             log.info(f"Auto-transition (track ending): {remaining:.0f}s left, crossfading to deck {idle_deck}")
@@ -394,8 +413,20 @@ class HeartbeatMixin:
         transition_window = idle_ready and remaining > 0
         # Issue #76: respect defer_decision — DJ told us to ask later.
         deferred_until = getattr(self.session, "dj_deferred_until", 0.0) or 0.0
+        # Sarathi: don't re-invoke the DJ agent for a new suggestion while one
+        # is already live — otherwise she re-suggests every tick the window's
+        # open (the suggestion spam). One suggestion per window.
+        _live_sugg = False
+        if _sarathi:
+            try:
+                from .tools.sarathi import list_pending_suggestions
+                _live_sugg = bool(list_pending_suggestions())
+            except Exception:
+                _live_sugg = False
         if getattr(self.session, "dj_paused", False):
             log.debug("P4 DJ invoke skipped — dj_paused (Treta has the wheel)")
+        elif _sarathi and _live_sugg:
+            log.debug("P4 DJ invoke skipped — live suggestion already pending (sarathi, no re-suggest)")
         elif (getattr(self.session, "manish_in_motion", False)
                 and time.time() < getattr(self.session, "manish_motion_until", 0.0)):
             log.debug("P4 DJ invoke skipped — manish_in_motion (he's working a transition on the FLX4)")
