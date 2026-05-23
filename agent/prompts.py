@@ -466,31 +466,53 @@ def build_planner_v8_message(
         '"duration":<10-90>, "at_section":"breakdown|outro|build|drop|intro"}}]}'
     )
 
+    # Worked example anchors the output format (Gemini best practice: a
+    # concrete example cuts hallucinated/invalid JSON far more than rules
+    # alone). Paths here are illustrative — the model must use real library
+    # paths from <library>.
+    example = (
+        '{"planned_at":1736500000.0,"mood_snapshot":"melodic-techno",'
+        '"reasoning_summary":"Holding 122-124 BPM and building energy gradually; '
+        'rank 1 shares the current key for a seamless harmonic blend, lower ranks '
+        'keep the floor moving if it is unavailable.",'
+        '"tracks":[{"rank":1,"path":"melodic-techno/Artist - Song (Original Mix).mp3",'
+        '"title":"Artist - Song","bpm":123.0,"key_camelot":"8A","energy":6,'
+        '"reason":"Same key (8A), +1 BPM — seamless harmonic blend.",'
+        '"transition_hint":{"technique":"bass_swap","duration":32,"at_section":"breakdown"}}]}'
+    )
+
+    # Structured with XML-style tags + instructions AFTER the large <library>
+    # context, per Google's Gemini prompting guidance (helps Flash separate
+    # data from task and reduces invalid output).
     return (
-        "You are DJ Treta's planning brain. Given the state below, return "
-        "a ranked playlist of the next 5 candidate tracks as STRICT JSON.\n\n"
-        f"Currently playing: {current_info}\n"
-        f"Already played (DO NOT repeat): {played_list}\n"
-        f"Current mood: {mood_slug}."
-        + profile_line
+        "<role>\n"
+        "You are DJ Treta's planning brain. Pick the next tracks for a live "
+        "DJ set and return them as STRICT JSON. No markdown fences, no prose.\n"
+        "</role>\n\n"
+        "<now_playing>" + current_info + "</now_playing>\n"
+        f"<mood>{mood_slug}{profile_line}</mood>\n"
+        f"<already_played>DO NOT repeat any of these: {played_list}</already_played>"
         + directive_line
         + intent_line
         + ownership_line
         + feedback_line
-        + "\n\nAvailable library (pick paths ONLY from this list):\n"
+        + "\n\n<library>\n"
+        "Pick `path` values ONLY from this list — never invent a path.\n"
         + library_json
-        + "\n\nReturn JSON matching this schema (no markdown fences, no prose):\n"
-        + schema
-        + "\n\nRules:\n"
+        + "\n</library>\n\n"
+        "<output_schema>\n" + schema + "\n</output_schema>\n\n"
+        "<example>\n" + example + "\n</example>\n\n"
+        "<rules>\n"
         "- Return exactly 5 candidates ranked 1 (best) to 5.\n"
-        "- Use `path` values EXACTLY as they appear in the library list.\n"
+        "- Use `path` values EXACTLY as they appear in <library>.\n"
         "- Rank 1 should fit the current track BPM / key / energy best.\n"
         "- Lower ranks offer valid alternates if rank 1 is unavailable.\n"
-        "- Never repeat a title from the played list.\n"
+        "- Never repeat a title from <already_played>.\n"
         "- reasoning_summary: one paragraph on your overall arc strategy.\n"
-        "- Each track's `reason` should explain mood/BPM/energy fit in one sentence.\n"
-        "- If library is thin and you can return <5 candidates, do — mention in reasoning_summary.\n"
-        "Return JSON ONLY."
+        "- Each track's `reason`: one sentence on mood/BPM/energy fit.\n"
+        "- If the library is thin and you can return <5, do — say so in reasoning_summary.\n"
+        "</rules>\n\n"
+        "Return JSON ONLY, matching <output_schema>."
     )
 
 

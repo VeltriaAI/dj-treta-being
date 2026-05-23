@@ -665,10 +665,11 @@ class HeartbeatMixin:
             # instead of schedules. The system prompt branches on this.
             if getattr(self.session, "sarathi_mode", False):
                 instruction = (
-                    "MODE: SARATHI — Manish drives transitions on the FLX4. "
-                    "Call suggest_transition (NOT schedule_transition). You "
-                    "propose the moment + technique with a plain-language "
-                    "reason; he executes, or says 'do it' and it fires.\n\n"
+                    "MODE: SARATHI — the user drives transitions on the "
+                    "controller. Call suggest_transition (NOT "
+                    "schedule_transition). You propose the moment + technique "
+                    "with a plain-language reason; the user executes, or says "
+                    "'do it' and it fires.\n\n"
                 ) + instruction
             else:
                 instruction = (

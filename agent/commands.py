@@ -168,7 +168,7 @@ class CommandsMixin:
             log.info(f"Mode → {mode} (sarathi_mode={self.session.sarathi_mode})")
             return (
                 f"Mode: {mode}. "
-                + ("Manish drives transitions; Treta suggests."
+                + ("You drive transitions; Treta suggests."
                    if mode == "sarathi"
                    else "Treta executes transitions autonomously.")
             )
@@ -239,8 +239,8 @@ class CommandsMixin:
             if not readonly and getattr(self.session, "sarathi_mode", False):
                 lines = [
                     "── MODE: SARATHI ──",
-                    "Manish drives transitions on the FLX4. You suggest; you do "
-                    "NOT execute unless he hands you the wheel.",
+                    "The user drives transitions on the controller. You suggest; "
+                    "you do NOT execute unless they hand you the wheel.",
                 ]
                 try:
                     from .tools.sarathi import list_pending_suggestions
