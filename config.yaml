@@ -11,6 +11,9 @@ mixxx:
 
 llm:
   model: "openai/gemini-3-flash"
+  # Being (Treta's own reasoning) on flash too — no observed quality
+  # difference vs pro in practice, and flash is cheaper/faster (2026-05-23).
+  being_model: "openai/gemini-3-flash"
   api_base: "http://localhost:4000"
   # Prefer env: DJTRETA_LLM_API_KEY or LLM_API_KEY (overrides this field)
   api_key: ""
