@@ -173,10 +173,50 @@ def _apply_bpm_after(deck: int, bpm_after: str = "anchor", glide_duration: int =
             pass
 
 
+# Crossfader is parked at center for the whole set — every transition blends
+# on the channel (volume) faders, the way club DJs actually mix. The crossfader
+# is reserved for scratch/cut work we don't do.
+_XF_CENTER = 0.5
+
+
+def _center_crossfader() -> None:
+    _mixxx_post("/api/crossfade", {"position": _XF_CENTER})
+
+
+def _finish_channel_fader(out_deck: int, to_deck: int, bpm_after: str,
+                          glide_duration: int, *, reset_filter: bool = False,
+                          out_q_group: str = "") -> None:
+    """Club-DJ transition finish: crossfader stays CENTERED; the outgoing deck
+    is silenced by its VOLUME fader (not the crossfader), then paused + ejected.
+    Resets EQ/volume/filter so the freed deck is clean for the next load.
+
+    This is the shared end-state for every technique so none of them leave the
+    crossfader pushed to one side — Manish keeps it centered and rides the
+    channel faders, and so does Treta.
+    """
+    _mixxx_post("/api/volume", {"deck": out_deck, "level": 0.0})  # fully out
+    _mixxx_post("/api/crossfade", {"position": _XF_CENTER})        # keep centered
+    _mixxx_post("/api/pause", {"deck": out_deck})
+    # Paused now → resetting its volume to 1.0 is silent but leaves it ready.
+    _mixxx_post("/api/volume", {"deck": out_deck, "level": 1.0})
+    _mixxx_post("/api/volume", {"deck": to_deck, "level": 1.0})
+    for band in ("hi", "mid", "lo"):
+        _mixxx_post("/api/eq", {"deck": out_deck, band: 1.0})
+        _mixxx_post("/api/eq", {"deck": to_deck, band: 1.0})
+    if reset_filter:
+        _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5})
+        _mixxx_post("/api/filter", {"deck": to_deck, "value": 0.5})
+    if out_q_group:
+        _mixxx_post("/api/control", {"group": out_q_group, "key": "parameter2", "value": 0.0})
+    _apply_bpm_after(to_deck, bpm_after, glide_duration)
+    _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
+
+
 def do_transition(to_deck: int, duration: int = 60, bpm_after: str = "anchor", glide_duration: int = 60, duration_bars: int = None) -> str:
-    """Execute a smooth crossfade transition to a deck.
-    Uses Mixxx's C++ engine (20fps S-curve). After transition completes,
-    the outgoing deck is paused and EQ/volume reset.
+    """Execute a smooth channel-fader blend to a deck (crossfader stays center).
+    Outgoing volume rides down, incoming rides up, with a bass bridge so the
+    low ends don't collide. After it completes the outgoing deck is paused +
+    ejected and EQ/volume reset.
 
     Args:
         to_deck: Deck to transition TO (1 or 2).
@@ -255,75 +295,56 @@ def do_transition(to_deck: int, duration: int = 60, bpm_after: str = "anchor", g
     # fire anyway (better to mix than to stall).
     _wait_phrase_boundary(out_deck, timeout_s=2.0, threshold=0.05)
 
+    # Crossfader parked center; blend on the channel faders (club-DJ style).
+    _center_crossfader()
+    _mixxx_post("/api/volume", {"deck": to_deck, "level": 0.0})
+
     # Bass-bridge: dip incoming LO to 0 at start of fade, restore at ~70%
     # of duration. Prevents bass-collision against outgoing's still-present
-    # low end. Restore happens in a background thread so we don't block the
-    # main /api/transition call (which itself blocks for duration+2s).
+    # low end.
     _mixxx_post("/api/eq", {"deck": to_deck, "lo": 0.0})
-    bass_restore_at = duration * 0.70
 
-    def _restore_incoming_bass():
-        _time.sleep(bass_restore_at)
+    # Manual volume crossblend (20fps): outgoing 1→0, incoming 0→1. Replaces
+    # Mixxx's /api/transition (which drives the CROSSFADER) so the crossfader
+    # stays centered the whole time.
+    fps = 20
+    total = max(1, int(duration * fps))
+    forced_end = False
+    bass_restored = False
+    for i in range(total + 1):
+        t = i / total
+        _mixxx_post("/api/volume", {"deck": to_deck, "level": round(t, 3)})
+        _mixxx_post("/api/volume", {"deck": out_deck, "level": round(1.0 - t, 3)})
+        if not bass_restored and t >= 0.70:
+            _mixxx_post("/api/eq", {"deck": to_deck, "lo": 1.0})
+            bass_restored = True
+        # End-safety: if the OUTGOING deck hits the cliff mid-blend, snap to
+        # the incoming deck (full volume) and finish — no audible cut-out.
+        if i % 5 == 0:
+            try:
+                st = _mixxx_get("/api/status") or {}
+                d_out = st.get(f"deck{out_deck}", {})
+                rem_out = float(d_out.get("remaining_seconds", 0) or 0)
+                playing_out = bool(d_out.get("playing", False))
+            except Exception:
+                rem_out, playing_out = 999.0, True
+            if (playing_out and rem_out < 0.5) or (not playing_out and rem_out <= 0):
+                _mixxx_post("/api/volume", {"deck": to_deck, "level": 1.0})
+                _mixxx_post("/api/volume", {"deck": out_deck, "level": 0.0})
+                forced_end = True
+                log.warning(
+                    f"[BLEND-FORCE-END] outgoing deck {out_deck} hit end mid-blend "
+                    f"(rem={rem_out:.2f}s, playing={playing_out}); snapped to incoming"
+                )
+                break
+        _time.sleep(1.0 / fps)
+
+    # Make sure incoming bass is restored even if the loop broke early.
+    if not bass_restored:
         _mixxx_post("/api/eq", {"deck": to_deck, "lo": 1.0})
 
-    bass_thread = threading.Thread(target=_restore_incoming_bass, daemon=True)
-    bass_thread.start()
-
-    # Mixxx C++ S-curve transition (20fps, smooth)
-    _mixxx_post("/api/transition", {"deck": to_deck, "duration": duration})
-
-    # ── Patch C: crossfade end-safety belt ────────────────────────────
-    # Replace blind _time.sleep(duration + 2) with a watchdog poll. If
-    # the OUTGOING deck runs out mid-fade (track shorter than the fade,
-    # or the schedule ran late), we detect rem<0.5s, force xf to dest
-    # immediately, and break — no more cut-out audible to the listener.
-    deadline = _time.monotonic() + duration + 2
-    forced_end = False
-    while _time.monotonic() < deadline:
-        try:
-            st = _mixxx_get("/api/status") or {}
-            d_out = st.get(f"deck{out_deck}", {})
-            rem_out = float(d_out.get("remaining_seconds", 0) or 0)
-            playing_out = bool(d_out.get("playing", False))
-        except Exception:
-            rem_out = 999.0
-            playing_out = True
-        if (playing_out and rem_out < 0.5) or (not playing_out and rem_out <= 0):
-            # Outgoing track is at the cliff — slam crossfader to dest.
-            xf_force = 0.0 if to_deck == 1 else 1.0
-            try:
-                _mixxx_post("/api/crossfade", {"position": xf_force})
-            except Exception:
-                pass
-            forced_end = True
-            log.warning(
-                f"[CROSSFADE-FORCE-END] outgoing deck {out_deck} hit end "
-                f"mid-fade (rem={rem_out:.2f}s, playing={playing_out}); "
-                f"forced crossfader to {xf_force}"
-            )
-            break
-        _time.sleep(0.5)
-
-    # Make sure bass-restore has run even if duration math drifted.
-    _mixxx_post("/api/eq", {"deck": to_deck, "lo": 1.0})
-
-    # Post-flight cleanup -- crossfader + pause + reset EQ
-    xf = 0.0 if to_deck == 1 else 1.0
-    _mixxx_post("/api/crossfade", {"position": xf})
-    _mixxx_post("/api/pause", {"deck": out_deck})
-    _mixxx_post("/api/volume", {"deck": out_deck, "level":1.0})
-    _mixxx_post("/api/volume", {"deck": to_deck, "level":1.0})
-    for band in ["hi", "mid", "lo"]:
-        _mixxx_post("/api/eq", {"deck": out_deck, band: 1.0})
-        _mixxx_post("/api/eq", {"deck": to_deck, band: 1.0})
-    _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5})
-    _mixxx_post("/api/filter", {"deck": to_deck, "value": 0.5})
-
-    _apply_bpm_after(to_deck, bpm_after, glide_duration)
-
-    _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
-
-    return f"Transitioned to Deck {to_deck} over {duration}s (bpm_after={bpm_after}). Deck {out_deck} ejected."
+    _finish_channel_fader(out_deck, to_deck, bpm_after, glide_duration, reset_filter=True)
+    return f"Transitioned to Deck {to_deck} over {duration}s, channel-fader blend (bpm_after={bpm_after}). Deck {out_deck} ejected."
 
 
 def do_bass_swap(to_deck: int, duration: int = 60, bpm_after: str = "anchor", glide_duration: int = 60, swap_style: str = "trade") -> str:
@@ -454,26 +475,9 @@ def do_bass_swap(to_deck: int, duration: int = 60, bpm_after: str = "anchor", gl
 
         _time.sleep(1.0 / fps)
 
-    # Cleanup -- smooth crossfader to final position, pause + reset
-    xf_target = 0.0 if to_deck == 1 else 1.0
-    # Glide crossfader over 1s instead of snapping
-    steps = 10
-    xf_start = 0.5
-    for s in range(steps + 1):
-        xf = xf_start + (xf_target - xf_start) * (s / steps)
-        _mixxx_post("/api/crossfade", {"position": round(xf, 2)})
-        _time.sleep(0.1)
-
-    _mixxx_post("/api/pause", {"deck": out_deck})
-    _mixxx_post("/api/volume", {"deck": out_deck, "level":1.0})
-    _mixxx_post("/api/volume", {"deck": to_deck, "level":1.0})
-    for band in ["hi", "mid", "lo"]:
-        _mixxx_post("/api/eq", {"deck": out_deck, band: 1.0})
-        _mixxx_post("/api/eq", {"deck": to_deck, band: 1.0})
-
-    _apply_bpm_after(to_deck, bpm_after, glide_duration)
-
-    _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
+    # Cleanup — crossfader stays centered; outgoing already faded to ~0 by
+    # phase 3, the finish helper silences it fully via volume + pauses/ejects.
+    _finish_channel_fader(out_deck, to_deck, bpm_after, glide_duration)
 
     return f"Bass-swapped to Deck {to_deck} over {duration}s (bpm_after={bpm_after}). Deck {out_deck} ejected."
 
@@ -513,6 +517,9 @@ def do_filter_sweep(to_deck: int, duration: int = 45, bpm_after: str = "anchor",
     # Start incoming with filter closed (muffled = LP fully down), sync handles BPM
     _mixxx_post("/api/filter", {"deck": to_deck, "value": 0.0})  # fully closed (LP)
     _mixxx_post("/api/sync", {"deck": to_deck})
+    # Crossfader parked center; incoming starts silent and rides up on its fader.
+    _center_crossfader()
+    _mixxx_post("/api/volume", {"deck": to_deck, "level": 0.0})
     _mixxx_post("/api/play", {"deck": to_deck})
     _time.sleep(0.3)
 
@@ -549,23 +556,16 @@ def do_filter_sweep(to_deck: int, duration: int = 45, bpm_after: str = "anchor",
                 "value": q_val,
             })
 
-        # Crossfader follows
-        xf = t if to_deck == 2 else (1 - t)
-        _mixxx_post("/api/crossfade", {"position": xf})
+        # Level handoff on the channel faders (crossfader stays centered):
+        # incoming rides up, outgoing rides down, alongside the filter sweep.
+        _mixxx_post("/api/volume", {"deck": to_deck, "level": round(t, 3)})
+        _mixxx_post("/api/volume", {"deck": out_deck, "level": round(1.0 - t, 3)})
 
         _time.sleep(1 / fps)
 
-    # Cleanup
-    xf = 0.0 if to_deck == 1 else 1.0
-    _mixxx_post("/api/crossfade", {"position": xf})
-    _mixxx_post("/api/pause", {"deck": out_deck})
-    _mixxx_post("/api/filter", {"deck": to_deck, "value": 0.5})
-    _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5})
-    # Reset resonance to its neutral default. TODO live-validate the neutral
-    # value for parameter2 on the Mixxx filter (0 is the safe assumption).
-    _mixxx_post("/api/control", {"group": out_q_group, "key": "parameter2", "value": 0.0})
-    _apply_bpm_after(to_deck, bpm_after, glide_duration)
-    _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
+    # Cleanup — centered crossfader, volume-silenced outgoing, reset filters + Q.
+    _finish_channel_fader(out_deck, to_deck, bpm_after, glide_duration,
+                          reset_filter=True, out_q_group=out_q_group)
 
     return f"Filter-swept to Deck {to_deck} over {duration}s (bpm_after={bpm_after}). Deck {out_deck} ejected."
 
@@ -625,12 +625,13 @@ def do_hard_cut(to_deck: int, bpm_after: str = "anchor", glide_duration: int = 6
         _wait_phrase_boundary(out_deck, timeout_s=2.0, threshold=0.05)
     # align == "now" → no wait
 
+    # Instant volume swap (crossfader stays centered): incoming full, outgoing
+    # silenced. No crossfader slam — matches the channel-fader workflow.
+    _center_crossfader()
+    _mixxx_post("/api/volume", {"deck": to_deck, "level": 1.0})
     _mixxx_post("/api/play", {"deck": to_deck})
-    xf = 0.0 if to_deck == 1 else 1.0
-    _mixxx_post("/api/crossfade", {"position": xf})
-    _mixxx_post("/api/pause", {"deck": out_deck})
-    _apply_bpm_after(to_deck, bpm_after, glide_duration)
-    _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
+    _mixxx_post("/api/volume", {"deck": out_deck, "level": 0.0})
+    _finish_channel_fader(out_deck, to_deck, bpm_after, glide_duration)
 
     return f"Hard-cut to Deck {to_deck} (align={align}, bpm_after={bpm_after}). Deck {out_deck} ejected."
 
@@ -962,13 +963,8 @@ def do_echo_out(to_deck: int, duration: int = 32, bpm_after: str = "anchor", gli
 
         _time.sleep(1.0 / fps)
 
-    # Glide crossfader to final position (1s). Echo tail still ringing.
-    xf_target = 0.0 if to_deck == 1 else 1.0
-    steps = 10
-    for s in range(steps + 1):
-        xf = 0.5 + (xf_target - 0.5) * (s / steps)
-        _mixxx_post("/api/crossfade", {"position": round(xf, 2)})
-        _time.sleep(0.1)
+    # Crossfader stays centered — outgoing is already silenced via its volume
+    # fader (set to 0 above). Echo tail still ringing through the FX send.
 
     # Pause outgoing — its audio is already at 0 but the deck transport
     # was still playing into the FX send. Tail will continue from the
@@ -1111,21 +1107,9 @@ def do_riser(to_deck: int, duration: int = 32, bpm_after: str = "anchor", glide_
 
         _time.sleep(1.0 / fps)
 
-    # Cleanup — reset filter + resonance on outgoing, snap crossfader.
-    _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5})
-    _mixxx_post("/api/control", {"group": out_q_group, "key": "parameter2", "value": 0.0})
-    xf = 0.0 if to_deck == 1 else 1.0
-    _mixxx_post("/api/crossfade", {"position": xf})
-    _mixxx_post("/api/pause", {"deck": out_deck})
-    _mixxx_post("/api/volume", {"deck": out_deck, "level": 1.0})
-    _mixxx_post("/api/volume", {"deck": to_deck, "level": 1.0})
-    _mixxx_post("/api/filter", {"deck": to_deck, "value": 0.5})
-    for band in ["hi", "mid", "lo"]:
-        _mixxx_post("/api/eq", {"deck": out_deck, band: 1.0})
-        _mixxx_post("/api/eq", {"deck": to_deck, band: 1.0})
-
-    _apply_bpm_after(to_deck, bpm_after, glide_duration)
-    _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
+    # Cleanup — crossfader stays centered; outgoing already at 0 volume.
+    _finish_channel_fader(out_deck, to_deck, bpm_after, glide_duration,
+                          reset_filter=True, out_q_group=out_q_group)
 
     return f"Riser to Deck {to_deck} over {duration}s (bpm_after={bpm_after}). Deck {out_deck} ejected."
 
@@ -1184,14 +1168,8 @@ def do_dissolve(to_deck: int, duration: int = 16, bpm_after: str = "anchor", gli
         _mixxx_post("/api/volume", {"deck": to_deck, "level": round(t, 3)})
         _time.sleep(1.0 / fps)
 
-    # Cleanup.
-    xf = 0.0 if to_deck == 1 else 1.0
-    _mixxx_post("/api/crossfade", {"position": xf})
-    _mixxx_post("/api/pause", {"deck": out_deck})
-    _mixxx_post("/api/volume", {"deck": out_deck, "level": 1.0})
-    _mixxx_post("/api/volume", {"deck": to_deck, "level": 1.0})
-    _apply_bpm_after(to_deck, bpm_after, glide_duration)
-    _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
+    # Cleanup — crossfader stays centered; outgoing already at 0 volume.
+    _finish_channel_fader(out_deck, to_deck, bpm_after, glide_duration)
 
     return f"Dissolved to Deck {to_deck} over {duration}s (bpm_after={bpm_after}). Deck {out_deck} ejected."
 

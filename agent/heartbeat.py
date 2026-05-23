@@ -154,9 +154,17 @@ class HeartbeatMixin:
             return
         try:
             xfader = float(status.get("crossfader", 0) or 0)
+            # Channel (volume) faders — Manish mixes with these, crossfader
+            # parked center. Watch them too or his transitions are invisible.
+            vol1 = float((status.get("deck1") or {}).get("volume", 1) or 0)
+            vol2 = float((status.get("deck2") or {}).get("volume", 1) or 0)
             prev_xfader = getattr(self, "_last_xfader", None)
+            prev_vol1 = getattr(self, "_last_vol1", None)
+            prev_vol2 = getattr(self, "_last_vol2", None)
             prev_active = getattr(self, "_last_active_deck", None)
             self._last_xfader = xfader
+            self._last_vol1 = vol1
+            self._last_vol2 = vol2
             self._last_active_deck = active_deck
             now = time.time()
 
@@ -189,12 +197,21 @@ class HeartbeatMixin:
                     })
                 self.session.manish_in_motion = False
 
-            # Big crossfader move, nothing of ours scheduled → he's working it.
-            if (prev_xfader is not None and abs(xfader - prev_xfader) > 0.15
-                    and not self._transition_pending):
+            # He's working a transition if EITHER the crossfader moved a lot OR
+            # a channel fader moved a lot — and nothing of ours is in flight
+            # (our own channel-fader blends move the volumes too, but those run
+            # under _transition_pending, so they're excluded here).
+            xfader_moved = prev_xfader is not None and abs(xfader - prev_xfader) > 0.15
+            vol_moved = (
+                (prev_vol1 is not None and abs(vol1 - prev_vol1) > 0.10)
+                or (prev_vol2 is not None and abs(vol2 - prev_vol2) > 0.10)
+            )
+            if (xfader_moved or vol_moved) and not self._transition_pending:
                 self.session.manish_in_motion = True
                 self.session.manish_motion_until = now + 90
-                log.info(f"[sarathi] manual transition in progress (xfader {prev_xfader:.2f}→{xfader:.2f}) — going quiet 90s")
+                _what = (f"xfader {prev_xfader:.2f}→{xfader:.2f}" if xfader_moved
+                         else f"vol {prev_vol1:.2f}/{prev_vol2:.2f}→{vol1:.2f}/{vol2:.2f}")
+                log.info(f"[sarathi] manual transition in progress ({_what}) — going quiet 90s")
         except Exception as exc:
             log.debug(f"[sarathi] manual-transition detect failed (non-fatal): {exc}")
 
@@ -855,6 +872,19 @@ class HeartbeatMixin:
             # Silent failure here was hiding the bug — log at debug so it
             # shows up in TUI without spamming production runs.
             log.debug(f"[REPLAY-GUARD] auto-detect skipped: {_exc}")
+
+        # ── Sarathi: she SUGGESTS, she does NOT load ────────────────────────
+        # Manish loads + mixes the decks himself; Treta only advises via
+        # suggest_transition. Suppress ALL automatic idle-deck loading so she
+        # never drops a track onto the deck he's mid-transition into (his deck
+        # picks are his own). Explicit surgical load_track directives below
+        # (replace_deck / play_specific_track) still apply — those are direct
+        # commands, not auto-prep — but she doesn't emit those in Sarathi.
+        # Genuine silence recovery (P1) is a separate path and still runs.
+        if getattr(self.session, "sarathi_mode", False):
+            if getattr(self.session, "idle_needs_load", False):
+                log.debug("[sarathi] idle_needs_load suppressed — she suggests, Manish loads")
+                self.session.idle_needs_load = False
 
         # ── Surgical load_track directive overrides the gates below ──────────
         # An active load_track directive for the idle deck (from replace_deck /
