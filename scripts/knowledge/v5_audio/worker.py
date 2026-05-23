@@ -130,7 +130,44 @@ def _ensure_cookies():
         log.warning(f"could not fetch yt cookies: {e}")
 
 
-def download_audio(video_id: str, dest: Path) -> bool:
+def _classify_yt_error(stderr: bytes, returncode: int) -> str:
+    """Classify yt-dlp failure into recoverable buckets so downstream can
+    decide whether to retry, route through proxy, or drop permanently."""
+    s = stderr.decode("utf-8", errors="replace").lower() if stderr else ""
+    if "sign in to confirm" in s or "captcha" in s or "challenge" in s:
+        return "bot_block"
+    if "http error 429" in s or "too many requests" in s:
+        return "rate_limit"
+    if "http error 403" in s:
+        return "forbidden_403"
+    if "video unavailable" in s or "this video has been removed" in s:
+        return "video_unavailable"
+    if "private video" in s or "this video is private" in s:
+        return "video_private"
+    if "not available in your country" in s or "blocked it on copyright" in s or "region" in s:
+        return "region_block"
+    if "members-only" in s or "members only" in s:
+        return "members_only"
+    if "age" in s and "restrict" in s:
+        return "age_restricted"
+    if "the uploader has not made this video available" in s:
+        return "uploader_blocked"
+    if "max-filesize" in s or "file is too large" in s:
+        return "file_too_large"
+    if "format is not available" in s:
+        return "no_format"
+    if "timeout" in s or returncode == 124:
+        return "timeout"
+    if "unable to download" in s and "http" in s:
+        return "http_error"
+    if returncode == 0:
+        return "unknown_zero_size"
+    return "unknown"
+
+
+def download_audio(video_id: str, dest: Path) -> tuple[bool, str | None]:
+    """Returns (success, error_category). On success error_category is None.
+    On failure error_category is one of the labels from _classify_yt_error."""
     _ensure_cookies()
     url = f"https://music.youtube.com/watch?v={video_id}"
     cmd = [
@@ -138,7 +175,6 @@ def download_audio(video_id: str, dest: Path) -> bool:
         "-f",
         "bestaudio[ext=m4a]/bestaudio",
         "--no-playlist",
-        "--quiet",
         "--no-warnings",
         "--socket-timeout",
         "30",
@@ -154,9 +190,14 @@ def download_audio(video_id: str, dest: Path) -> bool:
         cmd[1:1] = ["--cookies", str(YT_COOKIES_PATH)]
     try:
         r = subprocess.run(cmd, capture_output=True, timeout=180)
-        return r.returncode == 0 and dest.exists() and dest.stat().st_size > 100_000
-    except Exception:
-        return False
+        ok = r.returncode == 0 and dest.exists() and dest.stat().st_size > 100_000
+        if ok:
+            return True, None
+        return False, _classify_yt_error(r.stderr, r.returncode)
+    except subprocess.TimeoutExpired:
+        return False, "timeout"
+    except Exception as e:
+        return False, f"exception_{type(e).__name__}"
 
 
 # ── Tier 2: Essentia ──────────────────────────────────────────────────
@@ -533,6 +574,23 @@ def process_one(row: dict) -> dict | None:
     if ckpt_blob.exists():
         return None
 
+    # OOM-loop guard: increment attempt counter before any heavy work.
+    # If a track previously crashed the worker (OOM/segfault), the supervisor
+    # restarted us — but the attempt blob persisted. After 2 prior crashes
+    # on this track, mark it failed and move on instead of looping forever.
+    attempt_blob = bucket.blob(checkpoint_prefix(SHARD_ID) + f"{mbid}.attempt")
+    try:
+        prior = int(attempt_blob.download_as_text()) if attempt_blob.exists() else 0
+    except Exception:
+        prior = 0
+    if prior >= 2:
+        ckpt_blob.upload_from_string("analysis_failed:oom_loop")
+        attempt_blob.delete(if_generation_match=None) if attempt_blob.exists() else None
+        return {"mbid": mbid, "analysis_error": "analysis_failed:oom_loop",
+                "analyzed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "analysis_version": ANALYSIS_VERSION}
+    attempt_blob.upload_from_string(str(prior + 1))
+
     audio_path = LOCAL_TMP / f"{mbid}.m4a"
     paths = asset_paths(mbid)
     result = {"mbid": mbid, "analyzed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -540,9 +598,10 @@ def process_one(row: dict) -> dict | None:
 
     try:
         # Tier 1
-        if not download_audio(video_id, audio_path):
-            result["analysis_error"] = "download_failed"
-            ckpt_blob.upload_from_string("download_failed")
+        ok, err_category = download_audio(video_id, audio_path)
+        if not ok:
+            result["analysis_error"] = f"download_failed:{err_category}"
+            ckpt_blob.upload_from_string(f"download_failed:{err_category}")
             return result
 
         # Tier 2
@@ -646,12 +705,20 @@ def process_one(row: dict) -> dict | None:
             log.warning(f"{mbid} upload audio: {e}")
 
         ckpt_blob.upload_from_string("ok")
+        try:
+            if attempt_blob.exists(): attempt_blob.delete()
+        except Exception:
+            pass
         return result
 
     except Exception as e:
         log.error(f"{mbid} fatal: {e}\n{traceback.format_exc()}")
         result["analysis_error"] = str(e)[:200]
         ckpt_blob.upload_from_string(f"error:{type(e).__name__}")
+        try:
+            if attempt_blob.exists(): attempt_blob.delete()
+        except Exception:
+            pass
         return result
     finally:
         # Clean up local audio + stems + temp files
@@ -667,6 +734,22 @@ def process_one(row: dict) -> dict | None:
 
 
 # ── Worker process ────────────────────────────────────────────────────
+def supervised(wid: int, rows: list[dict]):
+    """Restart-on-crash wrapper around worker_process. Module-scope so
+    spawn-mode multiprocessing can pickle it as the child target."""
+    max_restarts = 20
+    for restart in range(max_restarts + 1):
+        p = mp.Process(target=worker_process, args=(wid, rows))
+        p.start()
+        p.join()
+        if p.exitcode == 0:
+            return
+        if restart < max_restarts:
+            log.warning(f"worker {wid} crashed (exit {p.exitcode}, restart {restart + 1}/{max_restarts}); 5s")
+            time.sleep(5)
+    log.error(f"worker {wid} crashed {max_restarts}× — giving up")
+
+
 def worker_process(worker_id: int, rows: list[dict]):
     log.info(f"worker {worker_id} starting on {len(rows)} tracks")
     results: list[dict] = []
@@ -735,26 +818,12 @@ def main():
     for i, row in enumerate(rows):
         splits[i % WORKERS_PER_VM].append(row)
 
-    # Respawn-on-crash supervisor. Child procs sometimes die from OOM
-    # (long Discogs tracks blow demucs memory) or C-extension segfaults.
-    # Without this, the parent just waits on dead joins and runs at 1/N
-    # capacity. With this, a crashed child is restarted on the same row
-    # list — the inner loop skips already-done mbids via GCS checkpoints,
-    # so a restart costs only the in-flight track.
-    def supervised(wid: int, rows: list[dict]):
-        max_restarts = 20
-        restart_count = 0
-        while restart_count < max_restarts:
-            p = mp.Process(target=worker_process, args=(wid, rows))
-            p.start()
-            p.join()
-            if p.exitcode == 0:
-                return
-            restart_count += 1
-            log.warning(f"worker {wid} crashed (exit {p.exitcode}, restart {restart_count}/{max_restarts}); restarting in 5s")
-            time.sleep(5)
-        log.error(f"worker {wid} crashed {max_restarts}× — giving up")
-
+    # Respawn-on-crash supervisor — see `supervised()` at module scope.
+    # Each child runs inside supervised() which detects non-zero exitcode
+    # and restarts the inner worker_process. Without this, child crashes
+    # from OOM / segfault leave the parent waiting on dead joins at 1/N
+    # capacity (observed on v6-prod-2026-05-04: 12+hr workers had 1-2 of
+    # 3 alive).
     sup_procs = []
     for wid in range(WORKERS_PER_VM):
         p = mp.Process(target=supervised, args=(wid, splits[wid]))
