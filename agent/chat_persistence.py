@@ -56,18 +56,23 @@ def append_chat_turn(
     set_id: str = "",
     mood: str = "",
     tool_calls: Optional[list[dict]] = None,
+    user_ts: Optional[float] = None,
 ) -> bool:
     """Append one full chat turn (user msg + Treta response) to today's JSONL.
 
     Writes two lines: one role='user', one role='assistant'. Both share
     a `turn_id` so readers can pair them. Best-effort — never raises.
+
+    `user_ts`: when the user sent the message (turn START). Defaults to now.
+    The assistant line is always stamped at turn END (now), so any tool calls
+    that fired mid-turn sort BETWEEN the user message and the reply.
     """
     try:
         path = _today_jsonl_path()
         ts = time.time()
         turn_id = uuid.uuid4().hex[:12]
         user_line = {
-            "ts": ts,
+            "ts": user_ts if user_ts is not None else ts,
             "turn_id": turn_id,
             "role": "user",
             "content": message or "",

@@ -189,6 +189,9 @@ class CommandsMixin:
         """Being handles ALL conversation. She thinks, responds, and optionally directs agents."""
         from .main import _get_status
 
+        # Turn start — so the user line is timestamped at send time and any
+        # tool calls fired mid-turn sort between it and the reply (not before).
+        _turn_start_ts = time.time()
         try:
             from .prompts import build_being_user_message
 
@@ -316,6 +319,7 @@ class CommandsMixin:
                     response=result,
                     set_id=set_id,
                     mood=mood,
+                    user_ts=_turn_start_ts,
                 )
             except Exception as _jsonl_exc:
                 log.debug(f"chat JSONL append failed (non-fatal): {_jsonl_exc}")
