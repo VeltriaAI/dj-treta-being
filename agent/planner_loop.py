@@ -157,12 +157,23 @@ class PlannerMixin:
                     or getattr(self.session, "replan_requested", False)
                     or playlist_is_stale
                 )
+                # Sarathi: Manish drives the transitions, so the track-change
+                # replan trigger rarely fires and the Up Next queue goes stale /
+                # thin. Keep it fresh on a time cadence (and immediately when
+                # it's thin) so the Up Next panel always offers a real list of
+                # candidates for him to pick from.
+                if getattr(self.session, "sarathi_mode", False):
+                    _n = len((playlist or {}).get("tracks", []) or [])
+                    _age = time.time() - getattr(self, "_last_plan_ts", 0.0)
+                    if _n < 5 or _age > 30:
+                        needs_plan = True
                 if needs_plan and getattr(self.session, "replan_requested", False):
                     self.session.replan_requested = False
 
                 if needs_plan and not self._planner_busy:
                     self._planner_busy = True
                     self._tracks_since_plan = 0
+                    self._last_plan_ts = time.time()
                     try:
                         self._run_planner(status, current_track)
                         # BUG-7 fix (Phase A2 dry run #2 2026-04-19):
@@ -183,6 +194,87 @@ class PlannerMixin:
                 log.warning(f"Planner loop error: {type(e).__name__}: {e}")
                 log.warning(traceback.format_exc()[:500])
             time.sleep(15)  # 15s — fast enough for short generated tracks (~150s)
+
+    def _topup_playlist_local(self, validated, library, current_meta,
+                              played_paths, title_played_fn, target=8):
+        """Fill the playlist up to `target` with real local-library tracks.
+
+        Robust Up-Next floor: the LLM playlist can be thin or empty, but the
+        cockpit Up Next panel + Sarathi candidate list need a dependable list
+        of real tracks following the current energy. We pick current-genre,
+        not-yet-played tracks ranked by BPM proximity to the current track
+        (falling back to the mood BPM-range center) and append them after the
+        LLM's existing ranks.
+        """
+        tracks = validated.get("tracks") or []
+        if len(tracks) >= target:
+            return
+        have_paths = {t.get("path", "") for t in tracks}
+        have_paths.discard("")
+
+        # Anchor BPM: current track, else mood-range center.
+        cur_bpm = 0.0
+        if current_meta:
+            try:
+                cur_bpm = float(current_meta.get("bpm") or 0)
+            except Exception:
+                cur_bpm = 0.0
+        if not cur_bpm:
+            mp = getattr(self.session, "mood_profile", None) or {}
+            rng = mp.get("bpm_range") if isinstance(mp, dict) else None
+            if rng and len(rng) == 2:
+                try:
+                    cur_bpm = (float(rng[0]) + float(rng[1])) / 2.0
+                except Exception:
+                    cur_bpm = 0.0
+
+        # Restrict to the current genre folder so we don't pull off-mood tracks.
+        slug = (self.mood or "").strip().lower().replace(" ", "-")
+
+        # Pull the FULL library incl. unanalyzed tracks — most freshly
+        # downloaded tracks have no BPM/key yet, but they're real files that
+        # resolve + display fine, and we want them in the Up Next list. (The
+        # analyzed-only `library` arg the planner uses is too small here.)
+        try:
+            from .db import get_library_with_metadata as _glib
+            full_library = _glib(include_unanalyzed=True) or library
+        except Exception:
+            full_library = library
+
+        candidates = []
+        for tk in full_library:
+            p = tk.get("path", "") or ""
+            if not p or p in have_paths or p in played_paths:
+                continue
+            # DB paths are relative ("melodic-techno/foo.mp3"); accept both
+            # relative and absolute forms of the genre-folder match.
+            if slug and (f"{slug}/" not in p):
+                continue
+            if title_played_fn(tk.get("title", "")):
+                continue
+            try:
+                bpm = float(tk.get("bpm") or 0)
+            except Exception:
+                bpm = 0.0
+            score = abs(bpm - cur_bpm) if (bpm and cur_bpm) else 999.0
+            candidates.append((score, tk))
+
+        candidates.sort(key=lambda x: x[0])
+        rank = len(tracks)
+        for _score, tk in candidates:
+            if len(tracks) >= target:
+                break
+            rank += 1
+            tracks.append({
+                "rank": rank,
+                "path": tk.get("path", ""),
+                "title": tk.get("title", "") or tk.get("canonical_song", "") or "",
+                "bpm": tk.get("bpm") or 0,
+                "key_camelot": tk.get("key_camelot", "") or "",
+                "downloaded": True,
+                "source": "local-topup",
+            })
+        validated["tracks"] = tracks
 
     def _run_planner(self, status, current_track):
         """Invoke the planner agent; write its structured JSON playlist to Session.
@@ -490,6 +582,22 @@ class PlannerMixin:
                     # Re-rank remaining so rank numbers stay 1..N
                     for i, t in enumerate(validated["tracks"]):
                         t["rank"] = i + 1
+            # Deterministic Up-Next top-up. The LLM playlist often comes back
+            # thin/empty (Flash hallucinates paths with knowledge off; the
+            # played-filter is aggressive in long sets). Guarantee a real,
+            # valid, full Up Next by topping up from the local library —
+            # current-genre, already-played excluded, ranked by BPM fit. These
+            # are real on-disk files so they always resolve in the cockpit and
+            # load cleanly. Appended AFTER the LLM's ranks, so auto-mode rank-1
+            # (the LLM's pick) is unchanged.
+            try:
+                self._topup_playlist_local(
+                    validated, library, current_meta,
+                    played_paths, _title_matches_played, target=8,
+                )
+            except Exception as exc:
+                log.warning(f"playlist local top-up failed: {exc}")
+
             # Override LLM-hallucinated planned_at with real wall-clock time.
             # Flash occasionally emits 2024-era timestamps from its training
             # corpus; downstream logic (TUI age display, stale-playlist check)
