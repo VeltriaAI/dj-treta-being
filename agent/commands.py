@@ -78,8 +78,13 @@ class CommandsMixin:
             return "processing..."
 
         elif cmd == "skip":
-            threading.Thread(target=self._agent_skip, daemon=True).start()
-            return "processing..."
+            # Setting the user_skip signal is instant — do it synchronously
+            # and return a real result now, so the WS caller doesn't wait on
+            # _ws_wait_result for a result that never comes (the old
+            # "processing..." path timed out). The heartbeat picks the signal
+            # up on its next (now fast) tick.
+            self._agent_skip()
+            return self._last_result or "Skip signaled — transitioning"
 
         elif cmd == "stop":
             if self.agent and not self._agent_busy:

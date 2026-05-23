@@ -662,7 +662,23 @@ class DJTretaBeing(
             except Exception as e:
                 log.warning(f"Loop error: {e}")
 
-            time.sleep(max(1.0, self._next_sleep))
+            # Responsive sleep: keep the heartbeat's chosen cadence
+            # (self._next_sleep, up to 30s) but poll for commands every 0.5s so
+            # /skip and friends don't sit unprocessed for the whole interval —
+            # and break out early to re-run the heartbeat the moment a
+            # user-initiated signal (skip / mood / load) lands, so it acts on
+            # it within ~1s instead of up to 30s.
+            _deadline = time.time() + max(1.0, self._next_sleep)
+            while self._running and time.time() < _deadline:
+                time.sleep(0.5)
+                try:
+                    self._check_commands()
+                except Exception as e:
+                    log.warning(f"Command poll error: {e}")
+                if (getattr(self.session, "user_skip", None)
+                        or getattr(self.session, "idle_needs_load", False)
+                        or getattr(self.session, "replan_requested", False)):
+                    break
 
         log.info("DJ Treta Being shutting down")
 
