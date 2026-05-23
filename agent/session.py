@@ -11,6 +11,28 @@ from .runtime_paths import runtime_path
 
 log = logging.getLogger("dj-treta")
 
+
+def _format_timeline_compact_plain(timeline_json, current_pos: float) -> str:
+    """Plain-text section map: INTRO(1) → BREAKDOWN(2) → »BUILDUP(7)« → ...
+
+    The current section is wrapped in »...« so the cockpit can show it without
+    needing rich-text markup. Mirrors the TUI's _format_timeline_compact.
+    """
+    try:
+        sections = json.loads(timeline_json) if isinstance(timeline_json, str) else timeline_json
+        if not sections:
+            return ""
+        parts = []
+        for s in sections:
+            label = f"{str(s['section']).upper()}({s['energy']})"
+            if float(s["start"]) <= current_pos <= float(s["end"]):
+                label = f"»{label}«"
+            parts.append(label)
+        return " → ".join(parts)
+    except Exception:
+        return ""
+
+
 STATE_FILE = runtime_path("state.json")
 PERSIST_FILE = Path(__file__).parent.parent / ".beings" / "session.json"
 
@@ -43,6 +65,17 @@ class SessionMixin:
                         current["file_bpm"] = d.get("file_bpm", 0)
                         current["deck"] = dk
                         break
+
+            # Section timeline (INTRO→BREAKDOWN→...) for the cockpit header.
+            if current.get("file_path"):
+                try:
+                    from .db import get_track_by_path
+                    _tk = get_track_by_path(current["file_path"])
+                    if _tk and _tk.get("timeline"):
+                        current["timeline_compact"] = _format_timeline_compact_plain(
+                            _tk["timeline"], current.get("position", 0))
+                except Exception:
+                    pass
 
             # Next track (idle deck)
             next_track = None
