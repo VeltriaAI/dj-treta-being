@@ -11,9 +11,9 @@ mixxx:
 
 llm:
   model: "openai/gemini-3-flash"
-  # Being (Treta's own reasoning) on flash too — no observed quality
-  # difference vs pro in practice, and flash is cheaper/faster (2026-05-23).
-  being_model: "openai/gemini-3-flash"
+  # Being (Treta's own reasoning) on pro — flash didn't follow instructions
+  # reliably and skipped tool calls (reverted 2026-05-23). Subagents stay flash.
+  being_model: "openai/gemini-3.1-pro"
   api_base: "http://localhost:4000"
   # Prefer env: DJTRETA_LLM_API_KEY or LLM_API_KEY (overrides this field)
   api_key: ""
