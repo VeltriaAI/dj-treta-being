@@ -182,6 +182,16 @@ class WSServerMixin:
                 # table — omitted in v1.
                 tracks = []
                 set_title = ""
+                # set_history.track_path is stored relative to music_dir;
+                # Mixxx needs absolute paths to resolve tracks to library rows.
+                def _abs_path(p):
+                    if not p or p.startswith("/"):
+                        return p or ""
+                    try:
+                        from .config import load_config
+                        return str(load_config().library.music_path.resolve() / p)
+                    except Exception:
+                        return p
                 try:
                     from .db import get_current_set, get_set_tracks, get_db
                     cs = get_current_set()
@@ -202,6 +212,7 @@ class WSServerMixin:
                             t = r.get("title", "")
                             tracks.append({
                                 "title": t,
+                                "path": _abs_path(r.get("track_path", "")),
                                 "transition": r.get("transition_type", ""),
                                 "feedback": fb.get(t, ""),
                             })
