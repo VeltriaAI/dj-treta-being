@@ -35,6 +35,23 @@ log = logging.getLogger("dj-treta")
 WS_PORT = 7779
 
 
+def _abs_music_path(p: str) -> str:
+    """Absolutize a track path stored relative to the music dir.
+
+    session.playlist + set_history store paths relative to library.music_dir
+    (portable across machines). The Mixxx DJ Treta feature needs absolute
+    paths to resolve tracks to library rows (for waveforms), so HTTP routes
+    that surface track paths run them through this.
+    """
+    if not p or p.startswith("/"):
+        return p or ""
+    try:
+        from .config import load_config
+        return str(load_config().library.music_path.resolve() / p)
+    except Exception:
+        return p
+
+
 class WSServerMixin:
     """WebSocket server for real-time client communication."""
 
@@ -126,7 +143,7 @@ class WSServerMixin:
                     if not p:
                         continue
                     tracks.append({
-                        "path": p,
+                        "path": _abs_music_path(p),
                         "title": t.get("title", ""),
                         "bpm": t.get("bpm"),
                         "key_camelot": t.get("key_camelot", ""),
@@ -182,16 +199,6 @@ class WSServerMixin:
                 # table — omitted in v1.
                 tracks = []
                 set_title = ""
-                # set_history.track_path is stored relative to music_dir;
-                # Mixxx needs absolute paths to resolve tracks to library rows.
-                def _abs_path(p):
-                    if not p or p.startswith("/"):
-                        return p or ""
-                    try:
-                        from .config import load_config
-                        return str(load_config().library.music_path.resolve() / p)
-                    except Exception:
-                        return p
                 try:
                     from .db import get_current_set, get_set_tracks, get_db
                     cs = get_current_set()
@@ -212,7 +219,7 @@ class WSServerMixin:
                             t = r.get("title", "")
                             tracks.append({
                                 "title": t,
-                                "path": _abs_path(r.get("track_path", "")),
+                                "path": _abs_music_path(r.get("track_path", "")),
                                 "transition": r.get("transition_type", ""),
                                 "feedback": fb.get(t, ""),
                             })
