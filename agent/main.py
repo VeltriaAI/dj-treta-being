@@ -122,6 +122,16 @@ def _ensure_litellm(config):
         return  # already running
 
     log.info("LiteLLM not running — starting locally")
+    # We only get here when :4000 is unreachable. Kill any stale/half-booted
+    # litellm first so we start exactly one — otherwise every restart where
+    # the old instance isn't cleanly reachable leaks another litellm process
+    # (observed 10 accumulate over a day of restarts), and duplicates compete
+    # for :4000 which makes model calls flaky.
+    try:
+        subprocess.run(["pkill", "-f", "litellm --config"], capture_output=True)
+        time.sleep(0.5)
+    except Exception:
+        pass
     config_file = _resolve_litellm_config()
     if config_file is None or not config_file.exists():
         log.warning(
