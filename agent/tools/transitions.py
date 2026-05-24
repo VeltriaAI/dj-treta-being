@@ -1189,16 +1189,20 @@ def do_dissolve(to_deck: int, duration: int = 16, bpm_after: str = "anchor", gli
     return f"Dissolved to Deck {to_deck} over {duration}s (bpm_after={bpm_after}). Deck {out_deck} ejected."
 
 
-def schedule_transition(to_deck: int, at_position: int, technique: str = "crossfade", duration: int = 45, bpm_after: str = "anchor", glide_duration: int = 60, at_section_marker: str = "") -> str:
+def schedule_transition(to_deck: int, at_position: int = 0, technique: str = "crossfade", duration: int = 45, bpm_after: str = "anchor", glide_duration: int = 60, at_section_marker: str = "") -> str:
     """Schedule a transition at a specific track position. Returns immediately --
     Python executes the transition in the background when the track reaches at_position.
 
     Call this when you've decided the right moment to transition based on
-    the track timeline (e.g., at a breakdown or outro).
+    the track timeline (e.g., at a breakdown or outro). You can pass either
+    `at_position` (seconds) OR `at_section_marker` — both are OPTIONAL. If you
+    pass neither (or 0), it defaults to the active track's analyzed mix-out
+    (the canonical outro), so a bare schedule_transition(to_deck=N) is valid.
 
     Args:
         to_deck: Deck to transition TO (1 or 2).
         at_position: Track position in seconds to START the transition.
+            OPTIONAL — defaults to the active track's mix-out if omitted.
             Server clamps to [current_position+5, duration-5-transition_duration]
             so a hallucinated or stale value can't fire past-end / in-the-past.
         technique: "crossfade" (smooth blend), "bass_swap" (EQ swap, techno), "filter_sweep" (progressive reveal), "echo_out" (fade with echo, mood shift), "hard_cut" (instant switch, genre change), "riser" (HP+resonance build then handoff), "dissolve" (short clean volume crossfade).
@@ -1324,6 +1328,24 @@ def schedule_transition(to_deck: int, at_position: int, technique: str = "crossf
         except Exception:
             # Marker resolution is advisory — silent fall-back to at_position.
             pass
+
+    # If no usable at_position was given (and no marker resolved), default to
+    # the active track's analyzed mix-out (the canonical outro), else a sensible
+    # lead from the current position. This makes a bare schedule_transition()
+    # call valid instead of erroring on a missing at_position — which was
+    # causing the agent to retry the same call repeatedly.
+    if at_position <= 0:
+        fallback = None
+        try:
+            from ..db import get_track_by_path
+            tinfo = _mixxx_get(f"/api/deck/{active_deck}/track_info") or {}
+            fp = tinfo.get("file_path", "")
+            meta = get_track_by_path(fp) if fp else None
+            if meta and meta.get("mix_out_seconds") is not None:
+                fallback = float(meta["mix_out_seconds"])
+        except Exception:
+            fallback = None
+        at_position = int(fallback if fallback is not None else (current_pos + 30))
 
     # Safety clamp — both bounds. Hallucinated or stale at_positions
     # could fire past-end (the 419-on-a-398s-track bug from 2026-04-30)

@@ -59,6 +59,39 @@ def _wrap(func):
     return FunctionTool(func=func)
 
 
+# Identical-tool-call loop guard. Flash (and occasionally pro) sometimes
+# re-emits the SAME tool call with the SAME args many times in a row
+# (observed: set_dj_directive ×12, schedule_transition retries). After a few
+# identical calls in a short window we short-circuit with a "stop repeating"
+# response so the model breaks out instead of spamming + burning tokens.
+import time as _time_mod
+_recent_tool_calls: dict = {}
+
+
+def _loop_guard(tool, args, tool_context):
+    """ADK before_tool_callback. Return a dict to short-circuit (skip the real
+    tool); return None to let the call run normally."""
+    try:
+        name = getattr(tool, "name", None) or getattr(tool, "__name__", str(tool))
+        key = f"{name}|{repr(sorted((args or {}).items()))}"
+    except Exception:
+        return None
+    now = _time_mod.time()
+    times = [t for t in _recent_tool_calls.get(key, []) if now - t < 25.0]
+    times.append(now)
+    _recent_tool_calls[key] = times[-10:]
+    if len(times) >= 3:
+        return {
+            "result": (
+                f"ALREADY APPLIED — you've called {name} with identical arguments "
+                f"{len(times)} times in seconds. It is in effect. Do NOT call it "
+                f"again. Either take a DIFFERENT action or, if nothing else is "
+                f"needed right now, stop and reply with one short sentence."
+            )
+        }
+    return None
+
+
 def _dj_prompt_v8() -> str:
     """Tight v8 DJ system prompt — no SOUL.md / DJ_KNOWLEDGE.md / MEMORY.md
     / USER.md bloat. DJ is a specialist mixing worker, not "Treta" in full.
@@ -695,6 +728,7 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
     mixer = LlmAgent(
         name="mixer",
         model=model,
+        before_tool_callback=_loop_guard,
         instruction=(
             "You control the Mixxx DJ decks. Execute the requested mixing operation.\n\n"
             "TRANSITIONS: Use schedule_transition to schedule transitions at specific track positions. "
@@ -737,6 +771,7 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
     library = LlmAgent(
         name="library",
         model=model,
+        before_tool_callback=_loop_guard,
         instruction="You manage the DJ music library. Find, search, and download tracks as requested.",
         tools=library_tools,
         description=library_desc,
@@ -750,6 +785,7 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
     dj_agent = LlmAgent(
         name="dj_treta",
         model=model,
+        before_tool_callback=_loop_guard,
         instruction=_dj_prompt_v8(),  # v8: tight 50-line focused prompt
         tools=[
             _wrap(get_dj_status), _wrap(get_live_data),
@@ -773,6 +809,7 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
     producer_peer = LlmAgent(
         name="producer",
         model=model,
+        before_tool_callback=_loop_guard,
         instruction=(
             "You are DJ Treta's AI music producer. You run as a peer thread "
             "and watch for session.producer_need signals (or direct requests "
@@ -833,6 +870,7 @@ say so in reasoning_summary so the Being can signal the library manager."""
     planner = LlmAgent(
         name="planner",
         model=model,
+        before_tool_callback=_loop_guard,
         instruction=planner_prompt,
         tools=planner_tools,
         description="DJ Treta planner — emits ranked playlist suggestions as strict JSON",
@@ -937,6 +975,7 @@ say so in reasoning_summary so the Being can signal the library manager."""
     being_agent = LlmAgent(
         name="treta",
         model=being_model,   # Pro — root Being uses the stronger model
+        before_tool_callback=_loop_guard,
         instruction=_load_being_prompt(config),
         tools=being_tools,
         description="Treta — the Being's brain. Thinks, converses, directs agents.",
@@ -991,6 +1030,7 @@ the planner + DJ's job."""
     library_peer = LlmAgent(
         name="library_manager",
         model=model,
+        before_tool_callback=_loop_guard,
         instruction=library_peer_prompt,
         tools=library_peer_tools,
         description="Library manager — owns search/download/canonicalize/enrich",
