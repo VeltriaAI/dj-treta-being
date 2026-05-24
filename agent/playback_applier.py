@@ -124,6 +124,20 @@ def load_on_deck(mixxx_url: str, deck: int, track_path: str, timeout: float = 5.
         result = resp.json() if resp.status_code == 200 else {}
         if result.get("ok"):
             log.info(f"Loaded deck {deck}: {Path(resolved).stem[:60]}")
+            # Channel-fader invariant: a freshly-loaded deck is cued, not
+            # playing — keep it silent (vol 0) so it only becomes audible when a
+            # transition rides its fader up. Only when the OTHER deck is already
+            # playing (genuine idle-prep during a set); on a cold/first load
+            # leave it at full so the set can start audibly.
+            try:
+                st = httpx.get(f"{mixxx_url}/api/status", timeout=2).json()
+                other = 2 if deck == 1 else 1
+                if st.get(f"deck{other}", {}).get("playing"):
+                    httpx.post(f"{mixxx_url}/api/volume",
+                               json={"deck": deck, "level": 0.0}, timeout=2)
+                    log.info(f"  deck {deck} cued silent (vol 0 — other deck playing)")
+            except Exception:
+                pass
             return True
         log.warning(f"Load deck {deck} returned not-ok: {result}")
         return False

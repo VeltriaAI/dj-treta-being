@@ -1079,6 +1079,9 @@ class HeartbeatMixin:
                            json={"group": "[Channel1]", "key": "rate_ratio", "value": 1.0}, timeout=3)
                 httpx.post(f"{url}/api/control",
                            json={"group": "[Channel1]", "key": "sync_enabled", "value": 0}, timeout=3)
+                # Volume MUST be up — idle decks are kept at vol 0, so an
+                # emergency play would be silent without this (music-never-stop).
+                httpx.post(f"{url}/api/volume", json={"deck": 1, "level": 1.0}, timeout=3)
                 httpx.post(f"{url}/api/play", json={"deck": 1}, timeout=3)
                 httpx.post(f"{url}/api/crossfade", json={"position": 0.0}, timeout=3)
                 time.sleep(2)
@@ -1101,6 +1104,7 @@ class HeartbeatMixin:
                     filepath = result.split("Generated: ")[1].split(" |")[0]
                     httpx.post(f"{url}/api/load", json={"deck": 1, "track": filepath}, timeout=5)
                     time.sleep(2)
+                    httpx.post(f"{url}/api/volume", json={"deck": 1, "level": 1.0}, timeout=3)
                     httpx.post(f"{url}/api/play", json={"deck": 1}, timeout=3)
                     httpx.post(f"{url}/api/crossfade", json={"position": 0.0}, timeout=3)
                     log.info(f"Emergency play: {Path(filepath).stem[:50]}")
