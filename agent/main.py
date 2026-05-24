@@ -664,10 +664,14 @@ class DJTretaBeing(
 
             # Responsive sleep: keep the heartbeat's chosen cadence
             # (self._next_sleep, up to 30s) but poll for commands every 0.5s so
-            # /skip and friends don't sit unprocessed for the whole interval —
-            # and break out early to re-run the heartbeat the moment a
-            # user-initiated signal (skip / mood / load) lands, so it acts on
-            # it within ~1s instead of up to 30s.
+            # /skip and friends don't sit unprocessed for the whole interval.
+            # Break early ONLY for a user-initiated skip — that needs a
+            # sub-second response. Background signals (idle_needs_load /
+            # replan_requested) deliberately do NOT trigger an early re-tick:
+            # they can be set+unsatisfied for a while (e.g. idle_needs_load
+            # stays set while a transition is pending), and breaking on them
+            # would busy-spin the heartbeat every 0.5s. They're handled on the
+            # normal heartbeat cadence, which is fine for background work.
             _deadline = time.time() + max(1.0, self._next_sleep)
             while self._running and time.time() < _deadline:
                 time.sleep(0.5)
@@ -675,10 +679,14 @@ class DJTretaBeing(
                     self._check_commands()
                 except Exception as e:
                     log.warning(f"Command poll error: {e}")
-                if (getattr(self.session, "user_skip", None)
-                        or getattr(self.session, "idle_needs_load", False)
-                        or getattr(self.session, "replan_requested", False)):
-                    break
+                # Break for a pending skip, but at most once per 2s so an
+                # unsatisfiable skip (e.g. empty idle deck) can't busy-spin the
+                # heartbeat — it re-ticks every 2s instead of every 0.5s.
+                if getattr(self.session, "user_skip", None):
+                    _now = time.time()
+                    if _now - getattr(self, "_last_skip_break", 0.0) >= 2.0:
+                        self._last_skip_break = _now
+                        break
 
         log.info("DJ Treta Being shutting down")
 
