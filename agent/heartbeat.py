@@ -300,7 +300,14 @@ class HeartbeatMixin:
             self._next_sleep = 5
             now_ts = time.time()
             if not getattr(self, "_silence_since", None):
+                # FIRST silent read — do NOT emergency yet. A single transient
+                # status read showing both decks not-playing (Mixxx hiccup at a
+                # track boundary or under load) would otherwise dump an
+                # emergency track over a deck that's actually playing. Record
+                # the time, re-check in 2s, and only act if it's still silent.
                 self._silence_since = now_ts
+                self._next_sleep = 2
+                return
             # Sarathi: Manish drives. Two cases:
             #  - COLD START (nothing has ever played this session) → never
             #    auto-play; he starts the set himself. Just wait.
@@ -857,18 +864,29 @@ class HeartbeatMixin:
             _idle_path_now = (_gd(self.config.mixxx.url) or {}).get(idle_deck, "") or ""
             if _idle_path_now and not getattr(self.session, "idle_needs_load", False):
                 if _idle_was_played(_idle_path_now, self.tracks_played):
-                    log.warning(
-                        f"[REPLAY-GUARD] idle deck {idle_deck} holds already-played "
-                        f"({Path(_idle_path_now).stem[:60]}) — setting idle_needs_load"
-                    )
-                    if hasattr(self, "_ws_broadcast"):
-                        self._ws_broadcast("log", {
-                            "text": (
-                                f"[REPLAY-GUARD] idle deck {idle_deck} held already-"
-                                f"played ({Path(_idle_path_now).stem[:60]}); reloading"
+                    if self._library_exhausted():
+                        # No fresh track left — accept the replay instead of
+                        # spinning the guard. Log once until the library grows.
+                        if not getattr(self, "_exhausted_logged", False):
+                            log.warning(
+                                f"[REPLAY-GUARD] library exhausted (all played) — "
+                                f"allowing replay on deck {idle_deck}, not forcing reload"
                             )
-                        })
-                    self.session.idle_needs_load = True
+                            self._exhausted_logged = True
+                    else:
+                        self._exhausted_logged = False
+                        log.warning(
+                            f"[REPLAY-GUARD] idle deck {idle_deck} holds already-played "
+                            f"({Path(_idle_path_now).stem[:60]}) — setting idle_needs_load"
+                        )
+                        if hasattr(self, "_ws_broadcast"):
+                            self._ws_broadcast("log", {
+                                "text": (
+                                    f"[REPLAY-GUARD] idle deck {idle_deck} held already-"
+                                    f"played ({Path(_idle_path_now).stem[:60]}); reloading"
+                                )
+                            })
+                        self.session.idle_needs_load = True
         except Exception as _exc:
             # Silent failure here was hiding the bug — log at debug so it
             # shows up in TUI without spamming production runs.
@@ -950,12 +968,16 @@ class HeartbeatMixin:
             # otherwise never compare equal, so a plain `in played_paths`
             # check silently passed every replay through.
             already_played = _idle_was_played(idle_path, self.tracks_played)
+            # If the library is exhausted (every track played), an already-
+            # played idle track is NOT "stale" — there's nothing fresher to
+            # load, so reloading just spins the guard. Allow the replay.
+            exhausted = self._library_exhausted()
 
             idle_stale = (
                 (not idle_loaded)
                 or idle_remaining < 60
                 or duplicate
-                or already_played
+                or (already_played and not exhausted)
             )
             if idle_stale:
                 try:
@@ -987,6 +1009,31 @@ class HeartbeatMixin:
             else:
                 # Idle is fine — signal was stale, clear it.
                 self.session.idle_needs_load = False
+
+    def _library_exhausted(self) -> bool:
+        """True if every track in the current-mood library has already played
+        this set — no FRESH track left to load. When exhausted, the replay-guard
+        must stop forcing reloads (a thin library otherwise spins forever:
+        force reload → only played tracks available → reload a played one →
+        guard re-fires). Better to allow a replay than to loop."""
+        try:
+            import glob
+            import os
+            slug = (self.mood or "").strip().lower().replace(" ", "-") or "melodic-techno"
+            folder = self.config.library.music_path / slug
+            local = {os.path.basename(p).lower()
+                     for p in glob.glob(str(folder / "*.mp3"))
+                     if not os.path.basename(p).startswith("._")}
+            if not local:
+                return False
+            played = set()
+            for t in (self.tracks_played or []):
+                p = t.get("path") or t.get("file_path") or ""
+                if p:
+                    played.add(os.path.basename(p).lower())
+            return len(local - played) == 0
+        except Exception:
+            return False
 
     def _emergency_play(self):
         """Silence! Direct API play first (fast + reliable), agent fallback for empty library."""
