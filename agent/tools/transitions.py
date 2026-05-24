@@ -300,49 +300,62 @@ def do_transition(to_deck: int, duration: int = 60, bpm_after: str = "anchor", g
     # Crossfader parked center; blend on the channel faders (club-DJ style).
     _center_crossfader()
     _mixxx_post("/api/volume", {"deck": to_deck, "level": 0.0})
+    _mixxx_post("/api/eq", {"deck": to_deck, "lo": 0.0})  # cut incoming bass first
 
-    # Bass-bridge: dip incoming LO to 0 at start of fade, restore at ~70%
-    # of duration. Prevents bass-collision against outgoing's still-present
-    # low end.
-    _mixxx_post("/api/eq", {"deck": to_deck, "lo": 0.0})
-
-    # Manual volume crossblend (20fps): outgoing 1→0, incoming 0→1. Replaces
-    # Mixxx's /api/transition (which drives the CROSSFADER) so the crossfader
-    # stays centered the whole time.
+    # Channel-fader crossfade, the way Manish rides it:
+    #   Phase 1 (first half): bring the INCOMING fader fully UP (outgoing stays
+    #     up) — both tracks now playing, incoming bass cut so the low ends
+    #     don't collide.
+    #   Bass swap: at the midpoint, wait for a DOWNBEAT, then restore the
+    #     incoming bass + cut the outgoing bass — on the beat, not at an
+    #     arbitrary time.
+    #   Phase 2 (second half): bring the OUTGOING fader DOWN to 0.
     fps = 20
     total = max(1, int(duration * fps))
+    half = max(1, total // 2)
     forced_end = False
-    bass_restored = False
+    bass_swapped = False
+
+    def _cliff_hit() -> bool:
+        try:
+            st = _mixxx_get("/api/status") or {}
+            d_out = st.get(f"deck{out_deck}", {})
+            rem = float(d_out.get("remaining_seconds", 0) or 0)
+            pl = bool(d_out.get("playing", False))
+            return (pl and rem < 0.5) or (not pl and rem <= 0)
+        except Exception:
+            return False
+
     for i in range(total + 1):
-        t = i / total
-        _mixxx_post("/api/volume", {"deck": to_deck, "level": round(t, 3)})
-        _mixxx_post("/api/volume", {"deck": out_deck, "level": round(1.0 - t, 3)})
-        if not bass_restored and t >= 0.70:
+        # Phase 1 — incoming rides up to full; outgoing untouched (full).
+        if i <= half:
+            _mixxx_post("/api/volume", {"deck": to_deck, "level": round(i / half, 3)})
+        # Bass swap on the beat, once the incoming fader is up.
+        if not bass_swapped and i >= half:
+            _mixxx_post("/api/volume", {"deck": to_deck, "level": 1.0})
+            _wait_phrase_boundary(out_deck, timeout_s=2.0, threshold=0.05)
+            _mixxx_post("/api/eq", {"deck": to_deck, "lo": 1.0})   # restore incoming bass ON BEAT
+            _mixxx_post("/api/eq", {"deck": out_deck, "lo": 0.0})  # drop outgoing bass
+            bass_swapped = True
+        # Phase 2 — outgoing rides down; incoming stays full.
+        if i > half:
+            vout = 1.0 - (i - half) / max(1, (total - half))
+            _mixxx_post("/api/volume", {"deck": out_deck, "level": round(max(0.0, vout), 3)})
+        # End-safety: outgoing hit the cliff mid-blend → snap to incoming.
+        if i % 5 == 0 and _cliff_hit():
             _mixxx_post("/api/eq", {"deck": to_deck, "lo": 1.0})
-            bass_restored = True
-        # End-safety: if the OUTGOING deck hits the cliff mid-blend, snap to
-        # the incoming deck (full volume) and finish — no audible cut-out.
-        if i % 5 == 0:
-            try:
-                st = _mixxx_get("/api/status") or {}
-                d_out = st.get(f"deck{out_deck}", {})
-                rem_out = float(d_out.get("remaining_seconds", 0) or 0)
-                playing_out = bool(d_out.get("playing", False))
-            except Exception:
-                rem_out, playing_out = 999.0, True
-            if (playing_out and rem_out < 0.5) or (not playing_out and rem_out <= 0):
-                _mixxx_post("/api/volume", {"deck": to_deck, "level": 1.0})
-                _mixxx_post("/api/volume", {"deck": out_deck, "level": 0.0})
-                forced_end = True
-                log.warning(
-                    f"[BLEND-FORCE-END] outgoing deck {out_deck} hit end mid-blend "
-                    f"(rem={rem_out:.2f}s, playing={playing_out}); snapped to incoming"
-                )
-                break
+            _mixxx_post("/api/volume", {"deck": to_deck, "level": 1.0})
+            _mixxx_post("/api/volume", {"deck": out_deck, "level": 0.0})
+            forced_end = True
+            bass_swapped = True
+            log.warning(
+                f"[BLEND-FORCE-END] outgoing deck {out_deck} hit end mid-blend — snapped to incoming"
+            )
+            break
         _time.sleep(1.0 / fps)
 
-    # Make sure incoming bass is restored even if the loop broke early.
-    if not bass_restored:
+    # Ensure incoming bass is up even if the loop broke before the swap.
+    if not bass_swapped:
         _mixxx_post("/api/eq", {"deck": to_deck, "lo": 1.0})
 
     _finish_channel_fader(out_deck, to_deck, bpm_after, glide_duration, reset_filter=True)
