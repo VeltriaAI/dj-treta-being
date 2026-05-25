@@ -2,8 +2,19 @@
 
 import logging
 import time
+from typing import Optional
 
 import httpx
+
+# --- E4: lazy import so state_sequence doesn't slow cold starts ---
+_StateSequence: Optional[type] = None
+
+def _get_state_sequence_class():
+    global _StateSequence
+    if _StateSequence is None:
+        from .state_sequence import StateSequence as _SS
+        _StateSequence = _SS
+    return _StateSequence
 
 log = logging.getLogger("dj-treta")
 
@@ -52,6 +63,13 @@ class SetsMixin:
         }
         insert_set(self.current_set)
         self._start_recording()
+        # --- E4: initialise a fresh StateSequence for this set ---
+        self._e4_state_sequence = _get_state_sequence_class()()
+        # Mirror into session so the TUI / relay can observe it.
+        from .session_state import get_session
+        s = get_session()
+        if s is not None:
+            s.current_state_sequence = []
         log.info(f"Set started: '{title}' ({set_mood}, {self.current_set['target_duration']}m)")
 
     def _end_set(self):
@@ -60,15 +78,87 @@ class SetsMixin:
             return
         from .db import update_set
         self.current_set["status"] = "finished"
-        self.current_set["ended_at"] = time.time()
+        ended_at = time.time()
+        self.current_set["ended_at"] = ended_at
         self.current_set["track_count"] = len(self.tracks_played)
         self._stop_recording()
         update_set(self.current_set)
         log.info(f"Set ended: {self.current_set['id']} ({len(self.tracks_played)} tracks)")
+
+        # --- E4: persist state sequence to archive ---
+        seq = getattr(self, "_e4_state_sequence", None)
+        if seq is None:
+            seq = _get_state_sequence_class()()
+        recording_path = getattr(self, "_recording_path", "")
+        try:
+            from .state_sequence import archive_set as _archive_set
+            archive_path = _archive_set(
+                set_id=self.current_set["id"],
+                started_at=self.current_set["started_at"],
+                ended_at=ended_at,
+                mood=self.current_set.get("mood", ""),
+                state_sequence=seq,
+                tracks_played=list(self.tracks_played),
+                recording_path=recording_path,
+            )
+            # Update session so TUI / relay can surface the archive path.
+            from .session_state import get_session
+            s = get_session()
+            if s is not None:
+                s.set_archive_path = str(archive_path)
+                s.last_archived_set_id = self.current_set["id"]
+                s.current_state_sequence = None   # clear — set is over
+        except Exception as exc:
+            log.warning(f"E4 archive_set failed: {exc}")
+        self._e4_state_sequence = None
+
         # Store finished set for relay to pick up (one final push)
         self.last_finished_set = dict(self.current_set)
         # Auto-start new set
         self._start_set()
+
+    # --- E4: mixer-state recording helper (called by heartbeat or transitions) --
+
+    def _e4_record_state(
+        self,
+        status_dict: Optional[dict] = None,
+        bar_duration: int = 4,
+        label: str = "",
+        force: bool = False,
+    ) -> None:
+        """Snapshot the current mixer state into the live StateSequence.
+
+        Called by the heartbeat mixin after every meaningful mixer change
+        (transition fire, EQ adjustment, etc.).  If `status_dict` is None,
+        fetches /api/status directly.
+
+        Args:
+            status_dict: pre-fetched /api/status dict, or None to fetch now.
+            bar_duration: how many bars this state holds (planner/E1 fills in).
+            label: annotation for the TUI / archive viewer.
+            force: record even if below thresholds.
+        """
+        seq = getattr(self, "_e4_state_sequence", None)
+        if seq is None:
+            return   # no set active
+
+        try:
+            if status_dict is not None:
+                new_state = seq.record(
+                    status_dict, bar_duration=bar_duration, label=label, force=force,
+                )
+            else:
+                new_state = seq.record_now(
+                    bar_duration=bar_duration, label=label, force=force,
+                )
+            if new_state is not None:
+                # Mirror serialized form into session so observers see it.
+                from .session_state import get_session
+                s = get_session()
+                if s is not None:
+                    s.current_state_sequence = seq.to_dict()
+        except Exception as exc:
+            log.warning(f"_e4_record_state failed: {exc}")
 
     def _check_set_duration(self):
         """Check if current set has reached target duration."""

@@ -224,4 +224,6 @@ __all__ = [
     "recall_similar_interaction", "recall_similar_set",
     "recall_journal", "recall_thoughts",
     "recall_recent_chat",
+    # E4 — State Sequencing & Set Archive
+    "get_set_archive", "replay_set_archive",
 ]

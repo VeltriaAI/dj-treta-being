@@ -53,6 +53,8 @@ from .tools import (
     recall_recent_chat,
     list_self_suggestions, honor_self_suggestion, discard_self_suggestion,
     suggest_transition, confirm_suggestion, reject_suggestion, list_pending_suggestions,
+    # --- E4 State/Set ---
+    get_set_archive, replay_set_archive,
 )
 
 
@@ -965,6 +967,10 @@ say so in reasoning_summary so the Being can signal the library manager."""
         # "i've got this" → leave it; he's driving on the FLX4.
         _wrap(confirm_suggestion), _wrap(reject_suggestion),
         _wrap(list_pending_suggestions),
+
+        # --- E4 State/Set ---
+        # Review past sets and replay their mixer state sequences.
+        _wrap(get_set_archive), _wrap(replay_set_archive),
     ]
     # Being can search + download when listener asks for a specific track
     if config.sources.youtube:

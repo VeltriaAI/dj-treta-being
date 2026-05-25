@@ -236,6 +236,24 @@ _FIELD_DEFAULTS: dict[str, Any] = {
     "emergency_count": 0,
     "last_reflect_count": 0,
     "saved_at": 0.0,
+
+    # --- E4: State Sequencing & Set Archive ---
+    # current_state_sequence: the live StateSequence being recorded during
+    #   this set. Stored as a raw list (StateSequence.to_dict() format) so it
+    #   serializes cleanly to session.json without importing state_sequence.py
+    #   here. Heartbeat / sets mixin converts to/from StateSequence on the fly.
+    #   None when no set is active; [] when a set is active but nothing has been
+    #   recorded yet.
+    "current_state_sequence": None,
+    # set_archive_path: absolute path of the rolling JSONL archive file, set
+    #   once at first archive_set() call so the TUI / relay can surface it.
+    #   Empty string = not yet written.
+    "set_archive_path": "",
+    # last_archived_set_id: the ID of the most recently completed archived set.
+    #   Useful for the TUI status bar and for the get_set_archive / replay_set
+    #   agent tools to surface the default set without needing to parse the JSONL.
+    "last_archived_set_id": "",
+    # --- end E4 ---
 }
 
 
