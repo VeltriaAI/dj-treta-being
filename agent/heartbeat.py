@@ -332,6 +332,29 @@ class HeartbeatMixin:
         self._silence_since = None
         self._music_has_played = True
 
+        # Crossfader-strand guard (autonomous only — in Sarathi, Manish owns
+        # the crossfader). If exactly one deck is playing but the crossfader is
+        # parked full to the OTHER (silent) deck, the playing deck is muted →
+        # listeners hear silence while nothing_playing stays False, so the P1
+        # net above never fires. Re-center. Root cause: an interrupted blend
+        # (e.g. an agent restart mid-transition) leaves the fader stranded.
+        # (Crossfader maps -1=full deck1 .. +1=full deck2; 0.5 API pos = center.)
+        if not _sarathi and not self._transition_pending:
+            d1p = status.get("deck1", {}).get("playing")
+            d2p = status.get("deck2", {}).get("playing")
+            if bool(d1p) != bool(d2p):  # exactly one deck playing
+                xf = float(status.get("crossfader", 0) or 0)
+                if (d1p and xf > 0.8) or (d2p and xf < -0.8):
+                    try:
+                        httpx.post(f"{self.config.mixxx.url}/api/crossfade",
+                                   json={"position": 0.5}, timeout=3)
+                        log.warning(
+                            f"[XF-GUARD] crossfader stranded at {xf:.2f} while "
+                            f"deck{'1' if d1p else '2'} plays — re-centered"
+                        )
+                    except Exception as exc:
+                        log.debug(f"XF-GUARD recenter failed: {exc}")
+
         idle_ready = idle_loaded and idle_remaining > 60
         duration = float(d_active.get("duration", 0) or 0)
 
