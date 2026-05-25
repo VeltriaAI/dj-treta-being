@@ -228,8 +228,19 @@ class PlannerMixin:
                 except Exception:
                     cur_bpm = 0.0
 
-        # Restrict to the current genre folder so we don't pull off-mood tracks.
-        slug = (self.mood or "").strip().lower().replace(" ", "-")
+        # Resolve the mood band: canonical genre + BPM/energy ranges. These
+        # are what selection should target, not the raw free-text mood.
+        mp = getattr(self.session, "mood_profile", None)
+        mp = mp if isinstance(mp, dict) else {}
+        canonical = (mp.get("canonical_slug") or "").strip().lower()
+        _br = mp.get("bpm_range")
+        bpm_range = _br if (isinstance(_br, (list, tuple)) and len(_br) == 2) else None
+        _er = mp.get("energy_range")
+        energy_range = _er if (isinstance(_er, (list, tuple)) and len(_er) == 2) else None
+        energy_target = ((float(energy_range[0]) + float(energy_range[1])) / 2.0
+                         if energy_range else None)
+        cur_key = (current_meta or {}).get("key_camelot", "") or "" if current_meta else ""
+        from .camelot import key_compatibility_score
 
         # Pull the FULL library incl. unanalyzed tracks — most freshly
         # downloaded tracks have no BPM/key yet, but they're real files that
@@ -240,6 +251,28 @@ class PlannerMixin:
             full_library = _glib(include_unanalyzed=True) or library
         except Exception:
             full_library = library
+
+        # Restrict to the current genre folder. The resolver emits fine-grained
+        # slugs ("peak-time-melodic-techno") but tracks live in coarse genre
+        # folders ("melodic-techno/"). Map canonical → actual folder by finding
+        # the library folder whose slug is contained in the canonical slug
+        # (longest wins); fall back to the raw-mood slug, then to no gate.
+        # (Gating by the raw canonical slug directly would match no folder →
+        # zero candidates → emergency-load garbage — the bug we're fixing.)
+        genre_slugs = set()
+        for tk in full_library:
+            pp = tk.get("path", "") or ""
+            if "/" in pp:
+                genre_slugs.add(pp.split("/", 1)[0].lower())
+        raw_slug = (self.mood or "").strip().lower().replace(" ", "-")
+        slug = ""
+        for src in (canonical, raw_slug):
+            if not src:
+                continue
+            matches = [g for g in genre_slugs if g and g in src]
+            if matches:
+                slug = max(matches, key=len)
+                break
 
         candidates = []
         for tk in full_library:
@@ -256,7 +289,36 @@ class PlannerMixin:
                 bpm = float(tk.get("bpm") or 0)
             except Exception:
                 bpm = 0.0
-            score = abs(bpm - cur_bpm) if (bpm and cur_bpm) else 999.0
+            # Hard BPM-band gate: an analyzed track outside the mood's BPM
+            # range (± small tolerance) is off-energy — exclude it as a
+            # playable pick. A 152-BPM track can never land under a 122-128
+            # melodic-techno band. Unanalyzed (bpm=0) tracks bypass this and
+            # sort last so the Up-Next list still fills when the pool is thin.
+            if bpm and bpm_range:
+                lo = float(bpm_range[0]) - 4.0
+                hi = float(bpm_range[1]) + 4.0
+                if not (lo <= bpm <= hi):
+                    continue
+            # Composite score (lower = better): BPM gap + harmonic distance
+            # + energy gap. Replaces pure BPM-proximity so harmonic clashes
+            # and energy jumps are penalised, not just tempo.
+            if bpm and cur_bpm:
+                bpm_gap = abs(bpm - cur_bpm)
+            elif bpm and bpm_range:
+                bpm_gap = abs(bpm - ((float(bpm_range[0]) + float(bpm_range[1])) / 2.0))
+            else:
+                bpm_gap = 999.0  # unanalyzed → sort last
+            cand_key = tk.get("key_camelot", "") or ""
+            key_penalty = ((10 - key_compatibility_score(cur_key, cand_key)) * 1.5
+                           if (cur_key and cand_key) else 0.0)
+            cand_energy = tk.get("energy")
+            energy_gap = 0.0
+            if energy_target is not None and cand_energy is not None:
+                try:
+                    energy_gap = abs(float(cand_energy) - energy_target) * 2.0
+                except Exception:
+                    energy_gap = 0.0
+            score = bpm_gap + key_penalty + energy_gap
             candidates.append((score, tk))
 
         candidates.sort(key=lambda x: x[0])

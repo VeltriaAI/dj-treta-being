@@ -1048,6 +1048,53 @@ class HeartbeatMixin:
         except Exception:
             return False
 
+    def _emergency_band_paths(self) -> set:
+        """Absolute paths of analyzed library tracks inside the current mood's
+        genre folder AND BPM band. Keeps emergency_play in-energy so a
+        mislabelled off-tempo file can't be grabbed during silence.
+
+        Returns an empty set when no band info is available (caller then
+        keeps the full pool — music-never-stops still wins).
+        """
+        mp = getattr(self.session, "mood_profile", None)
+        mp = mp if isinstance(mp, dict) else {}
+        _br = mp.get("bpm_range")
+        bpm_range = _br if (isinstance(_br, (list, tuple)) and len(_br) == 2) else None
+        from .db import get_library_with_metadata as _glib
+        lib = _glib(include_unanalyzed=False) or []
+        if not lib:
+            return set()
+        genre_slugs = {
+            p.split("/", 1)[0].lower()
+            for p in (t.get("path", "") or "" for t in lib) if "/" in p
+        }
+        canonical = (mp.get("canonical_slug") or "").strip().lower()
+        raw_slug = (self.mood or "").strip().lower().replace(" ", "-")
+        slug = ""
+        for src in (canonical, raw_slug):
+            matches = [g for g in genre_slugs if g and g in src] if src else []
+            if matches:
+                slug = max(matches, key=len)
+                break
+        base = self.config.library.music_path
+        out = set()
+        for t in lib:
+            p = t.get("path", "") or ""
+            if not p:
+                continue
+            if slug and f"{slug}/" not in p:
+                continue
+            try:
+                bpm = float(t.get("bpm") or 0)
+            except Exception:
+                bpm = 0.0
+            if bpm and bpm_range and not (
+                float(bpm_range[0]) - 4.0 <= bpm <= float(bpm_range[1]) + 4.0
+            ):
+                continue
+            out.add(str(base / p))
+        return out
+
     def _emergency_play(self):
         """Silence! Direct API play first (fast + reliable), agent fallback for empty library."""
         from .main import _get_status
@@ -1066,6 +1113,21 @@ class HeartbeatMixin:
                     tracks = all_tracks  # fallback — music never stops
             else:
                 tracks = all_tracks
+            # v10: prefer in-band tracks (current genre folder + the mood's
+            # BPM range) so an emergency can never grab an off-energy or
+            # mislabelled file (e.g. a 152-BPM or Bollywood track sitting in
+            # the melodic-techno folder). Music-never-stops: if the in-band
+            # pool is empty we keep the full pool.
+            try:
+                band_paths = self._emergency_band_paths()
+                if band_paths:
+                    in_band = [t for t in tracks if t in band_paths]
+                    if in_band:
+                        tracks = in_band
+                    else:
+                        log.debug("emergency: no in-band track on disk — using full pool")
+            except Exception as exc:
+                log.debug(f"emergency band-filter skipped: {exc}")
             # BUG-11 fix (Phase A2 dry run #2 2026-04-19): prefer tracks
             # NOT already played this set. Previously emergency_play picked
             # uniformly at random, so once the library was exhausted and

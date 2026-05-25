@@ -778,12 +778,21 @@ def recall_learnings_db(topic: str = "") -> list[dict]:
         db.close()
 
 
+# Synthetic browse folders (symlink mirrors for Mixxx's sidebar nodes) —
+# never ingest these as real tracks; they duplicate the genre-folder rows
+# with no genre/analysis and pollute the candidate pool. Mirrors
+# browse_folders._SYNTH_DIRS.
+_SYNTH_DIRS = ("_all", "_planned", "_suggestions")
+
+
 def scan_library(music_path: Path):
     """Scan music directory and add any tracks not already in DB."""
     if not music_path.exists():
         return
     for genre_dir in sorted(music_path.iterdir()):
         if not genre_dir.is_dir() or genre_dir.name.startswith('.'):
+            continue
+        if genre_dir.name in _SYNTH_DIRS:
             continue
         for f in sorted(genre_dir.iterdir()):
             if is_audio_file(f):

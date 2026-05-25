@@ -159,6 +159,7 @@ class SessionMixin:
             state_payload = {
                 "phase": phase,
                 "mood": self.mood,
+                "mood_profile": getattr(self, "mood_profile", None),
                 "tracks_played": len(self.tracks_played),
                 "current_track": current,
                 "next_track": next_track,
