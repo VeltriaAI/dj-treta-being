@@ -224,6 +224,14 @@ _FIELD_DEFAULTS: dict[str, Any] = {
     "playlist_updated_at": 0.0,
     "last_planner_error": "",
 
+    # --- E3/E5 ---  Rolling arrangement plan (the leapfrog). A short sequence
+    # of musical intents toward a goal, re-derived every planner cycle.
+    # Transient (not persisted) — it's regenerated within ~15s of any restart.
+    # Plain dict (ArrangementPlan.to_dict()); Agent C maps intents onto its
+    # mixer-State model at integration. See agent/arrangement.py.
+    "arrangement_plan": None,
+    "arrangement_plan_updated_at": 0.0,
+
     # Subsystem health (Phase 3.5)
     "knowledge_health": None,
 
