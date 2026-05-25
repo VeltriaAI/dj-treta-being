@@ -102,6 +102,7 @@ from .directives import (
     get_directives,
     clear_directives,
     defer_decision,
+    get_arrangement_plan,  # --- E3/E5 ---
 )
 
 # Evolution tools (self-modification + subagent spawning)
@@ -195,6 +196,7 @@ __all__ = [
     "set_dj_directive", "set_planner_directive", "set_mood",
     "replace_deck", "play_specific_track",
     "get_directives", "clear_directives", "defer_decision",
+    "get_arrangement_plan",  # --- E3/E5 ---
     # evolution
     "evolve", "propose_change", "review_evolution",
     "spawn_agent", "get_spawn_result",

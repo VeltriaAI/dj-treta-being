@@ -79,6 +79,21 @@ knowledge:
   embedding_model: "text-embedding-005"  # used for online query embedding (similar_to_text)
   embedding_dim: 384                     # Matryoshka-truncated from 768
 
+# --- E3/E5 ---  Library ingestion (Rekordbox/Serato import + arrangement).
+ingestion:
+  # When a DJ-library import covers a track (cues + grid), skip the slow
+  # librosa pass for it. Only un-covered tracks fall back to librosa.
+  prefer_import_over_librosa: true
+  # Run the librosa fallback automatically after an import to reach 100%
+  # analysis coverage. Set false for import-only (fast) runs.
+  librosa_backfill_after_import: true
+arrangement:
+  # E5 leapfrog: the planner emits a rolling sequence of musical intents
+  # toward a goal each cycle. max_steps caps the horizon length.
+  enabled: true
+  max_steps: 4
+  default_bars_per_step: 16
+
 set:
   default_mood: "melodic techno"
   energy_max_jump: 2

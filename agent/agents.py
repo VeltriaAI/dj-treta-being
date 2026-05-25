@@ -36,6 +36,7 @@ from .tools import (
     set_dj_directive, set_planner_directive, set_mood, replace_deck,
     play_specific_track,
     get_directives, clear_directives, defer_decision,
+    get_arrangement_plan,  # --- E3/E5 ---
     # Evolution tools
     evolve, propose_change, review_evolution,
     spawn_agent, get_spawn_result,
@@ -921,6 +922,7 @@ say so in reasoning_summary so the Being can signal the library manager."""
 
         # Visibility / housekeeping
         _wrap(get_directives), _wrap(clear_directives),
+        _wrap(get_arrangement_plan),  # --- E3/E5 --- see the rolling arrangement
         _wrap(get_dj_status), _wrap(get_live_data),
         _wrap(defer_decision),
         _wrap(save_learning), _wrap(recall_learnings),

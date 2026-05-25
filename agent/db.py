@@ -218,8 +218,173 @@ def init_db():
     );
     """)
     _migrate_tracks_canonical(db)
+    _migrate_e3_ingestion(db)  # --- E3/E5 ---
     db.commit()
     db.close()
+
+
+# --- E3/E5 ---  Library-ingestion additive schema.
+def _migrate_e3_ingestion(db):
+    """Add DJ-library-ingestion columns + cue/playlist tables (idempotent).
+
+    Additive only — new nullable columns on `tracks`, plus two new tables for
+    cue points and playlist/folder structure imported from Rekordbox/Serato.
+    Never drops or rewrites existing columns. Safe to run on every init_db().
+    """
+    cols = {row["name"] for row in db.execute("PRAGMA table_info(tracks)").fetchall()}
+    additions = [
+        # Provenance: which importer/source populated structural metadata.
+        # 'rekordbox' | 'serato' | 'librosa' | None (legacy/unknown).
+        ("analysis_source", "TEXT"),
+        # Beatgrid anchor: time (sec) of the first downbeat and inferred bar
+        # length (sec) = (60/bpm)*4. Lets the planner reason "play from grid
+        # start" without re-deriving from librosa.
+        ("beatgrid_anchor_seconds", "REAL"),
+        ("beatgrid_bar_seconds", "REAL"),
+        # Cue points as JSON (list of cue dicts — see ops/import_rekordbox.py
+        # CUE schema). Section markers (mix_in/mix_out/timeline) are derived
+        # from these on import, but the raw cues are kept for the waveform UI.
+        ("cue_points", "TEXT"),
+        # Whether the track carries any LOOP cue (fast planner filter for
+        # "give me something with a loop roll I can use").
+        ("has_loop_cue", "INTEGER"),
+    ]
+    for name, sqltype in additions:
+        if name not in cols:
+            db.execute(f"ALTER TABLE tracks ADD COLUMN {name} {sqltype}")
+
+    # Cue points table — normalized, one row per cue. Mirrors cue_points JSON
+    # on tracks but queryable (e.g. "all 16-bar loop cues across the crate").
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS track_cues (
+            id INTEGER PRIMARY KEY,
+            track_id INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
+            cue_index INTEGER,            -- hot-cue number (0-based) or -1 for memory cue
+            name TEXT,                    -- DJ-assigned cue label
+            start_seconds REAL,           -- cue position
+            kind TEXT,                    -- 'cue' | 'loop' | 'fade-in' | 'fade-out' | 'load'
+            is_loop INTEGER DEFAULT 0,
+            loop_length_beats REAL,       -- e.g. 16.0 for a 16-bar vocal loop
+            color TEXT,                   -- '#RRGGBB' (Rekordbox cue color)
+            section TEXT,                 -- mapped: 'START'|'BREAK'|'LOOP'|'DROP'|'mix_in'|'mix_out'|'timeline'
+            source TEXT,                  -- 'rekordbox' | 'serato'
+            created_at REAL DEFAULT (strftime('%s','now'))
+        )
+    """)
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_track_cues_track ON track_cues(track_id)"
+    )
+
+    # Playlist / folder structure from the DJ library. `path` is a slash-joined
+    # folder path ("Sets/Warmup"); track membership in track_playlists.
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS import_playlists (
+            id INTEGER PRIMARY KEY,
+            name TEXT,
+            path TEXT,                    -- "Folder/Subfolder/Playlist"
+            is_folder INTEGER DEFAULT 0,
+            source TEXT,                  -- 'rekordbox' | 'serato'
+            imported_at REAL DEFAULT (strftime('%s','now')),
+            UNIQUE(path, source)
+        )
+    """)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS track_playlists (
+            playlist_id INTEGER REFERENCES import_playlists(id) ON DELETE CASCADE,
+            track_id INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
+            position INTEGER,
+            PRIMARY KEY (playlist_id, track_id)
+        )
+    """)
+
+
+# --- E3/E5 ---  Cue + playlist write helpers (used by the importers).
+def replace_track_cues(track_id: int, cues: list[dict], source: str) -> None:
+    """Replace all cues for a track (idempotent re-import). `cues` are dicts
+    with keys: cue_index, name, start_seconds, kind, is_loop,
+    loop_length_beats, color, section."""
+    if not track_id:
+        return
+    db = get_db()
+    try:
+        db.execute(
+            "DELETE FROM track_cues WHERE track_id=? AND source=?",
+            (track_id, source),
+        )
+        for c in cues or []:
+            db.execute(
+                "INSERT INTO track_cues (track_id, cue_index, name, start_seconds, "
+                "kind, is_loop, loop_length_beats, color, section, source) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (
+                    track_id,
+                    c.get("cue_index"),
+                    c.get("name"),
+                    c.get("start_seconds"),
+                    c.get("kind", "cue"),
+                    1 if c.get("is_loop") else 0,
+                    c.get("loop_length_beats"),
+                    c.get("color"),
+                    c.get("section"),
+                    source,
+                ),
+            )
+        db.commit()
+    finally:
+        db.close()
+
+
+def get_track_cues(track_id: int) -> list[dict]:
+    """Return all cues for a track, ordered by position."""
+    db = get_db()
+    try:
+        return [dict(r) for r in db.execute(
+            "SELECT * FROM track_cues WHERE track_id=? ORDER BY start_seconds",
+            (track_id,),
+        ).fetchall()]
+    finally:
+        db.close()
+
+
+def get_track_id_by_path(path: str) -> int | None:
+    """Resolve a track's id from its (relative or absolute) path."""
+    t = get_track_by_path(path)
+    return t["id"] if t else None
+
+
+def upsert_import_playlist(name: str, path: str, is_folder: bool,
+                           source: str) -> int:
+    """Insert/get an import_playlists row; returns its id."""
+    db = get_db()
+    try:
+        db.execute(
+            "INSERT OR IGNORE INTO import_playlists (name, path, is_folder, source) "
+            "VALUES (?,?,?,?)",
+            (name, path, 1 if is_folder else 0, source),
+        )
+        db.commit()
+        row = db.execute(
+            "SELECT id FROM import_playlists WHERE path=? AND source=?",
+            (path, source),
+        ).fetchone()
+        return row["id"] if row else 0
+    finally:
+        db.close()
+
+
+def add_track_to_playlist(playlist_id: int, track_id: int, position: int = 0) -> None:
+    if not playlist_id or not track_id:
+        return
+    db = get_db()
+    try:
+        db.execute(
+            "INSERT OR REPLACE INTO track_playlists (playlist_id, track_id, position) "
+            "VALUES (?,?,?)",
+            (playlist_id, track_id, position),
+        )
+        db.commit()
+    finally:
+        db.close()
 
 
 # ── Listener profile helpers ───────────────────────────────────────

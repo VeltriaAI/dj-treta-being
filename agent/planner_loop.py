@@ -606,6 +606,24 @@ class PlannerMixin:
             self.session.playlist = validated
             self.session.playlist_updated_at = validated["planned_at"]
             self.session.last_planner_error = ""
+
+            # --- E3/E5 ---  Emit a rolling arrangement plan alongside the
+            # playlist. This is the leapfrog: a short sequence of musical
+            # intents (track + technique + energy target + bars) toward a
+            # goal, re-derived every cycle. Stored on the session as plain
+            # dicts so Agent C can map them onto its State model and the DJ
+            # agent can realize the techniques via Agent A's transitions.
+            # Additive + defensive — a failure here never blocks the playlist.
+            try:
+                arr_plan = self._build_arrangement_plan(validated, current_meta)
+                self.session.arrangement_plan = arr_plan.to_dict()
+                self.session.arrangement_plan_updated_at = time.time()
+                log.info(
+                    f"Arrangement plan: goal={arr_plan.goal} "
+                    f"{len(arr_plan.intents)} intents, {arr_plan.horizon_bars} bars"
+                )
+            except Exception as exc:
+                log.warning(f"arrangement plan build failed (non-fatal): {exc}")
             log.info(
                 f"Planner wrote playlist: {len(validated['tracks'])} candidates, "
                 f"mood_snapshot={validated.get('mood_snapshot', '')}"
@@ -865,6 +883,176 @@ class PlannerMixin:
             d["artist"] = m.canonical.artist
             result.append(d)
         return result
+
+    # --- E3/E5 ---  Dynamic real-time arrangement authoring (the leapfrog).
+    def _build_arrangement_plan(self, validated_playlist, current_meta,
+                                goal: str = "", max_steps: int = 4):
+        """Emit a short ROLLING sequence of ArrangementIntents toward a goal.
+
+        This is E5's headline: instead of only "what track next", the planner
+        constructs a sequence of future *intents* — (track, technique, energy
+        target, bar duration) — shaping the next few phrases. It is re-derived
+        every planner cycle (rolling horizon), so it adapts live as the room
+        and the listener profile change.
+
+        Inputs are PLANNER-LEVEL only:
+          * `validated_playlist`: the ranked PlaylistV1 we just built — supplies
+            the candidate tracks for upcoming steps.
+          * `current_meta`: the playing track's DB row — supplies its energy,
+            BPM, beatgrid + cue_points (for loop reasoning + the phantom cue).
+
+        Output: an `ArrangementPlan`. It is NOT a mixer-State snapshot — Agent C
+        maps each intent onto its State model at integration; Agent A realizes
+        the `technique` via schedule_transition/do_transition. We never touch
+        those modules from here.
+
+        The goal is chosen from the set-arc directive if present, else inferred
+        from the current energy + listener pulse, so Treta authors a deliberate
+        shape rather than a flat chain of blends.
+        """
+        from .arrangement import (
+            ArrangementIntent, ArrangementPlan,
+            loop_cues_from_track, phantom_grid_cue,
+        )
+
+        tracks = sorted(
+            (validated_playlist or {}).get("tracks", []) or [],
+            key=lambda t: t.get("rank", 99),
+        )
+
+        # Resolve current energy + BPM (anchor the arc).
+        cur_energy = 5
+        cur_bpm = 0.0
+        if current_meta:
+            try:
+                cur_energy = int(current_meta.get("energy_peak") or 5)
+            except Exception:
+                cur_energy = 5
+            try:
+                cur_bpm = float(current_meta.get("bpm") or 0)
+            except Exception:
+                cur_bpm = 0.0
+
+        # Goal resolution: explicit arg > set-arc directive > inferred.
+        if not goal:
+            goal = self._infer_arrangement_goal(cur_energy)
+
+        # Energy trajectory per goal — a target delta applied step over step.
+        step_delta = {
+            "build": +2, "peak": +1, "breakdown": -3,
+            "coast": 0, "reset": -2, "loop_roll": 0,
+        }.get(goal, 0)
+
+        intents: list[ArrangementIntent] = []
+
+        # Step 0 (optional): exploit a loop cue on the CURRENT track as creative
+        # material before moving on — "16-bar vocal loop" reasoning. Only when
+        # the goal benefits (build/loop_roll) and the current track has a loop.
+        cur_loops = loop_cues_from_track(current_meta or {})
+        if cur_loops and goal in ("build", "loop_roll", "peak"):
+            best_loop = max(
+                cur_loops, key=lambda l: (l.get("length_beats") or 0)
+            )
+            intents.append(ArrangementIntent(
+                step=len(intents),
+                goal="loop_roll",
+                track_path=None,  # operates on the current track
+                track_title=(current_meta or {}).get("title", "") or "current",
+                technique="loop_roll",
+                energy_target=min(10, cur_energy + 1),
+                bars=int(best_loop.get("length_beats") or 16) // 4 or 8,
+                loop_cue=best_loop,
+                reason=(
+                    f"extend current phrase on a "
+                    f"{best_loop.get('length_beats') or '?'}-beat loop before "
+                    f"the next track"
+                ),
+            ))
+
+        # Subsequent steps: walk the ranked candidates, ramping energy toward
+        # the goal. Each step picks a transition technique fit for the move.
+        target_energy = cur_energy
+        for t in tracks:
+            if len([i for i in intents if i.track_path]) >= max_steps:
+                break
+            target_energy = max(1, min(10, target_energy + step_delta))
+            tmeta = self._candidate_meta(t)
+            technique = self._technique_for_move(cur_energy, target_energy, tmeta)
+            # Phantom grid-start when the candidate has a beatgrid anchor — lets
+            # Treta enter cleanly on the one even with no numbered cue there.
+            use_grid = bool((tmeta or {}).get("beatgrid_anchor_seconds") is not None)
+            intents.append(ArrangementIntent(
+                step=len(intents),
+                goal=goal,
+                track_path=t.get("path"),
+                track_title=t.get("title", "") or "",
+                technique=technique,
+                energy_target=target_energy,
+                bars=16,
+                use_grid_start=use_grid,
+                reason=(
+                    f"{goal}: take energy {cur_energy}→{target_energy} via "
+                    f"{technique}"
+                ),
+            ))
+            cur_energy = target_energy
+
+        horizon = sum(i.bars for i in intents)
+        plan = ArrangementPlan(
+            goal=goal, intents=intents, created_at=time.time(),
+            horizon_bars=horizon,
+        )
+        return plan
+
+    def _infer_arrangement_goal(self, cur_energy: int) -> str:
+        """Pick a musical goal when none is given. Honors an active set-arc
+        directive if Treta planned one; else infers from current energy."""
+        # Set-arc directive (Treta's plan_set_arc) takes precedence.
+        try:
+            arc = getattr(self.session, "set_arc", None)
+            if isinstance(arc, dict) and arc.get("phase"):
+                phase = str(arc["phase"]).lower()
+                if phase in ("warmup", "warm-up", "build"):
+                    return "build"
+                if phase in ("peak", "climax"):
+                    return "peak"
+                if phase in ("cooldown", "cool-down", "outro", "wind-down"):
+                    return "reset"
+        except Exception:
+            pass
+        # Inference from current energy: low → build, high → coast/peak.
+        if cur_energy <= 4:
+            return "build"
+        if cur_energy >= 8:
+            return "coast"
+        return "build"
+
+    def _candidate_meta(self, candidate: dict) -> dict:
+        """Best-effort DB lookup of a playlist candidate's full metadata
+        (for beatgrid anchor + cues). Falls back to the candidate dict."""
+        try:
+            from .db import get_track_by_path
+            p = candidate.get("path")
+            if p:
+                m = get_track_by_path(p)
+                if m:
+                    return m
+        except Exception:
+            pass
+        return candidate
+
+    def _technique_for_move(self, from_energy: int, to_energy: int,
+                            cand_meta: dict) -> str:
+        """Choose a transition technique that fits the energy move. Pure
+        planner-level hint — Agent A's executor has final say."""
+        delta = to_energy - from_energy
+        if delta >= 2:
+            return "riser"        # building hard → riser into the next
+        if delta <= -2:
+            return "echo_out"     # dropping → delay-throw the outgoing tail
+        if abs(delta) <= 1 and from_energy >= 7:
+            return "bass_swap"    # peak-time → tight bass swap on the one
+        return "filter_sweep"     # default smooth move
 
     def _playlist_contains_played(self, playlist) -> bool:
         """BUG-9 fix: True if the current playlist contains any track that
