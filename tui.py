@@ -919,6 +919,27 @@ class BrainWidget(Static):
             if now_next:
                 lines.append("  " + "  ".join(now_next))
 
+        # ── Sarathi: Treta's transition suggestion in front of Manish ──
+        if state.get("sarathi_mode"):
+            sug = state.get("pending_suggestion")
+            if sug:
+                tech = str(sug.get("technique", "crossfade")).upper().replace("_", " ")
+                to_deck = sug.get("to_deck", "?")
+                title = sug.get("track_title") or "next track"
+                reason = (sug.get("reason") or "").strip()
+                exp = sug.get("expires_in_s")
+                tail = f" · {exp}s left" if isinstance(exp, int) and exp >= 0 else ""
+                line = (
+                    f"  [bold magenta]✋ SARATHI[/bold magenta] she suggests "
+                    f"[bold]{tech} → deck {to_deck}[/bold] ([cyan]{title}[/cyan])"
+                )
+                if reason:
+                    line += f" — [italic dim]{reason[:70]}[/italic dim]"
+                line += f"{tail}  [dim](ctrl+y do it · ctrl+x no)[/dim]"
+                lines.append(line)
+            else:
+                lines.append("  [magenta]✋ SARATHI[/magenta] [dim]you drive — no suggestion live[/dim]")
+
         # ── Line 4: Track timeline ──
         ct = state.get("current_track", {})
         file_path = ct.get("file_path", "")
@@ -1068,12 +1089,17 @@ class DJTretaApp(App):
         Binding("ctrl+s", "skip", "Skip", priority=True),
         Binding("ctrl+l", "like", "👍"),
         Binding("ctrl+d", "dislike", "👎"),
+        # Sarathi: accept / reject Treta's live transition suggestion. ctrl+
+        # combos so the prompt Input doesn't swallow them.
+        Binding("ctrl+y", "accept_suggestion", "Do it", priority=True),
+        Binding("ctrl+x", "reject_suggestion", "No", priority=True),
         Binding("f6", "tab_all", "All"),
         Binding("f7", "tab_treta", "Treta"),
         Binding("f8", "tab_dj", "DJ"),
         Binding("f9", "tab_planner", "Plan"),
         Binding("f10", "tab_library", "Lib"),
         Binding("ctrl+i", "tab_issues", "Issues"),
+        Binding("ctrl+e", "tab_reflect", "Reflect"),
         Binding("f11", "fullscreen", "Full"),
         Binding("f2", "toggle_debug", "Debug"),
         Binding("f4", "show_tracks", "Tracks"),
@@ -1436,6 +1462,8 @@ class DJTretaApp(App):
                     yield RichLog(id="log-library", highlight=True, markup=True, wrap=True)
                 with TabPane("Issues", id="tab-issues"):
                     yield RichLog(id="log-issues", highlight=True, markup=True, wrap=True)
+                with TabPane("Reflect", id="tab-reflect"):
+                    yield RichLog(id="log-reflect", highlight=True, markup=True, wrap=True)
             with Vertical(id="right-panel"):
                 yield AgentActivityWidget(id="agent-activity")
                 with ScrollableContainer(id="playlist-scroll"):
@@ -1454,6 +1482,16 @@ class DJTretaApp(App):
         self._log_treta = self.query_one("#log-treta", RichLog)
         self._log_library = self.query_one("#log-library", RichLog)
         self._log_issues = self.query_one("#log-issues", RichLog)
+        self._log_reflect = self.query_one("#log-reflect", RichLog)
+        # Reflection-log polling: read session.reflections from disk
+        # every 30s. Reflections only update every 15min, so high-freq
+        # polling is wasteful. Track last-rendered timestamp to avoid
+        # re-rendering old entries on every tick.
+        self._last_reflect_ts_seen = 0.0
+        self._log_reflect.write(
+            "[dim]Reflection log — Treta's 15-min self-reflections "
+            "appear here. (Empty until first reflection cycle fires.)[/dim]\n"
+        )
         self.debug_widget = self.query_one("#debug-log", RichLog)
         self.log_widget.write("[dim]DJ Treta Console. Type anything to talk, /help for commands.[/dim]\n")
         self.log_widget.write(
@@ -1471,6 +1509,20 @@ class DJTretaApp(App):
         self.set_interval(0.5, self.drain_ws_logs)
         self.set_interval(0.5, self.drain_ws_thinking)
         self.set_interval(2.0, self.refresh_connection_status)
+        # Reflection log poll — slow (30s) since reflections fire every 15min.
+        self.set_interval(30.0, self.refresh_reflections)
+        # Initial paint of any reflections that already exist on disk.
+        self.refresh_reflections()
+
+        # Embed mode (DJTRETA_EMBED=1): hide the deck + mixer strip — Mixxx
+        # already shows the decks/mixer, so the embedded TUI shows only the
+        # brain Mixxx lacks (status/agents/playlist/logs/chat).
+        if os.environ.get("DJTRETA_EMBED"):
+            try:
+                self.query_one("#decks").display = False
+                self.query_one("#mixer").display = False
+            except Exception:
+                pass
 
     def _switch_tab(self, tab_id: str):
         tabs = self.query_one("#log-tabs", TabbedContent)
@@ -1482,6 +1534,7 @@ class DJTretaApp(App):
     def action_tab_planner(self): self._switch_tab("tab-planner")
     def action_tab_library(self): self._switch_tab("tab-library")
     def action_tab_issues(self): self._switch_tab("tab-issues")
+    def action_tab_reflect(self): self._switch_tab("tab-reflect")
 
     def action_fullscreen(self):
         """Toggle fullscreen tabs — hide decks/mixer/brain for focused view."""
@@ -1639,6 +1692,64 @@ class DJTretaApp(App):
         playlist_w = self.query_one("#playlist", PlaylistWidget)
         playlist_w.update_playlist(state)
 
+    def refresh_reflections(self) -> None:
+        """Poll session.json for new reflection entries and render them.
+
+        Reflections fire every 15 min from the reflection_loop. We poll
+        slowly (30 s) and track the latest rendered ts to avoid
+        re-rendering entries on every tick. The Reflect tab is the only
+        surface for these — they don't go through the WS log stream.
+        """
+        try:
+            import json as _json
+            from pathlib import Path as _Path
+            persist = _Path.home() / "beings" / "dj-treta" / ".beings" / "session.json"
+            if not persist.exists():
+                return
+            with persist.open() as f:
+                data = _json.load(f)
+            reflections = data.get("reflections") or []
+            if not isinstance(reflections, list):
+                return
+            new_entries = [
+                r for r in reflections
+                if isinstance(r, dict) and (r.get("ts") or 0) > self._last_reflect_ts_seen
+            ]
+            if not new_entries:
+                return
+            new_entries.sort(key=lambda r: r.get("ts") or 0)
+            import datetime as _dt
+            for r in new_entries:
+                ts = r.get("ts") or 0
+                hhmm = _dt.datetime.fromtimestamp(ts).strftime("%H:%M") if ts else "??:??"
+                next_intent = (r.get("next_intent") or "").strip()
+                mood_drift = (r.get("mood_drift") or "").strip()
+                engagement = r.get("listener_engagement_delta")
+                went_well = r.get("went_well") or []
+                to_improve = r.get("to_improve") or []
+                eng_str = ""
+                if engagement is not None:
+                    eng_str = f"  [dim]engagement_delta:[/dim] {engagement:+d}"
+                self._log_reflect.write(f"[bold cyan]── {hhmm} ──[/bold cyan]{eng_str}")
+                if mood_drift:
+                    self._log_reflect.write(f"  [yellow]mood_drift:[/yellow] {mood_drift}")
+                if went_well:
+                    self._log_reflect.write(f"  [green]went well:[/green]")
+                    for w in went_well:
+                        self._log_reflect.write(f"    • {w}")
+                if to_improve:
+                    self._log_reflect.write(f"  [magenta]to improve:[/magenta]")
+                    for w in to_improve:
+                        self._log_reflect.write(f"    • {w}")
+                if next_intent:
+                    self._log_reflect.write(f"  [bold]next intent:[/bold] {next_intent}")
+                self._log_reflect.write("")  # blank line separator
+                if ts > self._last_reflect_ts_seen:
+                    self._last_reflect_ts_seen = ts
+        except Exception:
+            # Silent: TUI must never crash on a polling read.
+            pass
+
     def drain_ws_logs(self) -> None:
         """Pull buffered ``log`` events from the state source and render."""
         try:
@@ -1704,6 +1815,8 @@ class DJTretaApp(App):
                 "  [cyan]/play[/cyan] [mood] [min]     Start a set (LOCAL only — remote runs continuously)\n"
                 "  [cyan]/stop[/cyan]                  Stop the set (LOCAL only)\n"
                 "  [cyan]/mood[/cyan] <name>           Change mood\n"
+                "  [cyan]/sarathi[/cyan]               Sarathi mode — you drive, Treta suggests\n"
+                "  [cyan]/auto[/cyan]                  Autonomous mode — Treta drives\n"
                 "  [cyan]/skip[/cyan]                  Skip (smooth transition)\n"
                 "  [bold]Mixer[/bold]\n"
                 "  [cyan]/pause[/cyan] [deck]          Pause a deck\n"
@@ -1742,6 +1855,12 @@ class DJTretaApp(App):
             self.run_brain_command("stop", {})
         elif cmd == "mood" and args:
             self.run_brain_command("change_mood", {"mood": args[0]})
+        elif cmd == "sarathi":
+            self.log_widget.write("[magenta]  Sarathi mode — you drive, Treta suggests.[/magenta]")
+            self.run_brain_command("set_mode", {"mode": "sarathi"})
+        elif cmd in ("auto", "autonomous"):
+            self.log_widget.write("[cyan]  Autonomous mode — Treta drives the decks.[/cyan]")
+            self.run_brain_command("set_mode", {"mode": "autonomous"})
         elif cmd == "skip":
             self.action_skip()
         elif cmd == "pause":
@@ -2369,6 +2488,24 @@ class DJTretaApp(App):
     def action_dislike(self):
         self.run_brain_command("feedback", {"type": "dislike"})
         self.log_widget.write("[red]  👎 Disliked[/red]")
+
+    def action_accept_suggestion(self):
+        """Sarathi: 'do it' — Treta fires her latest pending suggestion."""
+        sug = (self._ws_state or {}).get("pending_suggestion") if hasattr(self, "_ws_state") else None
+        if not sug:
+            self.log_widget.write("[dim]  no transition suggestion to accept[/dim]")
+            return
+        self.run_brain_command("confirm_transition", {})
+        self.log_widget.write("[green]  ✋→🎚 doing it[/green]")
+
+    def action_reject_suggestion(self):
+        """Sarathi: reject the pending suggestion; Treta reshapes."""
+        sug = (self._ws_state or {}).get("pending_suggestion") if hasattr(self, "_ws_state") else None
+        if not sug:
+            self.log_widget.write("[dim]  no transition suggestion to reject[/dim]")
+            return
+        self.run_brain_command("reject_transition", {})
+        self.log_widget.write("[yellow]  ✋ dropped — reshaping[/yellow]")
 
     def action_show_tracks(self):
         self.show_tracks()

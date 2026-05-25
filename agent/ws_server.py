@@ -35,6 +35,23 @@ log = logging.getLogger("dj-treta")
 WS_PORT = 7779
 
 
+def _abs_music_path(p: str) -> str:
+    """Absolutize a track path stored relative to the music dir.
+
+    session.playlist + set_history store paths relative to library.music_dir
+    (portable across machines). The Mixxx DJ Treta feature needs absolute
+    paths to resolve tracks to library rows (for waveforms), so HTTP routes
+    that surface track paths run them through this.
+    """
+    if not p or p.startswith("/"):
+        return p or ""
+    try:
+        from .config import load_config
+        return str(load_config().library.music_path.resolve() / p)
+    except Exception:
+        return p
+
+
 class WSServerMixin:
     """WebSocket server for real-time client communication."""
 
@@ -73,10 +90,205 @@ class WSServerMixin:
         except Exception as e:
             log.error(f"WS server died: {e}")
 
+    async def _http_process_request(self, connection, request):
+        """Serve plain HTTP for the in-Mixxx QML Sarathi panel.
+
+        The QML panel can't open a WebSocket (QtWebSockets isn't linked) but
+        QML's XMLHttpRequest does HTTP GET fine. We answer two GET routes here
+        (before the WS upgrade); everything else falls through to the normal
+        WebSocket handshake by returning None.
+
+          GET /http/state                       → current state.json
+          GET /http/command?cmd=...&reason=...   → run a daemon command
+
+        Commands are GET (not POST) on purpose: websockets' opening-handshake
+        hook can read the request line + query but not a POST body. The
+        command set here is tiny + side-effect-guarded, so query params are
+        adequate. CORS is wide-open since this only ever binds to localhost.
+        """
+        try:
+            from websockets.http11 import Response
+            from websockets.datastructures import Headers
+            from urllib.parse import urlsplit, parse_qs
+
+            raw_path = getattr(request, "path", "/") or "/"
+            parts = urlsplit(raw_path)
+            route = parts.path.rstrip("/")
+
+            def _json_response(status, payload):
+                body = json.dumps(payload).encode("utf-8")
+                headers = Headers([
+                    ("Content-Type", "application/json"),
+                    ("Content-Length", str(len(body))),
+                    ("Access-Control-Allow-Origin", "*"),
+                    ("Cache-Control", "no-store"),
+                ])
+                return Response(status, "OK" if status == 200 else "ERR", headers, body)
+
+            if route == "/http/state":
+                from .runtime_paths import runtime_path
+                sf = runtime_path("state.json")
+                data = json.loads(sf.read_text()) if sf.exists() else {}
+                return _json_response(200, data)
+
+            if route == "/http/playlist":
+                # The planner's live queue (session.playlist) — feeds the
+                # "Planned" node of the DJ Treta library feature in Mixxx.
+                from .session_state import get_session
+                sess = get_session()
+                pl = getattr(sess, "playlist", None) if sess else None
+                tracks = []
+                for t in (pl or {}).get("tracks", []):
+                    p = t.get("path", "")
+                    if not p:
+                        continue
+                    tracks.append({
+                        "path": _abs_music_path(p),
+                        "title": t.get("title", ""),
+                        "bpm": t.get("bpm"),
+                        "key_camelot": t.get("key_camelot", ""),
+                    })
+                return _json_response(200, {
+                    "mood": (pl or {}).get("mood_snapshot", ""),
+                    "reasoning": (pl or {}).get("reasoning_summary", ""),
+                    "updated_at": getattr(sess, "playlist_updated_at", 0.0) if sess else 0.0,
+                    "tracks": tracks,
+                })
+
+            if route == "/http/activity":
+                # Treta's recent thinking + tool calls, for the chat's
+                # visibility feed. From the in-memory ring (ts-stamped above).
+                try:
+                    n = int((parse_qs(parts.query).get("n", ["60"])[0]) or 60)
+                    hist = list(getattr(self, "_thinking_history", []) or [])[-n:]
+                except Exception:
+                    hist = []
+                return _json_response(200, {"activity": hist})
+
+            if route == "/http/log":
+                # Recent daemon log lines for the cockpit tabs (Activity / DJ /
+                # Planner / Library / Issues — client filters by keyword/tag).
+                out = []
+                for e in list(getattr(self, "_log_history", []) or [])[-int((parse_qs(parts.query).get("n", ["120"])[0]) or 120):]:
+                    if isinstance(e, dict):
+                        out.append({"ts": e.get("ts"), "text": e.get("text", "")})
+                    else:
+                        out.append({"ts": None, "text": str(e)})
+                return _json_response(200, {"log": out})
+
+            if route == "/http/billing":
+                from .runtime_paths import runtime_path
+                bf = runtime_path("billing.json")
+                data = {}
+                try:
+                    if bf.exists():
+                        data = json.loads(bf.read_text())
+                except Exception:
+                    data = {}
+                return _json_response(200, data)
+
+            if route == "/http/reflections":
+                from .session_state import get_session
+                sess = get_session()
+                refl = list(getattr(sess, "reflections", []) or []) if sess else []
+                return _json_response(200, {"reflections": refl[-20:]})
+
+            if route == "/http/tracklist":
+                # Played tracks of the current live set (for the cockpit set
+                # view): title + transition + 👍/👎. Energy lives in the tracks
+                # table — omitted in v1.
+                tracks = []
+                set_title = ""
+                try:
+                    from .db import get_current_set, get_set_tracks, get_db
+                    cs = get_current_set()
+                    if cs:
+                        set_title = cs.get("title", "")
+                        sid = cs.get("id")
+                        fb = {}
+                        try:
+                            _db = get_db()
+                            for r in _db.execute(
+                                    "SELECT track_title, feedback FROM feedback WHERE set_id=?",
+                                    (sid,)).fetchall():
+                                fb[r["track_title"]] = r["feedback"]
+                            _db.close()
+                        except Exception:
+                            pass
+                        for r in get_set_tracks(sid):
+                            t = r.get("title", "")
+                            tracks.append({
+                                "title": t,
+                                "path": _abs_music_path(r.get("track_path", "")),
+                                "transition": r.get("transition_type", ""),
+                                "feedback": fb.get(t, ""),
+                            })
+                except Exception:
+                    tracks = []
+                return _json_response(200, {"set": set_title, "tracks": tracks})
+
+            if route == "/http/chat":
+                # Recent chat turns for the in-Mixxx chat window. JSONL-backed,
+                # oldest→newest.
+                try:
+                    from .chat_persistence import load_recent_turns
+                    n = int((parse_qs(parts.query).get("n", ["40"])[0]) or 40)
+                    turns = [
+                        {"ts": e.get("ts"), "role": e.get("role"), "content": e.get("content", "")}
+                        for e in load_recent_turns(n=n, max_age_hours=72.0)
+                    ]
+                except Exception:
+                    turns = []
+                return _json_response(200, {"turns": turns})
+
+            if route == "/http/talk":
+                # Send a message to Treta from the Mixxx chat window. Threaded
+                # (the talk command returns immediately); the reply lands in the
+                # JSONL and surfaces on the next /http/chat poll.
+                msg = (parse_qs(parts.query).get("msg", [""])[0] or "").strip()
+                if not msg:
+                    return _json_response(400, {"ok": False, "message": "missing msg"})
+                try:
+                    result = self._handle_command("talk", {"message": msg}, cmd_id="mixxx-chat")
+                except Exception as exc:
+                    return _json_response(500, {"ok": False, "message": str(exc)})
+                return _json_response(200, {"ok": True, "status": str(result)})
+
+            if route == "/http/command":
+                qs = parse_qs(parts.query)
+                cmd = (qs.get("cmd", [""])[0] or "").strip()
+                if not cmd:
+                    return _json_response(400, {"ok": False, "message": "missing cmd"})
+                args = {}
+                if "reason" in qs:
+                    args["reason"] = qs["reason"][0]
+                if "mode" in qs:
+                    args["mode"] = qs["mode"][0]
+                if "mood" in qs:
+                    args["mood"] = qs["mood"][0]
+                if "type" in qs:
+                    args["type"] = qs["type"][0]
+                if "suggestion_id" in qs:
+                    args["suggestion_id"] = qs["suggestion_id"][0]
+                try:
+                    result = self._handle_command(cmd, args, cmd_id="qml")
+                except Exception as exc:
+                    return _json_response(500, {"ok": False, "message": str(exc)})
+                return _json_response(200, {"ok": True, "result": str(result)})
+
+            # Not an HTTP route we handle → proceed to WebSocket handshake.
+            return None
+        except Exception as exc:
+            log.debug(f"http process_request failed (non-fatal): {exc}")
+            return None
+
     async def _ws_serve(self, loop=None):
         """Run the WebSocket server."""
         try:
-            async with serve(self._ws_handler, "localhost", WS_PORT):
+            async with serve(
+                self._ws_handler, "localhost", WS_PORT,
+                process_request=self._http_process_request,
+            ):
                 log.info(
                     f"WebSocket server listening on ws://localhost:{WS_PORT} "
                     f"(paths: /ws/state, /ws/command, /)"
@@ -301,8 +513,14 @@ class WSServerMixin:
         # otherwise a daemon running with no live TUI for a while accumulates
         # nothing, and the next client to attach gets a blank pane.
         if event == "thinking" and hasattr(self, "_thinking_history"):
+            # Stamp a timestamp so the in-Mixxx chat can interleave activity
+            # (thinking + tool calls) with chat turns by time.
+            if isinstance(data, dict) and "ts" not in data:
+                data["ts"] = time.time()
             self._thinking_history.append(data)
         elif event == "log" and hasattr(self, "_log_history"):
+            if isinstance(data, dict) and "ts" not in data:
+                data["ts"] = time.time()
             self._log_history.append(data)
 
         if not hasattr(self, '_ws_clients') or not self._ws_clients:

@@ -66,7 +66,7 @@ def resolve_track_path(track_path: str, music_dir: Path | str | None = None) -> 
 
     # 3. Just the basename joined with music_dir.
     basename = p.name
-    if basename:
+    if basename and not basename.startswith("."):
         # Walk music_dir/<genre>/<basename> for any genre subdir.
         if music_dir.exists():
             for genre_dir in music_dir.iterdir():
@@ -87,7 +87,11 @@ def resolve_track_path(track_path: str, music_dir: Path | str | None = None) -> 
         if not genre_dir.is_dir() or genre_dir.name.startswith("."):
             continue
         for f in sorted(genre_dir.iterdir()):
-            if f.suffix.lower() not in _AUDIO_EXTENSIONS:
+            # Skip macOS AppleDouble / dotfiles. ._Track.mp3 sorts BEFORE the
+            # real Track.mp3 ('.' < letters) and shares the .mp3 extension, so
+            # without this guard the fuzzy match returns the 4KB stub and Mixxx
+            # throws "could not be loaded".
+            if f.name.startswith(".") or f.suffix.lower() not in _AUDIO_EXTENSIONS:
                 continue
             if query in _normalize_for_search(f.stem) or query in _normalize_for_search(f.name):
                 return str(f)
@@ -120,6 +124,34 @@ def load_on_deck(mixxx_url: str, deck: int, track_path: str, timeout: float = 5.
         result = resp.json() if resp.status_code == 200 else {}
         if result.get("ok"):
             log.info(f"Loaded deck {deck}: {Path(resolved).stem[:60]}")
+            # Reset rate to native (1.0) + disable sync on every load, so each
+            # track starts at its TRUE tempo. Mixxx keeps the rate slider across
+            # track loads — a deck with a stuck/garbage rate would otherwise play
+            # the new track at that wrong speed (observed live on the VM: a track
+            # playing at 230 BPM / +70% because the deck held a leftover rate).
+            # Beatmatching still happens via sync DURING transitions, then
+            # released; this just guarantees a clean starting tempo per track.
+            try:
+                httpx.post(f"{mixxx_url}/api/control",
+                           json={"group": f"[Channel{deck}]", "key": "sync_enabled", "value": 0}, timeout=2)
+                httpx.post(f"{mixxx_url}/api/control",
+                           json={"group": f"[Channel{deck}]", "key": "rate_ratio", "value": 1.0}, timeout=2)
+            except Exception:
+                pass
+            # Channel-fader invariant: a freshly-loaded deck is cued, not
+            # playing — keep it silent (vol 0) so it only becomes audible when a
+            # transition rides its fader up. Only when the OTHER deck is already
+            # playing (genuine idle-prep during a set); on a cold/first load
+            # leave it at full so the set can start audibly.
+            try:
+                st = httpx.get(f"{mixxx_url}/api/status", timeout=2).json()
+                other = 2 if deck == 1 else 1
+                if st.get(f"deck{other}", {}).get("playing"):
+                    httpx.post(f"{mixxx_url}/api/volume",
+                               json={"deck": deck, "level": 0.0}, timeout=2)
+                    log.info(f"  deck {deck} cued silent (vol 0 — other deck playing)")
+            except Exception:
+                pass
             return True
         log.warning(f"Load deck {deck} returned not-ok: {result}")
         return False

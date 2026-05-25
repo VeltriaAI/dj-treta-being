@@ -286,6 +286,25 @@ def cmd_transition(deck: int = 2, technique: str = "blend", duration: int = 60):
     })
     console.print(f"[blue]{response}[/blue]")
 
+def cmd_mode(mode: str = ""):
+    """Switch between sarathi (Manish drives) and autonomous (Treta drives)."""
+    mode = (mode or "").lower().strip()
+    if mode not in ("sarathi", "autonomous"):
+        console.print("[yellow]Usage: djtreta mode sarathi | autonomous[/yellow]")
+        return
+    response = send_brain_command("set_mode", {"mode": mode})
+    console.print(f"[green]{response}[/green]")
+
+def cmd_accept():
+    """Sarathi: 'do it' — Treta fires the latest pending transition suggestion."""
+    response = send_brain_command("confirm_transition", {})
+    console.print(f"[green]{response}[/green]")
+
+def cmd_reject(reason: str = ""):
+    """Sarathi: reject the pending suggestion and have Treta reshape."""
+    response = send_brain_command("reject_transition", {"reason": reason})
+    console.print(f"[yellow]{response}[/yellow]")
+
 def cmd_start_brain(mood: str = "melodic-techno", duration: int = 60):
     """Start the brain daemon."""
     import subprocess, shutil
@@ -374,6 +393,12 @@ def cmd_help():
   [bold]/play[/bold] [deck]           Play deck (default: 1)
   [bold]/pause[/bold] [deck]          Pause deck (default: 1)
   [bold]/transition[/bold] [tech] [s] Start transition (blend/bass_swap/filter_sweep, duration)
+
+[bold cyan]Sarathi Mode (you drive on the FLX4, Treta suggests):[/bold cyan]
+  [bold]/mode[/bold] sarathi|autonomous Switch who drives transitions
+  [bold]/accept[/bold] (or /doit)        Fire Treta's pending transition suggestion
+  [bold]/reject[/bold] [reason]          Drop her suggestion + reshape
+
   [bold]/start[/bold] [mood] [min]    Start brain daemon
   [bold]/stop[/bold]                  Stop brain daemon
   [bold]/logs[/bold] [n]              Show last n daemon log lines
@@ -488,6 +513,19 @@ def _reset(hard=False):
     DJ_HOME = Path.home() / "beings" / "dj-treta"
     (DJ_HOME / ".beings" / "session.json").unlink(missing_ok=True)
 
+    # Truncate today's chat JSONL — listener wanted reset to wipe
+    # conversation continuity along with everything else. Older daily
+    # JSONLs stay on disk for audit (they're part of Treta's long-term
+    # narrative). Hard reset wipes everything anyway via the LanceDB
+    # nuke below (when wired); for now soft-reset just truncates today.
+    try:
+        from agent.chat_persistence import truncate_today_jsonl
+        bytes_removed = truncate_today_jsonl()
+        if bytes_removed:
+            console.print(f"  Chat JSONL truncated ({bytes_removed} bytes)")
+    except Exception as exc:
+        console.print(f"[dim]chat JSONL truncate skipped: {exc}[/dim]")
+
     # Defensive: clear the mood_profile_cache so a stale entry from a prior
     # session (e.g. an earlier "techno-deep" default that resolved into the
     # cache) can't be served back to a fresh "melodic-techno" boot. Hard
@@ -516,7 +554,20 @@ def _reset(hard=False):
             for child in music_dir.iterdir():
                 if child.name == "knowledge":
                     continue  # preserve knowledge cache + LanceDB
-                if child.is_dir():
+                if child.is_symlink():
+                    # Symlinked genre dir (e.g. psytrance-hitech → external lib).
+                    # shutil.rmtree refuses symlinks, so clear the TARGET's
+                    # contents and keep the link itself intact.
+                    target = child.resolve()
+                    if target.is_dir():
+                        for item in target.iterdir():
+                            if item.is_dir() and not item.is_symlink():
+                                shutil.rmtree(item)
+                            else:
+                                item.unlink(missing_ok=True)
+                    else:
+                        child.unlink()  # dangling or file symlink — drop the link
+                elif child.is_dir():
                     shutil.rmtree(child)
                 else:
                     child.unlink(missing_ok=True)
@@ -657,6 +708,15 @@ def main():
                 runtime_path("mood.txt").write_text(mood_args)
             _daemon_cmd("start")
             return
+        elif cmd == "mode":
+            cmd_mode(sys.argv[2] if len(sys.argv) > 2 else "")
+            return
+        elif cmd in ("accept", "doit", "confirm"):
+            cmd_accept()
+            return
+        elif cmd == "reject":
+            cmd_reject(" ".join(sys.argv[2:]) if len(sys.argv) > 2 else "")
+            return
         elif cmd == "stop":
             _daemon_cmd("stop")
             return
@@ -728,6 +788,12 @@ def main():
                 tech = args[0] if args else "blend"
                 dur = int(args[1]) if len(args) > 1 else 60
                 cmd_transition(technique=tech, duration=dur)
+            elif cmd == "mode":
+                cmd_mode(args[0] if args else "")
+            elif cmd in ("accept", "doit", "confirm"):
+                cmd_accept()
+            elif cmd == "reject":
+                cmd_reject(" ".join(args) if args else "")
             elif cmd == "start":
                 mood = args[0] if args else "melodic-techno"
                 dur = int(args[1]) if len(args) > 1 else 60

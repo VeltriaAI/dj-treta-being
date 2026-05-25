@@ -1,0 +1,11 @@
+[Unit]
+Description=DJ Treta auto-update (pull latest release, hot-swap agent, health-gate + rollback)
+After=network-online.target dj-treta-agent.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runs as root: pip-installs into the venv and restarts the agent services.
+# It NEVER restarts dj-treta-mixxx / dj-treta-stream (see the script header).
+Environment=VENV=__INSTALL_DIR__/.venv
+ExecStart=/opt/djclaw/bin/vm-autoupdate.sh

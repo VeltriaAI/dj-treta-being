@@ -5,14 +5,21 @@ mixxx:
   # Leave empty to use defaults: ~/workspace/mixxx-treta/build/mixxx (macOS)
   binary: ""
   resource_path: ""
-  settings_path: ""
+  # Mixxx 3.0 fresh profile — keeps the live 2.7 profile untouched (3.0 refuses
+  # to share a 2.7 profile: data-corruption risk). Re-map FLX4 + audio here.
+  settings_path: "~/Library/Application Support/Mixxx-3.0"
 
 llm:
   model: "openai/gemini-3-flash"
+  # Being (Treta's own reasoning) on pro — flash didn't follow instructions
+  # reliably and skipped tool calls (reverted 2026-05-23). Subagents stay flash.
+  being_model: "openai/gemini-3.1-pro"
   api_base: "http://localhost:4000"
   # Prefer env: DJTRETA_LLM_API_KEY or LLM_API_KEY (overrides this field)
   api_key: ""
-  temperature: 0.7
+  # 1.0 for tool use — Google's guidance: Gemini loops on repeated tool calls
+  # far more below 1.0 (and Gemini 3 expects 1.0). Was 0.7 (2026-05-24).
+  temperature: 1.0
   timeout: 30
 
 library:

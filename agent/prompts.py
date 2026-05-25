@@ -85,6 +85,20 @@ def build_dj_user_message(
     # DJ scheduled crossfades into already-played tracks (replay) because the
     # info was buried in implicit playlist filtering.
     idle_already_played: bool = False,
+    # Typed-directive surfacing (atomic-cuddling-manatee plan).
+    # When Treta has issued a play_specific_track / replace_deck(path=…)
+    # directive, the heartbeat passes the resolved title + path here so the
+    # DJ prompt renders an unambiguous "IDLE DECK PINNED TO" block. The
+    # planner has usually already loaded the pinned track by the time DJ
+    # runs, but this is the belt-and-suspenders rule that catches the case
+    # where the loaded title doesn't match (deck contention, stale state).
+    pinned_idle_title: str = "",
+    pinned_idle_path: str = "",
+    pinned_idle_loaded: bool = False,
+    # transition_now directive present and consumable. When True, DJ
+    # should schedule a transition into idle this cycle (no "let it
+    # breathe" deferral) — Treta has explicitly asked for the swap.
+    transition_now_pending: bool = False,
 ) -> str:
     """Build the user message for DJ agent heartbeat decisions.
 
@@ -204,6 +218,42 @@ def build_dj_user_message(
     else:
         idle_status_line = f"IDLE DECK STATUS: FRESH (deck {idle_deck} OK to mix into)\n"
 
+    # ── Pinned-idle directive (atomic-cuddling-manatee fix) ─────────
+    # When Treta has called play_specific_track or replace_deck(path=…),
+    # the planner has loaded that exact track on the idle deck. The DJ
+    # MUST honour this: schedule a transition into the pinned track,
+    # don't pick another candidate from the playlist.
+    pinned_block = ""
+    if pinned_idle_path:
+        if pinned_idle_loaded:
+            pinned_block = (
+                f"IDLE DECK PINNED TO: '{pinned_idle_title[:60]}' (loaded ✓)\n"
+                f"  → Treta directive: this exact track must play next. "
+                f"Schedule the transition into deck {idle_deck} now; do NOT "
+                f"defer or pick another candidate.\n"
+            )
+        else:
+            pinned_block = (
+                f"IDLE DECK PINNED TO: '{pinned_idle_title[:60]}' "
+                f"(NOT YET LOADED on deck {idle_deck})\n"
+                f"  → Treta directive: load this exact path on deck "
+                f"{idle_deck} BEFORE scheduling any transition. Call "
+                f"load_track(deck={idle_deck}, "
+                f"file_path={pinned_idle_path!r}). Path is non-negotiable.\n"
+            )
+
+    # When Treta has emitted a transition_now directive (typically as part
+    # of play_specific_track), surface it so the DJ doesn't sit on
+    # "wait for outro" when the listener has explicitly asked for the
+    # swap right now.
+    transition_now_block = ""
+    if transition_now_pending:
+        transition_now_block = (
+            f"TRANSITION_NOW DIRECTIVE: schedule a transition into deck "
+            f"{idle_deck} this cycle. Pick a sensible technique + duration "
+            f"based on the music, but do NOT call defer_decision.\n"
+        )
+
     # ── BAR-COUNT REFERENCE (v8.2 — pro DJs think in bars, not seconds) ──
     # Use active_bpm if > 0, fall back to idle_bpm or a 120 BPM placeholder.
     _ref_bpm = active_bpm if active_bpm and active_bpm > 0 else (idle_bpm or 120)
@@ -276,7 +326,9 @@ def build_dj_user_message(
         f"NEXT: '{idle_track[:40]}' on deck {idle_deck}{idle_dur_str} "
         f"(BPM:{idle_bpm:.0f} file:{idle_file_bpm:.0f}, "
         f"Camelot:{idle_camelot_str} {idle_energy_str})\n"
+        f"{pinned_block}"
         f"{idle_status_line}"
+        f"{transition_now_block}"
         f"{idle_points_block}"
         f"  TIMELINE: {idle_timeline}\n"
         f"{ideal_hint}\n"
@@ -284,6 +336,10 @@ def build_dj_user_message(
         f"{playlist_block}"
         f"{pending_info}\n"
         f"Decide now. Your options:\n"
+        f"  - HARD RULE: if IDLE DECK PINNED TO names a path that does NOT "
+        f"match the currently loaded idle, you MUST call load_track FIRST "
+        f"on deck {idle_deck} with that exact path before any "
+        f"schedule_transition. Pinned-idle outranks all other candidates.\n"
         f"  - HARD RULE: if IDLE DECK STATUS = ALREADY PLAYED, do NOT call "
         f"schedule_transition to deck {idle_deck}. Call "
         f"defer_decision(seconds=15) and wait for a fresh load.\n"
@@ -410,31 +466,53 @@ def build_planner_v8_message(
         '"duration":<10-90>, "at_section":"breakdown|outro|build|drop|intro"}}]}'
     )
 
+    # Worked example anchors the output format (Gemini best practice: a
+    # concrete example cuts hallucinated/invalid JSON far more than rules
+    # alone). Paths here are illustrative — the model must use real library
+    # paths from <library>.
+    example = (
+        '{"planned_at":1736500000.0,"mood_snapshot":"melodic-techno",'
+        '"reasoning_summary":"Holding 122-124 BPM and building energy gradually; '
+        'rank 1 shares the current key for a seamless harmonic blend, lower ranks '
+        'keep the floor moving if it is unavailable.",'
+        '"tracks":[{"rank":1,"path":"melodic-techno/Artist - Song (Original Mix).mp3",'
+        '"title":"Artist - Song","bpm":123.0,"key_camelot":"8A","energy":6,'
+        '"reason":"Same key (8A), +1 BPM — seamless harmonic blend.",'
+        '"transition_hint":{"technique":"bass_swap","duration":32,"at_section":"breakdown"}}]}'
+    )
+
+    # Structured with XML-style tags + instructions AFTER the large <library>
+    # context, per Google's Gemini prompting guidance (helps Flash separate
+    # data from task and reduces invalid output).
     return (
-        "You are DJ Treta's planning brain. Given the state below, return "
-        "a ranked playlist of the next 5 candidate tracks as STRICT JSON.\n\n"
-        f"Currently playing: {current_info}\n"
-        f"Already played (DO NOT repeat): {played_list}\n"
-        f"Current mood: {mood_slug}."
-        + profile_line
+        "<role>\n"
+        "You are DJ Treta's planning brain. Pick the next tracks for a live "
+        "DJ set and return them as STRICT JSON. No markdown fences, no prose.\n"
+        "</role>\n\n"
+        "<now_playing>" + current_info + "</now_playing>\n"
+        f"<mood>{mood_slug}{profile_line}</mood>\n"
+        f"<already_played>DO NOT repeat any of these: {played_list}</already_played>"
         + directive_line
         + intent_line
         + ownership_line
         + feedback_line
-        + "\n\nAvailable library (pick paths ONLY from this list):\n"
+        + "\n\n<library>\n"
+        "Pick `path` values ONLY from this list — never invent a path.\n"
         + library_json
-        + "\n\nReturn JSON matching this schema (no markdown fences, no prose):\n"
-        + schema
-        + "\n\nRules:\n"
+        + "\n</library>\n\n"
+        "<output_schema>\n" + schema + "\n</output_schema>\n\n"
+        "<example>\n" + example + "\n</example>\n\n"
+        "<rules>\n"
         "- Return exactly 5 candidates ranked 1 (best) to 5.\n"
-        "- Use `path` values EXACTLY as they appear in the library list.\n"
+        "- Use `path` values EXACTLY as they appear in <library>.\n"
         "- Rank 1 should fit the current track BPM / key / energy best.\n"
         "- Lower ranks offer valid alternates if rank 1 is unavailable.\n"
-        "- Never repeat a title from the played list.\n"
+        "- Never repeat a title from <already_played>.\n"
         "- reasoning_summary: one paragraph on your overall arc strategy.\n"
-        "- Each track's `reason` should explain mood/BPM/energy fit in one sentence.\n"
-        "- If library is thin and you can return <5 candidates, do — mention in reasoning_summary.\n"
-        "Return JSON ONLY."
+        "- Each track's `reason`: one sentence on mood/BPM/energy fit.\n"
+        "- If the library is thin and you can return <5, do — say so in reasoning_summary.\n"
+        "</rules>\n\n"
+        "Return JSON ONLY, matching <output_schema>."
     )
 
 
@@ -727,8 +805,23 @@ def build_being_user_message(
     history: str,
     message: str,
     readonly: bool = False,
+    self_suggestions: list[dict] | None = None,
+    sarathi_block: str = "",
 ) -> str:
-    """Build the user message for Being agent conversation."""
+    """Build the user message for Being agent conversation.
+
+    `sarathi_block`: optional pre-rendered MODE: SARATHI header (+ any live
+    transition suggestion in front of Manish). When present, Treta reads
+    "do it" as confirm_suggestion, "no/darker/something else" as
+    reject_suggestion, and "i've got this" as leave-it-alone.
+
+    `self_suggestions`: optional list of active self_suggestion directives
+    surfaced from the reflection loop. Rendered as an INNER NUDGE block
+    above the listener message. Treta is expected to either
+    honor_self_suggestion(id, reason) or discard_self_suggestion(id, reason)
+    before responding — pure silence also leaves them to TTL-expire.
+    Skipped entirely in readonly mode (web listener).
+    """
     readonly_tag = ""
     if readonly:
         readonly_tag = (
@@ -738,8 +831,36 @@ def build_being_user_message(
             "Just chat, share your thoughts on the music, describe the vibe.\n"
         )
 
+    nudge_block = ""
+    if self_suggestions and not readonly:
+        lines = [
+            "── INNER NUDGE FROM YOUR REFLECTION LOOP ──",
+            "These are suggestions from your prior self, not from the listener.",
+            "Listener's live message ALWAYS takes priority. Honor a nudge only "
+            "if it still fits the moment; discard with a reason if it doesn't. "
+            "Use honor_self_suggestion(id, reasoning) or "
+            "discard_self_suggestion(id, reasoning) to gate each one before "
+            "you act. Silence is also fine — they auto-expire.",
+        ]
+        for s in self_suggestions[:3]:  # cap at 3 to keep prompt tight
+            ni = (s.get("next_intent") or "").strip()
+            ti = s.get("to_improve") or []
+            md = (s.get("mood_drift") or "").strip()
+            ed = s.get("engagement_delta")
+            lines.append(f"• id={s.get('id')} — intent: {ni or '(none)'}")
+            if ti:
+                lines.append(f"    to_improve: {ti}")
+            if md:
+                lines.append(f"    mood_drift: {md}")
+            if ed is not None:
+                lines.append(f"    listener_engagement_delta: {ed}")
+        lines.append("── END INNER NUDGE ──\n")
+        nudge_block = "\n".join(lines) + "\n"
+
     return (
         f"{context}\n\n{history}\n{readonly_tag}\n"
+        f"{sarathi_block}"
+        f"{nudge_block}"
         f'The listener says: "{message}"\n\n'
         f"Respond naturally. Set directives only if they asked you to DO something "
         f"(change mood, play something specific, etc)."

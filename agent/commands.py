@@ -78,8 +78,13 @@ class CommandsMixin:
             return "processing..."
 
         elif cmd == "skip":
-            threading.Thread(target=self._agent_skip, daemon=True).start()
-            return "processing..."
+            # Setting the user_skip signal is instant — do it synchronously
+            # and return a real result now, so the WS caller doesn't wait on
+            # _ws_wait_result for a result that never comes (the old
+            # "processing..." path timed out). The heartbeat picks the signal
+            # up on its next (now fast) tick.
+            self._agent_skip()
+            return self._last_result or "Skip signaled — transitioning"
 
         elif cmd == "stop":
             if self.agent and not self._agent_busy:
@@ -157,6 +162,31 @@ class CommandsMixin:
             self._run_async(_reinit())
             return f"Source {source} → {'on' if enabled else 'off'} (agents rebuilt)"
 
+        elif cmd == "set_mode":
+            mode = (args.get("mode", "") or "").lower().strip()
+            if mode not in ("sarathi", "autonomous"):
+                return f"Unknown mode '{mode}' — use sarathi | autonomous"
+            self.session.sarathi_mode = (mode == "sarathi")
+            if mode == "autonomous":
+                # Drop any in-flight motion gate so she resumes the wheel.
+                self.session.manish_in_motion = False
+            log.info(f"Mode → {mode} (sarathi_mode={self.session.sarathi_mode})")
+            return (
+                f"Mode: {mode}. "
+                + ("You drive transitions; Treta suggests."
+                   if mode == "sarathi"
+                   else "Treta executes transitions autonomously.")
+            )
+
+        elif cmd in ("confirm_transition", "reject_transition"):
+            from .tools.sarathi import confirm_suggestion, reject_suggestion
+            sid = args.get("suggestion_id", "")
+            if cmd == "confirm_transition":
+                res = confirm_suggestion(suggestion_id=sid)
+            else:
+                res = reject_suggestion(suggestion_id=sid, reason=args.get("reason", ""))
+            return res.get("message", str(res))
+
         else:
             return f"Unknown: {cmd}"
 
@@ -164,18 +194,92 @@ class CommandsMixin:
         """Being handles ALL conversation. She thinks, responds, and optionally directs agents."""
         from .main import _get_status
 
+        # Turn start — so the user line is timestamped at send time and any
+        # tool calls fired mid-turn sort between it and the reply (not before).
+        _turn_start_ts = time.time()
         try:
             from .prompts import build_being_user_message
 
             context = self._build_context(_get_status(self.config.mixxx.url))
             history = self._format_history()
 
+            # Boot-replay: on the first Treta invocation after fresh daemon
+            # boot, prepend a "RECENT CONVERSATION" block built from today's
+            # chat JSONL. This gives her continuity across restarts. The
+            # flag flips False after first use so subsequent prompts stay
+            # clean (ADK session accumulates new turns normally).
+            replay_prefix = ""
+            if getattr(self, "_chat_replay_pending", False):
+                try:
+                    from .chat_persistence import load_recent_turns, format_replay_block
+                    recent = load_recent_turns(n=20, max_age_hours=24.0)
+                    replay_prefix = format_replay_block(recent, max_chars=4000)
+                    if replay_prefix:
+                        log.info(
+                            f"[chat-replay] prepending {len(recent)} prior turns "
+                            f"({len(replay_prefix)} chars) to Treta's first prompt"
+                        )
+                except Exception as _replay_exc:
+                    log.debug(f"chat replay failed (non-fatal): {_replay_exc}")
+                # Always flip the flag after attempt — don't retry replay
+                # on subsequent invocations.
+                self._chat_replay_pending = False
+
+            # Pull active self_suggestion directives so they surface in
+            # Treta's prompt as an INNER NUDGE block. Skipped in readonly
+            # mode (web listener should never see Treta's inner state).
+            active_suggestions = []
+            if not readonly:
+                try:
+                    from .tools.suggestions import list_self_suggestions
+                    active_suggestions = list_self_suggestions()
+                except Exception as _sug_exc:
+                    log.debug(
+                        f"list_self_suggestions failed (non-fatal): {_sug_exc}"
+                    )
+
+            # Sarathi: surface the mode + any live transition suggestion so
+            # she reads "do it" as confirm and "darker / no" as reject.
+            sarathi_block = ""
+            if not readonly and getattr(self.session, "sarathi_mode", False):
+                lines = [
+                    "── MODE: SARATHI ──",
+                    "The user drives transitions on the controller. You suggest; "
+                    "you do NOT execute unless they hand you the wheel.",
+                ]
+                try:
+                    from .tools.sarathi import list_pending_suggestions
+                    pend = list_pending_suggestions()
+                except Exception:
+                    pend = []
+                if pend:
+                    s = pend[-1]
+                    lines.append(
+                        f"Live suggestion in front of him: id={s.get('id')} — "
+                        f"{s.get('technique')} → deck {s.get('to_deck')} "
+                        f"({s.get('track_title') or 'next track'}); "
+                        f"{(s.get('reason') or '')[:100]}"
+                    )
+                    lines.append(
+                        '"do it"/"kar do"/"haan" → confirm_suggestion(); '
+                        '"no"/"darker"/"doosra" → reject_suggestion(reason=…); '
+                        '"i\'ve got this" → leave it, he\'s driving.'
+                    )
+                else:
+                    lines.append("No live suggestion right now.")
+                lines.append("── END SARATHI ──\n")
+                sarathi_block = "\n".join(lines) + "\n"
+
             being_msg = build_being_user_message(
                 context=context,
                 history=history,
                 message=message,
                 readonly=readonly,
+                self_suggestions=active_suggestions,
+                sarathi_block=sarathi_block,
             )
+            if replay_prefix:
+                being_msg = replay_prefix + "\n" + being_msg
 
             with self._talk_lock:
                 result = self._invoke_being(
@@ -187,6 +291,43 @@ class CommandsMixin:
             self._chat_history.append((message, result))
             if len(self._chat_history) > 10:
                 self._chat_history = self._chat_history[-10:]
+
+            # Compute durable-storage args once (LanceDB + JSONL share them).
+            set_id = ""
+            if self.current_set and isinstance(self.current_set, dict):
+                set_id = str(self.current_set.get("id") or "")
+            mood = getattr(self.session, "mood", "") or ""
+
+            # Durable semantic memory — embed this turn so Treta can
+            # recall it across daemon restarts via
+            # recall_similar_interaction(). Best-effort; failures
+            # never break the chat flow. Set evolution plan Tier 1.4.
+            try:
+                from .memory import store_interaction
+                store_interaction(
+                    message_text=message,
+                    treta_response=result,
+                    set_id=set_id,
+                    mood=mood,
+                )
+            except Exception as _mem_exc:
+                log.debug(f"store_interaction failed (non-fatal): {_mem_exc}")
+
+            # Ordered + auditable JSONL — daily file under
+            # ~/.beings/dj-treta/sessions/. Replayed on next daemon boot
+            # as a context block prepended to Treta's first prompt,
+            # giving her conversation continuity across restarts.
+            try:
+                from .chat_persistence import append_chat_turn
+                append_chat_turn(
+                    message=message,
+                    response=result,
+                    set_id=set_id,
+                    mood=mood,
+                    user_ts=_turn_start_ts,
+                )
+            except Exception as _jsonl_exc:
+                log.debug(f"chat JSONL append failed (non-fatal): {_jsonl_exc}")
 
             self._last_command_id = cmd_id
             self._last_result = result

@@ -15,11 +15,23 @@ class MixxxConfig:
     binary: str = ""
     resource_path: str = ""
     settings_path: str = ""
+    # Launch Mixxx in QML-UI mode (mixxx --qml) so the in-booth Sarathi panel
+    # renders. The QML UI is the "new UI" in the fork; the same audio engine,
+    # HTTP API, and MIDI work regardless. Set False to fall back to the
+    # LateNight QWidget skin (no Sarathi panel).
+    qml_ui: bool = False
 
 
 @dataclass
 class LLMConfig:
     model: str = "openai/gemini-3-flash"
+    # The root Being (Treta) uses a stronger model than the high-frequency
+    # subagent loops. Pro for judgment / identity / reflection /
+    # conversation. Flash for mechanical sub-second loops (DJ, planner,
+    # library, producer, mixer). Cost is fine because Treta fires only
+    # on listener chat + scheduled wakes, while subagents tick every
+    # 5–30s. Set to empty string to fall back to `model` for everyone.
+    being_model: str = "openai/gemini-3.1-pro"
     api_base: str = "http://localhost:4000"
     api_key: str = ""
     temperature: float = 0.7

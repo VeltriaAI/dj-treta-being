@@ -6,9 +6,32 @@ import time
 from pathlib import Path
 
 import httpx
+from .audio_files import is_audio_file
 from .runtime_paths import runtime_path
 
 log = logging.getLogger("dj-treta")
+
+
+def _format_timeline_compact_plain(timeline_json, current_pos: float) -> str:
+    """Plain-text section map: INTRO(1) → BREAKDOWN(2) → »BUILDUP(7)« → ...
+
+    The current section is wrapped in »...« so the cockpit can show it without
+    needing rich-text markup. Mirrors the TUI's _format_timeline_compact.
+    """
+    try:
+        sections = json.loads(timeline_json) if isinstance(timeline_json, str) else timeline_json
+        if not sections:
+            return ""
+        parts = []
+        for s in sections:
+            label = f"{str(s['section']).upper()}({s['energy']})"
+            if float(s["start"]) <= current_pos <= float(s["end"]):
+                label = f"»{label}«"
+            parts.append(label)
+        return " → ".join(parts)
+    except Exception:
+        return ""
+
 
 STATE_FILE = runtime_path("state.json")
 PERSIST_FILE = Path(__file__).parent.parent / ".beings" / "session.json"
@@ -42,6 +65,17 @@ class SessionMixin:
                         current["file_bpm"] = d.get("file_bpm", 0)
                         current["deck"] = dk
                         break
+
+            # Section timeline (INTRO→BREAKDOWN→...) for the cockpit header.
+            if current.get("file_path"):
+                try:
+                    from .db import get_track_by_path
+                    _tk = get_track_by_path(current["file_path"])
+                    if _tk and _tk.get("timeline"):
+                        current["timeline_compact"] = _format_timeline_compact_plain(
+                            _tk["timeline"], current.get("position", 0))
+                except Exception:
+                    pass
 
             # Next track (idle deck)
             next_track = None
@@ -108,6 +142,20 @@ class SessionMixin:
             except Exception:
                 sched_transition = None
 
+            # Sarathi: surface the latest live transition suggestion so a TUI
+            # attaching mid-window renders the panel without waiting for the
+            # next broadcast event.
+            sarathi_mode = bool(getattr(self.session, "sarathi_mode", False))
+            pending_suggestion = None
+            if sarathi_mode:
+                try:
+                    from .tools.sarathi import list_pending_suggestions
+                    pend = list_pending_suggestions()
+                    if pend:
+                        pending_suggestion = pend[-1]
+                except Exception:
+                    pending_suggestion = None
+
             state_payload = {
                 "phase": phase,
                 "mood": self.mood,
@@ -128,6 +176,8 @@ class SessionMixin:
                 "last_command_result": self._last_result,
                 "billing": billing_str,
                 "scheduled_transition": sched_transition,
+                "sarathi_mode": sarathi_mode,
+                "pending_suggestion": pending_suggestion,
                 "sources": {
                     "youtube": self.config.sources.youtube,
                     "treta_originals": self.config.sources.treta_originals,
@@ -135,6 +185,16 @@ class SessionMixin:
                 "producing": self._generation_status,
             }
             STATE_FILE.write_text(json.dumps(state_payload, indent=2))
+
+            # Keep the in-Mixxx sidebar's Library/Planned/Suggestions symlink
+            # folders in sync (best-effort, throttled to ~every 5th tick).
+            self._browse_sync_ctr = getattr(self, "_browse_sync_ctr", 0) + 1
+            if self._browse_sync_ctr % 5 == 1:
+                try:
+                    from .browse_folders import sync_browse_folders
+                    sync_browse_folders(self.config.library.music_dir, self.session)
+                except Exception:
+                    pass
 
             # Broadcast state via WebSocket — same shape as STATE_FILE so the
             # TUI's state-source can treat WS frames and disk reads identically.
@@ -224,7 +284,7 @@ class SessionMixin:
             if not genre_dir.is_dir() or genre_dir.name.startswith('.'):
                 continue
             tracks = [f.stem[:40] for f in sorted(genre_dir.iterdir())
-                      if f.suffix.lower() in ('.mp3', '.wav', '.flac', '.ogg', '.m4a')]
+                      if is_audio_file(f)]
             if tracks:
                 lines.append(f"  {genre_dir.name}/: {', '.join(tracks)}")
         return "\n".join(lines) if lines else "  (empty)"
@@ -260,23 +320,87 @@ class SessionMixin:
                             self._deck_track[dk] = path
                             self._deck_start_time[dk] = time.time()
                         if title and not any(t.get("title") == title for t in self.tracks_played):
-                            # BUG-8 fix (Phase A2 dry run #2 2026-04-19):
-                            # include `path` so downstream dedup (BUG-6
-                            # played-path filter in planner_loop) can match
-                            # canonical library paths stably. Previously
-                            # only {title, time} was recorded, so any
-                            # path-based comparison matched nothing.
-                            self.tracks_played.append({
+                            # Enriched per-track ledger record. Foundation
+                            # for Tier 1.2 of evolution plan: set archives,
+                            # reflection, listener-pattern learning all
+                            # read from this list. The legacy {title, path,
+                            # time} keys are preserved for back-compat;
+                            # new keys are additive.
+                            entry = {
                                 "title": title,
                                 "path": path,
-                                "time": time.time(),
-                            })
+                                "time": time.time(),                # legacy
+                                # Enriched fields:
+                                "track_id": f"t{int(time.time() * 1000)}",
+                                "artist": tinfo.get("artist", "") or "",
+                                "deck": dk,
+                                "loaded_at": time.time(),
+                                "played_from_at": time.time(),
+                                "ended_at": None,
+                                "bpm": status.get(f"deck{dk}", {}).get("bpm", 0) or 0,
+                                "key_camelot": tinfo.get("key", "") or "",
+                                "energy": tinfo.get("energy_peak"),
+                                "transition_in": None,   # set by transition tools post-flight
+                                "transition_out": None,
+                                "listener_feedback": None,
+                            }
+                            self.tracks_played.append(entry)
                             # Record in DB set_history
                             if self.current_set:
                                 from .db import add_track_to_set
                                 add_track_to_set(self.current_set["id"], title, dk, path)
+                            # Best-effort archive: when in-memory list grows
+                            # past 200, slice old half to JSONL on disk so
+                            # the live list stays fast. See archive helper.
+                            if len(self.tracks_played) > 200:
+                                try:
+                                    self._archive_old_tracks()
+                                except Exception as exc:
+                                    log.debug(f"tracks_played archive skipped: {exc}")
         except Exception:
             pass
+
+    def _archive_old_tracks(self):
+        """Move oldest half of tracks_played to a daily JSONL archive.
+
+        Keeps the in-memory list bounded so reads stay fast. Archive
+        files at ~/.beings/dj-treta/history/YYYY-MM-DD.jsonl. Idempotent:
+        re-running on the same day appends; never rewrites.
+        """
+        if len(self.tracks_played) <= 200:
+            return
+        archive_dir = (
+            Path(__file__).parent.parent / ".beings" / "dj-treta" / "history"
+        )
+        archive_dir.mkdir(parents=True, exist_ok=True)
+
+        # Slice off the oldest half.
+        half = len(self.tracks_played) // 2
+        old_entries = list(self.tracks_played[:half])
+        keep_entries = list(self.tracks_played[half:])
+
+        # Group by date (UTC for stability).
+        from collections import defaultdict
+        from datetime import datetime, timezone
+        by_date = defaultdict(list)
+        for e in old_entries:
+            ts = e.get("loaded_at") or e.get("time") or time.time()
+            day = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
+            by_date[day].append(e)
+
+        for day, entries in by_date.items():
+            path = archive_dir / f"{day}.jsonl"
+            with path.open("a") as f:
+                for e in entries:
+                    f.write(json.dumps(e, default=str) + "\n")
+
+        # Replace in-memory list (use clear+extend so ObservedList fires).
+        self.tracks_played.clear()
+        self.tracks_played.extend(keep_entries)
+        log.info(
+            f"[history] archived {len(old_entries)} tracks "
+            f"to {archive_dir}, kept {len(keep_entries)} in memory"
+        )
 
     def _agent_reflect(self):
         """Periodic self-evolution — reflect on recent tracks."""

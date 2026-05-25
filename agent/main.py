@@ -23,6 +23,7 @@ from pathlib import Path
 
 import httpx
 
+from .audio_files import is_audio_file
 from .config import load_config, Config
 from .agents import create_agents
 from google.adk.apps.app import App
@@ -121,6 +122,16 @@ def _ensure_litellm(config):
         return  # already running
 
     log.info("LiteLLM not running — starting locally")
+    # We only get here when :4000 is unreachable. Kill any stale/half-booted
+    # litellm first so we start exactly one — otherwise every restart where
+    # the old instance isn't cleanly reachable leaks another litellm process
+    # (observed 10 accumulate over a day of restarts), and duplicates compete
+    # for :4000 which makes model calls flaky.
+    try:
+        subprocess.run(["pkill", "-f", "litellm --config"], capture_output=True)
+        time.sleep(0.5)
+    except Exception:
+        pass
     config_file = _resolve_litellm_config()
     if config_file is None or not config_file.exists():
         log.warning(
@@ -149,12 +160,32 @@ def _ensure_litellm(config):
     log.warning("LiteLLM failed to start")
 
 
+_mixxx_launch_lock = threading.Lock()
+
+
+def _mixxx_process_running(mixxx_bin: Path) -> bool:
+    """True if a Mixxx process already exists (even if its API isn't up yet).
+
+    Used to avoid spawning a second instance while the first is still booting —
+    multiple instances fight over the settings DB + port 7778 and none bind,
+    causing an unbounded spawn cascade.
+    """
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", str(mixxx_bin)],
+            capture_output=True, text=True, timeout=2,
+        )
+        return result.returncode == 0 and result.stdout.strip() != ""
+    except Exception:
+        return False
+
+
 def _ensure_mixxx(config: Config):
     """Start Mixxx if not running (when mixxx.auto_start is true)."""
     url = config.mixxx.url
     try:
         httpx.get(f"{url}/api/status", timeout=2)
-        return  # already running
+        return  # already running + API up
     except Exception:
         pass
 
@@ -162,33 +193,56 @@ def _ensure_mixxx(config: Config):
         log.warning("Mixxx not reachable — auto_start is false; start Mixxx manually")
         return
 
-    log.info("Mixxx not running — starting it")
-    default_bin = Path.home() / "workspace" / "mixxx-treta" / "build" / "mixxx"
-    default_res = Path.home() / "workspace" / "mixxx-treta" / "res"
-    default_settings = Path.home() / "Library" / "Application Support" / "Mixxx"
-
-    mixxx_bin = Path(config.mixxx.binary).expanduser() if config.mixxx.binary.strip() else default_bin
-    resource = Path(config.mixxx.resource_path).expanduser() if config.mixxx.resource_path.strip() else default_res
-    settings = Path(config.mixxx.settings_path).expanduser() if config.mixxx.settings_path.strip() else default_settings
-
-    if not mixxx_bin.exists():
-        log.error(f"Mixxx not found: {mixxx_bin}")
+    # Serialize launch attempts. Concurrent heartbeat ticks must NOT each spawn
+    # their own Mixxx — that's the multi-instance cascade. Non-blocking acquire:
+    # if a launch is already in flight, bail immediately.
+    if not _mixxx_launch_lock.acquire(blocking=False):
+        log.debug("Mixxx launch already in progress — skipping duplicate spawn")
         return
+    try:
+        default_bin = Path.home() / "workspace" / "mixxx-treta" / "build" / "mixxx"
+        default_res = Path.home() / "workspace" / "mixxx-treta" / "res"
+        default_settings = Path.home() / "Library" / "Application Support" / "Mixxx"
 
-    subprocess.Popen(
-        [str(mixxx_bin), "--resourcePath", str(resource), "--settingsPath", str(settings)],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
-    for i in range(30):
-        time.sleep(0.5)
-        try:
-            httpx.get(f"{url}/api/status", timeout=2)
-            log.info(f"Mixxx up after {(i+1)*0.5:.1f}s — waiting for audio engine...")
-            time.sleep(15)  # audio engine needs time after HTTP API is ready
+        mixxx_bin = Path(config.mixxx.binary).expanduser() if config.mixxx.binary.strip() else default_bin
+        resource = Path(config.mixxx.resource_path).expanduser() if config.mixxx.resource_path.strip() else default_res
+        settings = Path(config.mixxx.settings_path).expanduser() if config.mixxx.settings_path.strip() else default_settings
+
+        if not mixxx_bin.exists():
+            log.error(
+                f"Mixxx not found: {mixxx_bin} — rebuild with: "
+                f"cd ~/workspace/mixxx-treta && source tools/macos_buildenv.sh setup && "
+                f"cmake -B build -DHTTPAPI=ON && cmake --build build -j8"
+            )
             return
-        except Exception:
-            pass
-    log.error("Mixxx failed to start")
+
+        # If a Mixxx process already exists (booting, API not up yet), DO NOT
+        # spawn another — just wait for its API to come online.
+        if _mixxx_process_running(mixxx_bin):
+            log.info("Mixxx process already running (booting) — waiting for API, not spawning another")
+        else:
+            launch_cmd = [str(mixxx_bin), "--resourcePath", str(resource), "--settingsPath", str(settings)]
+            if getattr(config.mixxx, "qml_ui", False):
+                # QML-UI mode renders the in-booth Sarathi panel (res/qml).
+                launch_cmd.append("--qml")
+            log.info(f"Mixxx not running — starting it ({'QML UI' if '--qml' in launch_cmd else 'QWidget skin'})")
+            subprocess.Popen(
+                launch_cmd,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+
+        for i in range(60):  # up to 30s for API to come online
+            time.sleep(0.5)
+            try:
+                httpx.get(f"{url}/api/status", timeout=2)
+                log.info(f"Mixxx API up after {(i+1)*0.5:.1f}s — waiting for audio engine...")
+                time.sleep(15)  # audio engine needs time after HTTP API is ready
+                return
+            except Exception:
+                pass
+        log.error("Mixxx failed to start (API never came up within 30s)")
+    finally:
+        _mixxx_launch_lock.release()
 
 
 def _get_status(url: str) -> dict | None:
@@ -225,7 +279,7 @@ def _count_tracks(music_dir: Path) -> int:
         return 0
     for d in music_dir.iterdir():
         if d.is_dir() and not d.name.startswith('.'):
-            n += sum(1 for f in d.iterdir() if f.suffix.lower() in ('.mp3', '.wav', '.flac', '.ogg', '.m4a'))
+            n += sum(1 for f in d.iterdir() if is_audio_file(f))
     return n
 
 
@@ -261,6 +315,10 @@ class DJTretaBeing(
         session_path = Path(__file__).parent.parent / ".beings" / "session.json"
         self.session = Session.load(session_path)
         register_session(self.session)
+        # Back-reference so session-scoped tools (e.g. Sarathi suggest/confirm)
+        # can reach _ws_broadcast. Underscore-prefixed → bypasses the session
+        # observer and is never serialized to session.json.
+        object.__setattr__(self.session, "_being_ref", self)
 
         # Command bookkeeping — internal, not user-facing
         self._last_command = ""
@@ -300,6 +358,14 @@ class DJTretaBeing(
         self._library_runner = None           # v8 Phase 5
         self._producer_runner = None          # v8 Phase 6
         self._being_session = None
+        # Boot-replay flag: True until first Treta invocation after fresh
+        # daemon start. When True, _being_talk reads the last K turns from
+        # today's chat JSONL and prepends them as a context block. This
+        # gives Treta conversation continuity across daemon restarts
+        # without polluting every prompt — replay only happens once per
+        # boot, then the ADK session accumulates new turns normally.
+        # Set evolution plan Tier 2-stretch.
+        self._chat_replay_pending = True
         self._dj_session = None
         self._planner_session = None
         self._library_session = None          # v8 Phase 5
@@ -474,6 +540,34 @@ class DJTretaBeing(
         # Producer loop — generates originals on session.producer_need (v8 Phase 6)
         threading.Thread(target=self._producer_loop, daemon=True).start()
 
+        # ── Evolution: multi-loop consciousness ────────────────────
+        # Three new loops layered on the existing heartbeat-driven cycle.
+        # Each runs in its own daemon thread and reads session/memory.
+        # Reflection: 15 min cadence — synthesizes recent activity.
+        # Journal: 6 hr OR 5 min idle — daily journal entry (was previously
+        #   called "dream"; renamed for honesty — current impl is linear
+        #   daily synthesis, not free-associative recombination).
+        # Intention: weekly (Sun 23:00) — meta intentions for next week.
+        # See evolution plan Tier 2.4/2.5/2.6.
+        try:
+            from .reflection_loop import ReflectionLoop
+            self._reflection_loop = ReflectionLoop(self)
+            self._reflection_loop.start()
+        except Exception as exc:
+            log.warning(f"reflection loop failed to start (non-fatal): {exc}")
+        try:
+            from .journal_loop import JournalLoop
+            self._journal_loop = JournalLoop(self)
+            self._journal_loop.start()
+        except Exception as exc:
+            log.warning(f"journal loop failed to start (non-fatal): {exc}")
+        try:
+            from .intention_loop import IntentionLoop
+            self._intention_loop = IntentionLoop(self)
+            self._intention_loop.start()
+        except Exception as exc:
+            log.warning(f"intention loop failed to start (non-fatal): {exc}")
+
         # Session callback: when mood changes, do three things.
         # 1. Update the current set's mood/genre fields (for DB + relay).
         # 2. Force planner replan on next tick.
@@ -578,7 +672,31 @@ class DJTretaBeing(
             except Exception as e:
                 log.warning(f"Loop error: {e}")
 
-            time.sleep(max(1.0, self._next_sleep))
+            # Responsive sleep: keep the heartbeat's chosen cadence
+            # (self._next_sleep, up to 30s) but poll for commands every 0.5s so
+            # /skip and friends don't sit unprocessed for the whole interval.
+            # Break early ONLY for a user-initiated skip — that needs a
+            # sub-second response. Background signals (idle_needs_load /
+            # replan_requested) deliberately do NOT trigger an early re-tick:
+            # they can be set+unsatisfied for a while (e.g. idle_needs_load
+            # stays set while a transition is pending), and breaking on them
+            # would busy-spin the heartbeat every 0.5s. They're handled on the
+            # normal heartbeat cadence, which is fine for background work.
+            _deadline = time.time() + max(1.0, self._next_sleep)
+            while self._running and time.time() < _deadline:
+                time.sleep(0.5)
+                try:
+                    self._check_commands()
+                except Exception as e:
+                    log.warning(f"Command poll error: {e}")
+                # Break for a pending skip, but at most once per 2s so an
+                # unsatisfiable skip (e.g. empty idle deck) can't busy-spin the
+                # heartbeat — it re-ticks every 2s instead of every 0.5s.
+                if getattr(self.session, "user_skip", None):
+                    _now = time.time()
+                    if _now - getattr(self, "_last_skip_break", 0.0) >= 2.0:
+                        self._last_skip_break = _now
+                        break
 
         log.info("DJ Treta Being shutting down")
 

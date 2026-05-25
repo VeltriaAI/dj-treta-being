@@ -154,6 +154,82 @@ Now return JSON for the input above."""
     }
 
 
+# Obvious off-genre markers — used as a keyword fallback when the LLM
+# genre-gate is unreachable, so the broad-search path still rejects the
+# worst offenders (Bollywood / film-song pollution) without blocking the
+# whole queue. Kept narrow on purpose: "afro" is valid for melodic/afro
+# house, so it is NOT listed here.
+_OFFGENRE_MARKERS = (
+    "bollywood", "bolly", "punjabi", "hindi", "filmi", "arijit",
+    "lata mangeshkar", "kishore kumar", "tseries", "t-series",
+)
+
+
+def _obvious_offgenre(label: str) -> bool:
+    low = (label or "").lower()
+    return any(m in low for m in _OFFGENRE_MARKERS)
+
+
+def genre_matches(artist: str, title: str, genre: str,
+                  alternates: list | None = None) -> bool:
+    """Flash gate: does this track plausibly belong to `genre`?
+
+    Used by the broad-search download paths (Sarathi deep-queue, mood-refill)
+    so a loose query like "melodic techno" can't pollute the crate with
+    Bollywood / film-song remixes that YouTube ranks highly.
+
+    Strict by design — vocal-pop, film songs, and non-electronic material are
+    rejected unless they are clearly an electronic (techno/house/etc.) remix.
+
+    Fail-open: if the LLM is unreachable we fall back to a keyword denylist
+    (only blocks the most obvious mismatches) so the download queue keeps
+    moving rather than stalling on an LLM outage.
+    """
+    label = f"{artist} - {title}".strip(" -") if artist else (title or "").strip()
+    if not label:
+        return False
+
+    alts = ", ".join(alternates or [])
+    prompt = (
+        "You are a strict music-genre classifier for a DJ crate.\n"
+        f'Target genre: "{genre}"' + (f' (related: {alts})' if alts else "") + ".\n"
+        f'Track: "{label}"\n\n'
+        "Does this track belong to the target genre, in an electronic / club "
+        "context? Bollywood, Hindi/Punjabi film songs, pop, and vocal-pop edits "
+        "are NOT melodic techno / electronic club genres UNLESS the track is "
+        "clearly an electronic (techno / house / progressive / afro house) remix.\n"
+        'Return STRICT JSON only: {"match": true|false, "reason": "<=8 words"}'
+    )
+
+    try:
+        from .config import load_config
+        from litellm import completion as _completion
+        cfg = load_config()
+        resp = _completion(
+            model=cfg.llm.model,
+            messages=[{"role": "user", "content": prompt}],
+            api_base=cfg.llm.api_base, api_key=cfg.llm.api_key,
+            temperature=0.0, timeout=12,
+        )
+        raw = resp.choices[0].message.content.strip()
+        if "```" in raw:
+            raw = raw.split("```", 2)[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.split("```")[0].strip()
+        data = json.loads(raw)
+        match = bool(data.get("match"))
+        log.info(f"[genre-gate] {label!r} vs {genre!r} → {match} ({data.get('reason','')})")
+        return match
+    except Exception as e:
+        off = _obvious_offgenre(label)
+        log.warning(
+            f"[genre-gate] LLM failed ({type(e).__name__}): {e} — "
+            f"keyword fallback → {'reject' if off else 'allow'}"
+        )
+        return not off
+
+
 def canonical_filename(canon: dict, fallback: str = "") -> str:
     """Build a human-friendly canonical filename stem (no extension).
 

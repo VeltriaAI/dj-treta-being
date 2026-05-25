@@ -115,20 +115,68 @@ def _tempo_ride(deck: int, target_bpm: float = None, duration_s: float = 60.0):
     log.info(f"Tempo ride complete: deck {deck}, {current_bpm:.0f} → {goal_bpm:.0f} BPM over {duration_s:.0f}s")
 
 
-def _apply_bpm_after(deck: int, bpm_after: str = "keep", glide_duration: int = 60):
+def _anchor_target_bpm():
+    """The mood profile's BPM-range center, or None if unavailable.
+
+    This is the post-transition tempo anchor. Anchoring every transition to a
+    stable, mood-defined tempo stops cumulative sync drift: without it, each
+    transition syncs the incoming deck to the (possibly already-drifted) outgoing
+    deck and then "keep" leaves it there, so a half-detected/slow track becomes
+    the anchor and every later track sync-pulls toward it (observed +20.3% rate).
+    """
+    try:
+        from ..session_state import get_session
+        sess = get_session()
+        if sess is None:
+            return None
+        mp = getattr(sess, "mood_profile", None) or {}
+        if isinstance(mp, dict):
+            rng = mp.get("bpm_range")
+            if rng and len(rng) == 2 and all(isinstance(x, (int, float)) for x in rng):
+                return (float(rng[0]) + float(rng[1])) / 2.0
+    except Exception as e:
+        log.debug(f"[bpm-anchor] mood lookup failed: {e}")
+    return None
+
+
+def _apply_bpm_after(deck: int, bpm_after: str = "anchor", glide_duration: int = 60):
     """Post-transition BPM handling.
 
-    Default is "keep" — just disable sync, leave rate where it is.
-    BPM is a creative choice for the whole set, not something to reset per-track.
-    The DJ agent controls energy/BPM through track selection.
+    Default is "anchor" — gently tempo-ride the incoming deck back to the mood
+    profile's BPM-range center so per-transition sync drift can't accumulate
+    across a set. _tempo_ride no-ops when the deck is already within 0.5 BPM of
+    the target, so an on-tempo deck is never touched — the ride only fires when
+    the deck has actually drifted. The ride runs after the crossfade completes
+    (deck already audible solo), so blocking here is fine.
 
-    bpm_after="keep"   → disable sync, leave rate untouched (default, correct)
-    bpm_after="reset"  → tempo ride back to native file BPM (rarely needed)
-    bpm_after="126.5"  → tempo ride to a specific BPM (agent decision)
+    bpm_after="anchor" → (default) release sync and SNAP the surviving deck back
+                         to its native tempo (rate_ratio=1.0) instantly. During a
+                         blend the incoming deck is sync-stretched to beatmatch the
+                         outgoing; releasing sync alone LEAVES that stretch, so a
+                         wide-BPM-gap mix strands the deck running fast/slow for the
+                         rest of the track (observed live: a 149-BPM track left at
+                         128 = -14%, and a 128 left at 142 = +11%). The outgoing deck
+                         is already paused+silent when this runs (see
+                         _finish_channel_fader), so the snap is inaudible as a
+                         beat-slip — it just returns the now-solo track to its true
+                         speed. This is an INSTANT snap, NOT a glide: the old
+                         tempo-RIDE (disabled 2026-05-23) caused audible gradual
+                         creep and fought mis-detected beatgrids. A single snap at
+                         the transition boundary reads as "new track, its own tempo".
+    bpm_after="keep"   → disable sync, leave rate exactly as the blend left it
+                         (explicit opt-out of the native snap — for close-BPM mixes
+                         where holding the matched tempo is desired).
+    bpm_after="reset"  → tempo ride back to native file BPM (explicit only)
+    bpm_after="126.5"  → tempo ride to a specific BPM (explicit agent decision)
     """
     _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "sync_enabled", "value": 0})
 
-    if bpm_after == "keep":
+    if bpm_after == "anchor":
+        # Release sync (done above) + snap to native so no synced stretch survives.
+        _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "rate_ratio", "value": 1.0})
+        return
+    elif bpm_after == "keep":
+        # Release sync only; caller explicitly wants the matched tempo held.
         return
     elif bpm_after == "reset":
         _tempo_ride(deck, target_bpm=None, duration_s=max(30, min(120, glide_duration)))
@@ -140,10 +188,50 @@ def _apply_bpm_after(deck: int, bpm_after: str = "keep", glide_duration: int = 6
             pass
 
 
-def do_transition(to_deck: int, duration: int = 60, bpm_after: str = "keep", glide_duration: int = 60, duration_bars: int = None) -> str:
-    """Execute a smooth crossfade transition to a deck.
-    Uses Mixxx's C++ engine (20fps S-curve). After transition completes,
-    the outgoing deck is paused and EQ/volume reset.
+# Crossfader is parked at center for the whole set — every transition blends
+# on the channel (volume) faders, the way club DJs actually mix. The crossfader
+# is reserved for scratch/cut work we don't do.
+_XF_CENTER = 0.5
+
+
+def _center_crossfader() -> None:
+    _mixxx_post("/api/crossfade", {"position": _XF_CENTER})
+
+
+def _finish_channel_fader(out_deck: int, to_deck: int, bpm_after: str,
+                          glide_duration: int, *, reset_filter: bool = False,
+                          out_q_group: str = "") -> None:
+    """Club-DJ transition finish: crossfader stays CENTERED; the outgoing deck
+    is silenced by its VOLUME fader (not the crossfader), then paused + ejected.
+    Resets EQ/volume/filter so the freed deck is clean for the next load.
+
+    This is the shared end-state for every technique so none of them leave the
+    crossfader pushed to one side — Manish keeps it centered and rides the
+    channel faders, and so does Treta.
+    """
+    _mixxx_post("/api/volume", {"deck": out_deck, "level": 0.0})  # fully out
+    _mixxx_post("/api/crossfade", {"position": _XF_CENTER})        # keep centered
+    _mixxx_post("/api/pause", {"deck": out_deck})
+    # Paused now → resetting its volume to 1.0 is silent but leaves it ready.
+    _mixxx_post("/api/volume", {"deck": out_deck, "level": 1.0})
+    _mixxx_post("/api/volume", {"deck": to_deck, "level": 1.0})
+    for band in ("hi", "mid", "lo"):
+        _mixxx_post("/api/eq", {"deck": out_deck, band: 1.0})
+        _mixxx_post("/api/eq", {"deck": to_deck, band: 1.0})
+    if reset_filter:
+        _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5})
+        _mixxx_post("/api/filter", {"deck": to_deck, "value": 0.5})
+    if out_q_group:
+        _mixxx_post("/api/control", {"group": out_q_group, "key": "parameter2", "value": 0.0})
+    _apply_bpm_after(to_deck, bpm_after, glide_duration)
+    _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
+
+
+def do_transition(to_deck: int, duration: int = 60, bpm_after: str = "anchor", glide_duration: int = 60, duration_bars: int = None) -> str:
+    """Execute a smooth channel-fader blend to a deck (crossfader stays center).
+    Outgoing volume rides down, incoming rides up, with a bass bridge so the
+    low ends don't collide. After it completes the outgoing deck is paused +
+    ejected and EQ/volume reset.
 
     Args:
         to_deck: Deck to transition TO (1 or 2).
@@ -179,6 +267,27 @@ def do_transition(to_deck: int, duration: int = 60, bpm_after: str = "keep", gli
 
     duration = max(10, min(120, duration))
 
+    # Clamp `duration` to fit within the OUTGOING track's remaining audio.
+    # Without this, a long crossfade (e.g. 60s) on a track with 30s left
+    # runs past the audio cliff — the safety-belt watchdog (Patch C below)
+    # catches the cliff but only after a noticeable mid-fade jump. Clamping
+    # up front gives a smooth fade for the whole duration. 4s margin so
+    # the tail breathes; floor at 10s to keep the fade musical.
+    if status:
+        try:
+            out_rem = float(
+                status.get(f"deck{out_deck}", {}).get("remaining_seconds", 0) or 0
+            )
+        except Exception:
+            out_rem = 0.0
+        if out_rem > 0 and duration > out_rem - 4:
+            new_duration = max(10, int(out_rem - 4))
+            log.warning(
+                f"[CROSSFADE] clamping duration {duration}s → {new_duration}s "
+                f"because outgoing deck{out_deck} only has {out_rem:.1f}s left"
+            )
+            duration = new_duration
+
     # Sync + play + phase align (let Mixxx handle BPM matching naturally)
     _mixxx_post("/api/sync", {"deck": to_deck})
     _mixxx_post("/api/play", {"deck": to_deck})
@@ -201,78 +310,72 @@ def do_transition(to_deck: int, duration: int = 60, bpm_after: str = "keep", gli
     # fire anyway (better to mix than to stall).
     _wait_phrase_boundary(out_deck, timeout_s=2.0, threshold=0.05)
 
-    # Bass-bridge: dip incoming LO to 0 at start of fade, restore at ~70%
-    # of duration. Prevents bass-collision against outgoing's still-present
-    # low end. Restore happens in a background thread so we don't block the
-    # main /api/transition call (which itself blocks for duration+2s).
-    _mixxx_post("/api/eq", {"deck": to_deck, "lo": 0.0})
-    bass_restore_at = duration * 0.70
+    # Crossfader parked center; blend on the channel faders (club-DJ style).
+    _center_crossfader()
+    _mixxx_post("/api/volume", {"deck": to_deck, "level": 0.0})
+    _mixxx_post("/api/eq", {"deck": to_deck, "lo": 0.0})  # cut incoming bass first
 
-    def _restore_incoming_bass():
-        _time.sleep(bass_restore_at)
-        _mixxx_post("/api/eq", {"deck": to_deck, "lo": 1.0})
-
-    bass_thread = threading.Thread(target=_restore_incoming_bass, daemon=True)
-    bass_thread.start()
-
-    # Mixxx C++ S-curve transition (20fps, smooth)
-    _mixxx_post("/api/transition", {"deck": to_deck, "duration": duration})
-
-    # ── Patch C: crossfade end-safety belt ────────────────────────────
-    # Replace blind _time.sleep(duration + 2) with a watchdog poll. If
-    # the OUTGOING deck runs out mid-fade (track shorter than the fade,
-    # or the schedule ran late), we detect rem<0.5s, force xf to dest
-    # immediately, and break — no more cut-out audible to the listener.
-    deadline = _time.monotonic() + duration + 2
+    # Channel-fader crossfade, the way Manish rides it:
+    #   Phase 1 (first half): bring the INCOMING fader fully UP (outgoing stays
+    #     up) — both tracks now playing, incoming bass cut so the low ends
+    #     don't collide.
+    #   Bass swap: at the midpoint, wait for a DOWNBEAT, then restore the
+    #     incoming bass + cut the outgoing bass — on the beat, not at an
+    #     arbitrary time.
+    #   Phase 2 (second half): bring the OUTGOING fader DOWN to 0.
+    fps = 20
+    total = max(1, int(duration * fps))
+    half = max(1, total // 2)
     forced_end = False
-    while _time.monotonic() < deadline:
+    bass_swapped = False
+
+    def _cliff_hit() -> bool:
         try:
             st = _mixxx_get("/api/status") or {}
             d_out = st.get(f"deck{out_deck}", {})
-            rem_out = float(d_out.get("remaining_seconds", 0) or 0)
-            playing_out = bool(d_out.get("playing", False))
+            rem = float(d_out.get("remaining_seconds", 0) or 0)
+            pl = bool(d_out.get("playing", False))
+            return (pl and rem < 0.5) or (not pl and rem <= 0)
         except Exception:
-            rem_out = 999.0
-            playing_out = True
-        if (playing_out and rem_out < 0.5) or (not playing_out and rem_out <= 0):
-            # Outgoing track is at the cliff — slam crossfader to dest.
-            xf_force = 0.0 if to_deck == 1 else 1.0
-            try:
-                _mixxx_post("/api/crossfade", {"position": xf_force})
-            except Exception:
-                pass
+            return False
+
+    for i in range(total + 1):
+        # Phase 1 — incoming rides up to full; outgoing untouched (full).
+        if i <= half:
+            _mixxx_post("/api/volume", {"deck": to_deck, "level": round(i / half, 3)})
+        # Bass swap on the beat, once the incoming fader is up.
+        if not bass_swapped and i >= half:
+            _mixxx_post("/api/volume", {"deck": to_deck, "level": 1.0})
+            _wait_phrase_boundary(out_deck, timeout_s=2.0, threshold=0.05)
+            _mixxx_post("/api/eq", {"deck": to_deck, "lo": 1.0})   # restore incoming bass ON BEAT
+            _mixxx_post("/api/eq", {"deck": out_deck, "lo": 0.0})  # drop outgoing bass
+            bass_swapped = True
+        # Phase 2 — outgoing rides down; incoming stays full.
+        if i > half:
+            vout = 1.0 - (i - half) / max(1, (total - half))
+            _mixxx_post("/api/volume", {"deck": out_deck, "level": round(max(0.0, vout), 3)})
+        # End-safety: outgoing hit the cliff mid-blend → snap to incoming.
+        if i % 5 == 0 and _cliff_hit():
+            _mixxx_post("/api/eq", {"deck": to_deck, "lo": 1.0})
+            _mixxx_post("/api/volume", {"deck": to_deck, "level": 1.0})
+            _mixxx_post("/api/volume", {"deck": out_deck, "level": 0.0})
             forced_end = True
+            bass_swapped = True
             log.warning(
-                f"[CROSSFADE-FORCE-END] outgoing deck {out_deck} hit end "
-                f"mid-fade (rem={rem_out:.2f}s, playing={playing_out}); "
-                f"forced crossfader to {xf_force}"
+                f"[BLEND-FORCE-END] outgoing deck {out_deck} hit end mid-blend — snapped to incoming"
             )
             break
-        _time.sleep(0.5)
+        _time.sleep(1.0 / fps)
 
-    # Make sure bass-restore has run even if duration math drifted.
-    _mixxx_post("/api/eq", {"deck": to_deck, "lo": 1.0})
+    # Ensure incoming bass is up even if the loop broke before the swap.
+    if not bass_swapped:
+        _mixxx_post("/api/eq", {"deck": to_deck, "lo": 1.0})
 
-    # Post-flight cleanup -- crossfader + pause + reset EQ
-    xf = 0.0 if to_deck == 1 else 1.0
-    _mixxx_post("/api/crossfade", {"position": xf})
-    _mixxx_post("/api/pause", {"deck": out_deck})
-    _mixxx_post("/api/volume", {"deck": out_deck, "level":1.0})
-    _mixxx_post("/api/volume", {"deck": to_deck, "level":1.0})
-    for band in ["hi", "mid", "lo"]:
-        _mixxx_post("/api/eq", {"deck": out_deck, band: 1.0})
-        _mixxx_post("/api/eq", {"deck": to_deck, band: 1.0})
-    _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5})
-    _mixxx_post("/api/filter", {"deck": to_deck, "value": 0.5})
-
-    _apply_bpm_after(to_deck, bpm_after, glide_duration)
-
-    _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
-
-    return f"Transitioned to Deck {to_deck} over {duration}s (bpm_after={bpm_after}). Deck {out_deck} ejected."
+    _finish_channel_fader(out_deck, to_deck, bpm_after, glide_duration, reset_filter=True)
+    return f"Transitioned to Deck {to_deck} over {duration}s, channel-fader blend (bpm_after={bpm_after}). Deck {out_deck} ejected."
 
 
-def do_bass_swap(to_deck: int, duration: int = 60, bpm_after: str = "keep", glide_duration: int = 60, swap_style: str = "trade") -> str:
+def do_bass_swap(to_deck: int, duration: int = 60, bpm_after: str = "anchor", glide_duration: int = 60, swap_style: str = "trade") -> str:
     """Execute a bass-swap transition.
     Phase 1: Bring incoming volume up with bass cut + slight MID dip.
     Phase 2: Quantized 1-bar bass swap on a downbeat (kill or trade).
@@ -302,6 +405,25 @@ def do_bass_swap(to_deck: int, duration: int = 60, bpm_after: str = "keep", glid
         remaining = float(deck_state.get("remaining_seconds", 0) or 0)
         if remaining < 30:
             return f"ABORTED: Deck {to_deck} track has only {remaining:.0f}s left -- load a fresh track first."
+
+    # Clamp `duration` to fit within the OUTGOING track's remaining audio.
+    # bass_swap floor is 20s (smaller than crossfade) because the swap
+    # itself only needs ~1 bar; the surrounding fade can be tighter. 4s
+    # margin matches crossfade + echo_out for consistency.
+    if status:
+        try:
+            out_rem = float(
+                status.get(f"deck{out_deck}", {}).get("remaining_seconds", 0) or 0
+            )
+        except Exception:
+            out_rem = 0.0
+        if out_rem > 0 and duration > out_rem - 4:
+            new_duration = max(20, int(out_rem - 4))
+            log.warning(
+                f"[BASS-SWAP] clamping duration {duration}s → {new_duration}s "
+                f"because outgoing deck{out_deck} only has {out_rem:.1f}s left"
+            )
+            duration = new_duration
 
     # Outgoing BPM → 1-bar duration (used to size the quantized swap window)
     out_bpm = 120.0
@@ -381,31 +503,14 @@ def do_bass_swap(to_deck: int, duration: int = 60, bpm_after: str = "keep", glid
 
         _time.sleep(1.0 / fps)
 
-    # Cleanup -- smooth crossfader to final position, pause + reset
-    xf_target = 0.0 if to_deck == 1 else 1.0
-    # Glide crossfader over 1s instead of snapping
-    steps = 10
-    xf_start = 0.5
-    for s in range(steps + 1):
-        xf = xf_start + (xf_target - xf_start) * (s / steps)
-        _mixxx_post("/api/crossfade", {"position": round(xf, 2)})
-        _time.sleep(0.1)
-
-    _mixxx_post("/api/pause", {"deck": out_deck})
-    _mixxx_post("/api/volume", {"deck": out_deck, "level":1.0})
-    _mixxx_post("/api/volume", {"deck": to_deck, "level":1.0})
-    for band in ["hi", "mid", "lo"]:
-        _mixxx_post("/api/eq", {"deck": out_deck, band: 1.0})
-        _mixxx_post("/api/eq", {"deck": to_deck, band: 1.0})
-
-    _apply_bpm_after(to_deck, bpm_after, glide_duration)
-
-    _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
+    # Cleanup — crossfader stays centered; outgoing already faded to ~0 by
+    # phase 3, the finish helper silences it fully via volume + pauses/ejects.
+    _finish_channel_fader(out_deck, to_deck, bpm_after, glide_duration)
 
     return f"Bass-swapped to Deck {to_deck} over {duration}s (bpm_after={bpm_after}). Deck {out_deck} ejected."
 
 
-def do_filter_sweep(to_deck: int, duration: int = 45, bpm_after: str = "keep", glide_duration: int = 60, duration_bars: int = None) -> str:
+def do_filter_sweep(to_deck: int, duration: int = 45, bpm_after: str = "anchor", glide_duration: int = 60, duration_bars: int = None) -> str:
     """Filter sweep transition -- outgoing rises into HP shimmer while incoming opens from LP.
     Best for: progressive, melodic, atmospheric tracks.
 
@@ -440,6 +545,9 @@ def do_filter_sweep(to_deck: int, duration: int = 45, bpm_after: str = "keep", g
     # Start incoming with filter closed (muffled = LP fully down), sync handles BPM
     _mixxx_post("/api/filter", {"deck": to_deck, "value": 0.0})  # fully closed (LP)
     _mixxx_post("/api/sync", {"deck": to_deck})
+    # Crossfader parked center; incoming starts silent and rides up on its fader.
+    _center_crossfader()
+    _mixxx_post("/api/volume", {"deck": to_deck, "level": 0.0})
     _mixxx_post("/api/play", {"deck": to_deck})
     _time.sleep(0.3)
 
@@ -476,28 +584,21 @@ def do_filter_sweep(to_deck: int, duration: int = 45, bpm_after: str = "keep", g
                 "value": q_val,
             })
 
-        # Crossfader follows
-        xf = t if to_deck == 2 else (1 - t)
-        _mixxx_post("/api/crossfade", {"position": xf})
+        # Level handoff on the channel faders (crossfader stays centered):
+        # incoming rides up, outgoing rides down, alongside the filter sweep.
+        _mixxx_post("/api/volume", {"deck": to_deck, "level": round(t, 3)})
+        _mixxx_post("/api/volume", {"deck": out_deck, "level": round(1.0 - t, 3)})
 
         _time.sleep(1 / fps)
 
-    # Cleanup
-    xf = 0.0 if to_deck == 1 else 1.0
-    _mixxx_post("/api/crossfade", {"position": xf})
-    _mixxx_post("/api/pause", {"deck": out_deck})
-    _mixxx_post("/api/filter", {"deck": to_deck, "value": 0.5})
-    _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5})
-    # Reset resonance to its neutral default. TODO live-validate the neutral
-    # value for parameter2 on the Mixxx filter (0 is the safe assumption).
-    _mixxx_post("/api/control", {"group": out_q_group, "key": "parameter2", "value": 0.0})
-    _apply_bpm_after(to_deck, bpm_after, glide_duration)
-    _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
+    # Cleanup — centered crossfader, volume-silenced outgoing, reset filters + Q.
+    _finish_channel_fader(out_deck, to_deck, bpm_after, glide_duration,
+                          reset_filter=True, out_q_group=out_q_group)
 
     return f"Filter-swept to Deck {to_deck} over {duration}s (bpm_after={bpm_after}). Deck {out_deck} ejected."
 
 
-def do_hard_cut(to_deck: int, bpm_after: str = "keep", glide_duration: int = 60, align: str = "downbeat") -> str:
+def do_hard_cut(to_deck: int, bpm_after: str = "anchor", glide_duration: int = 60, align: str = "downbeat") -> str:
     """Hard cut -- instant switch to the other deck. No blend, no crossfade.
     Best for: genre changes, drop moments, high energy transitions.
 
@@ -552,12 +653,13 @@ def do_hard_cut(to_deck: int, bpm_after: str = "keep", glide_duration: int = 60,
         _wait_phrase_boundary(out_deck, timeout_s=2.0, threshold=0.05)
     # align == "now" → no wait
 
+    # Instant volume swap (crossfader stays centered): incoming full, outgoing
+    # silenced. No crossfader slam — matches the channel-fader workflow.
+    _center_crossfader()
+    _mixxx_post("/api/volume", {"deck": to_deck, "level": 1.0})
     _mixxx_post("/api/play", {"deck": to_deck})
-    xf = 0.0 if to_deck == 1 else 1.0
-    _mixxx_post("/api/crossfade", {"position": xf})
-    _mixxx_post("/api/pause", {"deck": out_deck})
-    _apply_bpm_after(to_deck, bpm_after, glide_duration)
-    _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
+    _mixxx_post("/api/volume", {"deck": out_deck, "level": 0.0})
+    _finish_channel_fader(out_deck, to_deck, bpm_after, glide_duration)
 
     return f"Hard-cut to Deck {to_deck} (align={align}, bpm_after={bpm_after}). Deck {out_deck} ejected."
 
@@ -630,23 +732,22 @@ def _echo_disengage(deck: int) -> None:
     })
 
 
-def do_echo_out(to_deck: int, duration: int = 32, bpm_after: str = "keep", glide_duration: int = 60, freeze: bool = False, wait_for_incoming_drop: bool = True) -> str:
-    """Echo out -- a discrete moment, not a smooth ramp. Outgoing rides at
-    full level; in the last bar of Phase A the echo wet/dry snaps up to 0.7
-    in 4 quick steps; at Phase A→B we HARD-CUT the outgoing fader (volume 0
-    + LO-EQ kill) so the kick goes silent but the FX bus keeps ringing from
-    the echo unit's internal buffer; incoming is then brought up under the
-    tail.
+def do_echo_out(to_deck: int, duration: int = 32, bpm_after: str = "anchor", glide_duration: int = 60, freeze: bool = False, wait_for_incoming_drop: bool = True) -> str:
+    """Echo out -- a wash-blend, not a hard cut. Echo wet ramps up on the
+    outgoing during Phase A; through Phase B the outgoing fader rides DOWN
+    while the incoming fader rides UP simultaneously, with the echo wash
+    sitting on top of both. Both decks are audible together for ~65% of the
+    transition, so the seam is masked by the wash and there is no silent
+    valley between cut and rise.
 
     Best for: energy shifts, key/BPM gaps, mood changes, dramatic moments.
 
     Phase shape (over `duration` seconds, freeze=False):
-      A  0%-50%  : outgoing volume held at 1.0. First ~75% of A is dry; in
-                   the last ~25% wet snaps 0 → 0.7 in 4 discrete steps.
-      A→B boundary: HARD CUT on outgoing (volume 1.0 → 0.0 + LO-EQ → 0.0).
-                    Echo bus keeps ringing.
-      B  50%-90% : bring incoming volume 0 → 1.0 under the echo tail.
-      C  90%-100%: incoming pinned at 1.0.
+      A  0%-25%  : outgoing volume held at 1.0. Wet ramps smoothly 0 → 0.7.
+      B  25%-90% : DUAL FADE — outgoing 1.0 → 0.0 simultaneous with incoming
+                   0.0 → 1.0. Wet pinned at 0.7 throughout (echo wash sits
+                   on top of the dual-deck blend).
+      C  90%-100%: outgoing 0.0, incoming 1.0. Wet still 0.7.
       Tail        : 8 beats at outgoing BPM, clamped 2-8s. Wet ramps
                    0.7 → 0 linearly. Then disengage FX + eject outgoing.
 
@@ -691,6 +792,27 @@ def do_echo_out(to_deck: int, duration: int = 32, bpm_after: str = "keep", glide
             out_bpm = 120.0
     if out_bpm <= 0:
         out_bpm = 120.0
+
+    # Clamp `duration` to fit within the outgoing track's remaining audio.
+    # Without this, a long echo_out (e.g. 32s) on a track with only 20s
+    # left runs PAST the audio cliff: outgoing file ends mid-Phase-B while
+    # incoming is still ramping up — listener hears "one deck ended while
+    # the other is still rising". 4s safety margin lets the tail breathe
+    # without riding the cliff.
+    if status:
+        try:
+            out_remaining = float(
+                status.get(f"deck{out_deck}", {}).get("remaining_seconds", 0) or 0
+            )
+        except Exception:
+            out_remaining = 0.0
+        if out_remaining > 0 and duration > out_remaining - 4:
+            new_duration = max(10, int(out_remaining - 4))
+            log.warning(
+                f"[ECHO-OUT] clamping duration {duration}s → {new_duration}s "
+                f"because outgoing deck{out_deck} only has {out_remaining:.1f}s left"
+            )
+            duration = new_duration
 
     # Center the crossfader so both decks share the master via the FX bus.
     _mixxx_post("/api/crossfade", {"position": 0.5})
@@ -745,67 +867,46 @@ def do_echo_out(to_deck: int, duration: int = 32, bpm_after: str = "keep", glide
     fps = 10
     total = int(duration * fps)
 
-    # Phase boundaries. Phase A holds outgoing at full level until the last
-    # ~25% of A, where wet snaps up in 4 quick steps timed to the run-up of
-    # the next "downbeat". At A→B we hard-cut outgoing; the FX bus rings
-    # while the incoming track is brought up over Phase B.
-    PHASE_A_END = 0.50
+    # Phase boundaries. Phase A is short — just enough to ramp the wet up to
+    # peak. Phase B is the dual-fade overlap where both decks are audible
+    # together, with the echo wash sitting on top. No hard cut anywhere; the
+    # outgoing simply rides down as the incoming rides up.
+    PHASE_A_END = 0.25
     PHASE_B_END = 0.90
-    WET_SNAP_START = 0.75  # fraction inside Phase A where wet starts snapping
-    WET_PEAK = 0.7          # echo wet/dry at peak (real echo-out, not full freeze)
+    WET_PEAK = 0.7          # echo wet/dry during the wash blend
 
     a_end_idx = int(total * PHASE_A_END)
     b_end_idx = int(total * PHASE_B_END)
-    snap_start_idx = int(a_end_idx * WET_SNAP_START)
-    # 4 discrete snap steps across the last 25% of Phase A.
-    snap_total = max(1, a_end_idx - snap_start_idx)
-    snap_step = max(1, snap_total // 4)
     last_wet_sent = -1.0
-    hard_cut_done = False
+    blend_started = False
+
+    def _set_wet(value: float):
+        nonlocal last_wet_sent
+        if abs(value - last_wet_sent) > 1e-3:
+            _mixxx_post("/api/control", {
+                "group": "[EffectRack1_EffectUnit1]",
+                "key": "mix",
+                "value": round(value, 3),
+            })
+            last_wet_sent = value
 
     for i in range(total + 1):
         t = i / total if total else 1.0
 
         if i <= a_end_idx:
-            # Phase A: outgoing volume held at 1.0. HPF/EQ untouched (this is
-            # echo-out, not filter-fade — keep the kick punching until we
-            # hard-cut at A→B).
+            # Phase A: outgoing held at 1.0. Wet ramps smoothly 0 → 0.7.
+            # HPF/EQ untouched — the kick keeps punching while the echo
+            # builds up the wash.
             _mixxx_post("/api/volume", {"deck": out_deck, "level": 1.0})
-
-            if i < snap_start_idx:
-                # First ~75% of Phase A: dry. Wet kept at 0.
-                if last_wet_sent != 0.0:
-                    _mixxx_post("/api/control", {
-                        "group": "[EffectRack1_EffectUnit1]",
-                        "key": "mix",
-                        "value": 0.0,
-                    })
-                    last_wet_sent = 0.0
-            else:
-                # Last ~25%: 4 discrete snap steps up to WET_PEAK on the
-                # run-up to the downbeat. (We don't have true downbeat
-                # detection — we approximate "last bar before A→B" with
-                # this 4-step snap.)
-                step_idx = (i - snap_start_idx) // snap_step
-                step_idx = min(step_idx, 3)
-                wet = WET_PEAK * ((step_idx + 1) / 4.0)
-                if abs(wet - last_wet_sent) > 1e-3:
-                    _mixxx_post("/api/control", {
-                        "group": "[EffectRack1_EffectUnit1]",
-                        "key": "mix",
-                        "value": round(wet, 3),
-                    })
-                    last_wet_sent = wet
+            a = i / max(1, a_end_idx)
+            _set_wet(WET_PEAK * a)
 
         elif i <= b_end_idx:
-            # Phase B opens with a HARD CUT on outgoing: volume 0 + LO-EQ kill
-            # in a single step. The deck transport keeps playing into the FX
-            # send so the echo unit's internal buffer continues to ring out.
-            if not hard_cut_done:
-                # ── Buildup-aware delay (do_echo_out fix) ──
-                # If incoming is still in its intro/buildup, hold the echo
-                # at peak with outgoing still at full level (Phase A shape)
-                # until incoming pos >= intro_ends_at. Cap at 32s extra wait.
+            # Phase B opens (once) with the buildup-aware hold: if incoming
+            # is still in its intro, pin both decks at Phase A shape until
+            # incoming reaches its drop, capped at +32s. Wait-cap safety
+            # abort still fires if outgoing runs out during the hold.
+            if not blend_started:
                 if wait_for_incoming_drop and incoming_intro_ends is not None:
                     waited = 0.0
                     poll_interval = 0.5
@@ -825,15 +926,8 @@ def do_echo_out(to_deck: int, duration: int = 32, bpm_after: str = "keep", glide
                             f"{in_pos:.1f}s < intro_ends {incoming_intro_ends:.1f}s; "
                             f"max wait {max_wait:.0f}s"
                         )
-                        # Pin echo at peak, outgoing still at 1.0, no cut yet.
                         _mixxx_post("/api/volume", {"deck": out_deck, "level": 1.0})
-                        if abs(WET_PEAK - last_wet_sent) > 1e-3:
-                            _mixxx_post("/api/control", {
-                                "group": "[EffectRack1_EffectUnit1]",
-                                "key": "mix",
-                                "value": round(WET_PEAK, 3),
-                            })
-                            last_wet_sent = WET_PEAK
+                        _set_wet(WET_PEAK)
                         while waited < max_wait:
                             _time.sleep(poll_interval)
                             waited += poll_interval
@@ -845,12 +939,6 @@ def do_echo_out(to_deck: int, duration: int = 32, bpm_after: str = "keep", glide
                                 )
                             except Exception:
                                 in_pos = 0.0
-                            # ── Wait-cap safety abort (Patch B) ──
-                            # If outgoing track is about to end, STOP waiting.
-                            # Holding for incoming-drop while outgoing runs out
-                            # produces silence → incoming intro → kick lands
-                            # late, which is exactly the failure mode we just
-                            # heard live. Bail out, hard-cut now.
                             try:
                                 outgoing_rem = float(
                                     in_status.get(f"deck{out_deck}", {})
@@ -864,14 +952,14 @@ def do_echo_out(to_deck: int, duration: int = 32, bpm_after: str = "keep", glide
                                     f"remaining {outgoing_rem:.1f}s < 5s while "
                                     f"waiting for incoming drop "
                                     f"(in_pos {in_pos:.1f}/{incoming_intro_ends:.1f}); "
-                                    f"firing hard fader-cut now to avoid silence"
+                                    f"starting dual-fade now to avoid silence"
                                 )
                                 break
                             if in_pos >= incoming_intro_ends:
                                 log.info(
                                     f"[ECHO-OUT] incoming hit drop at "
                                     f"{in_pos:.1f}s after {waited:.1f}s wait — "
-                                    f"firing hard-cut"
+                                    f"starting dual-fade"
                                 )
                                 break
                         else:
@@ -881,37 +969,30 @@ def do_echo_out(to_deck: int, duration: int = 32, bpm_after: str = "keep", glide
                                 f"falling through to avoid hang"
                             )
 
-                _mixxx_post("/api/volume", {"deck": out_deck, "level": 0.0})
-                _mixxx_post("/api/eq", {"deck": out_deck, "lo": 0.0})
-                # Pin wet at peak so the tail rings cleanly under the blend.
-                if abs(WET_PEAK - last_wet_sent) > 1e-3:
-                    _mixxx_post("/api/control", {
-                        "group": "[EffectRack1_EffectUnit1]",
-                        "key": "mix",
-                        "value": round(WET_PEAK, 3),
-                    })
-                    last_wet_sent = WET_PEAK
-                hard_cut_done = True
+                # Pin wet at peak for the duration of the dual-fade.
+                _set_wet(WET_PEAK)
+                blend_started = True
 
-            # Bring incoming up 0 → 1.0 across Phase B.
+            # Phase B: dual fade. Both decks audible together; echo wash on
+            # top. b runs 0 → 1 across Phase B. No hard cut, no LO-EQ kill;
+            # the kicks blend naturally beneath the wet.
             b = (t - PHASE_A_END) / (PHASE_B_END - PHASE_A_END)
-            in_vol = max(0.0, min(1.0, b))
+            b = max(0.0, min(1.0, b))
+            out_vol = 1.0 - b
+            in_vol = b
+            _mixxx_post("/api/volume", {"deck": out_deck, "level": round(out_vol, 3)})
             _mixxx_post("/api/volume", {"deck": to_deck, "level": round(in_vol, 3)})
 
         else:
-            # Phase C: outgoing already silent; pin incoming at 1.0. Echo
-            # tail keeps ringing from the FX bus.
+            # Phase C: outgoing 0, incoming pinned 1.0, wet still at peak.
+            _mixxx_post("/api/volume", {"deck": out_deck, "level": 0.0})
             _mixxx_post("/api/volume", {"deck": to_deck, "level": 1.0})
+            _set_wet(WET_PEAK)
 
         _time.sleep(1.0 / fps)
 
-    # Glide crossfader to final position (1s). Echo tail still ringing.
-    xf_target = 0.0 if to_deck == 1 else 1.0
-    steps = 10
-    for s in range(steps + 1):
-        xf = 0.5 + (xf_target - 0.5) * (s / steps)
-        _mixxx_post("/api/crossfade", {"position": round(xf, 2)})
-        _time.sleep(0.1)
+    # Crossfader stays centered — outgoing is already silenced via its volume
+    # fader (set to 0 above). Echo tail still ringing through the FX send.
 
     # Pause outgoing — its audio is already at 0 but the deck transport
     # was still playing into the FX send. Tail will continue from the
@@ -950,7 +1031,7 @@ def do_echo_out(to_deck: int, duration: int = 32, bpm_after: str = "keep", glide
     return f"Echo-out to Deck {to_deck} over {duration}s (bpm_after={bpm_after}). Deck {out_deck} ejected."
 
 
-def do_riser(to_deck: int, duration: int = 32, bpm_after: str = "keep", glide_duration: int = 60, duration_bars: int = None) -> str:
+def do_riser(to_deck: int, duration: int = 32, bpm_after: str = "anchor", glide_duration: int = 60, duration_bars: int = None) -> str:
     """Riser transition (inspired by djay's "Riser") — outgoing rides into a
     high-pass + resonance "zap" build while incoming swells underneath, then
     outgoing kills and incoming opens up.
@@ -1054,26 +1135,14 @@ def do_riser(to_deck: int, duration: int = 32, bpm_after: str = "keep", glide_du
 
         _time.sleep(1.0 / fps)
 
-    # Cleanup — reset filter + resonance on outgoing, snap crossfader.
-    _mixxx_post("/api/filter", {"deck": out_deck, "value": 0.5})
-    _mixxx_post("/api/control", {"group": out_q_group, "key": "parameter2", "value": 0.0})
-    xf = 0.0 if to_deck == 1 else 1.0
-    _mixxx_post("/api/crossfade", {"position": xf})
-    _mixxx_post("/api/pause", {"deck": out_deck})
-    _mixxx_post("/api/volume", {"deck": out_deck, "level": 1.0})
-    _mixxx_post("/api/volume", {"deck": to_deck, "level": 1.0})
-    _mixxx_post("/api/filter", {"deck": to_deck, "value": 0.5})
-    for band in ["hi", "mid", "lo"]:
-        _mixxx_post("/api/eq", {"deck": out_deck, band: 1.0})
-        _mixxx_post("/api/eq", {"deck": to_deck, band: 1.0})
-
-    _apply_bpm_after(to_deck, bpm_after, glide_duration)
-    _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
+    # Cleanup — crossfader stays centered; outgoing already at 0 volume.
+    _finish_channel_fader(out_deck, to_deck, bpm_after, glide_duration,
+                          reset_filter=True, out_q_group=out_q_group)
 
     return f"Riser to Deck {to_deck} over {duration}s (bpm_after={bpm_after}). Deck {out_deck} ejected."
 
 
-def do_dissolve(to_deck: int, duration: int = 16, bpm_after: str = "keep", glide_duration: int = 60, duration_bars: int = None) -> str:
+def do_dissolve(to_deck: int, duration: int = 16, bpm_after: str = "anchor", glide_duration: int = 60, duration_bars: int = None) -> str:
     """Dissolve transition — short volume-only crossfade with neutral EQ.
     Faster than `do_transition` (60s default) but smoother than `do_hard_cut`.
 
@@ -1127,28 +1196,26 @@ def do_dissolve(to_deck: int, duration: int = 16, bpm_after: str = "keep", glide
         _mixxx_post("/api/volume", {"deck": to_deck, "level": round(t, 3)})
         _time.sleep(1.0 / fps)
 
-    # Cleanup.
-    xf = 0.0 if to_deck == 1 else 1.0
-    _mixxx_post("/api/crossfade", {"position": xf})
-    _mixxx_post("/api/pause", {"deck": out_deck})
-    _mixxx_post("/api/volume", {"deck": out_deck, "level": 1.0})
-    _mixxx_post("/api/volume", {"deck": to_deck, "level": 1.0})
-    _apply_bpm_after(to_deck, bpm_after, glide_duration)
-    _mixxx_post("/api/control", {"group": f"[Channel{out_deck}]", "key": "eject", "value": 1})
+    # Cleanup — crossfader stays centered; outgoing already at 0 volume.
+    _finish_channel_fader(out_deck, to_deck, bpm_after, glide_duration)
 
     return f"Dissolved to Deck {to_deck} over {duration}s (bpm_after={bpm_after}). Deck {out_deck} ejected."
 
 
-def schedule_transition(to_deck: int, at_position: int, technique: str = "crossfade", duration: int = 45, bpm_after: str = "keep", glide_duration: int = 60, at_section_marker: str = "") -> str:
+def schedule_transition(to_deck: int, at_position: int = 0, technique: str = "crossfade", duration: int = 45, bpm_after: str = "anchor", glide_duration: int = 60, at_section_marker: str = "") -> str:
     """Schedule a transition at a specific track position. Returns immediately --
     Python executes the transition in the background when the track reaches at_position.
 
     Call this when you've decided the right moment to transition based on
-    the track timeline (e.g., at a breakdown or outro).
+    the track timeline (e.g., at a breakdown or outro). You can pass either
+    `at_position` (seconds) OR `at_section_marker` — both are OPTIONAL. If you
+    pass neither (or 0), it defaults to the active track's analyzed mix-out
+    (the canonical outro), so a bare schedule_transition(to_deck=N) is valid.
 
     Args:
         to_deck: Deck to transition TO (1 or 2).
         at_position: Track position in seconds to START the transition.
+            OPTIONAL — defaults to the active track's mix-out if omitted.
             Server clamps to [current_position+5, duration-5-transition_duration]
             so a hallucinated or stale value can't fire past-end / in-the-past.
         technique: "crossfade" (smooth blend), "bass_swap" (EQ swap, techno), "filter_sweep" (progressive reveal), "echo_out" (fade with echo, mood shift), "hard_cut" (instant switch, genre change), "riser" (HP+resonance build then handoff), "dissolve" (short clean volume crossfade).
@@ -1274,6 +1341,24 @@ def schedule_transition(to_deck: int, at_position: int, technique: str = "crossf
         except Exception:
             # Marker resolution is advisory — silent fall-back to at_position.
             pass
+
+    # If no usable at_position was given (and no marker resolved), default to
+    # the active track's analyzed mix-out (the canonical outro), else a sensible
+    # lead from the current position. This makes a bare schedule_transition()
+    # call valid instead of erroring on a missing at_position — which was
+    # causing the agent to retry the same call repeatedly.
+    if at_position <= 0:
+        fallback = None
+        try:
+            from ..db import get_track_by_path
+            tinfo = _mixxx_get(f"/api/deck/{active_deck}/track_info") or {}
+            fp = tinfo.get("file_path", "")
+            meta = get_track_by_path(fp) if fp else None
+            if meta and meta.get("mix_out_seconds") is not None:
+                fallback = float(meta["mix_out_seconds"])
+        except Exception:
+            fallback = None
+        at_position = int(fallback if fallback is not None else (current_pos + 30))
 
     # Safety clamp — both bounds. Hallucinated or stale at_positions
     # could fire past-end (the 419-on-a-398s-track bug from 2026-04-30)

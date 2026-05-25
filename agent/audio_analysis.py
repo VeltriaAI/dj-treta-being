@@ -33,6 +33,14 @@ def analyze_audio(file_path: str) -> dict:
             "beat_count": int,
         }
     """
+    # Guard: never analyze macOS AppleDouble sidecars / dotfiles. They carry an
+    # audio extension but are 4KB metadata stubs (header 0x00000000) — librosa
+    # chokes ("Illegal Audio-MPEG-Header at offset 4092") and the track never
+    # gets BPM/key, dropping the agent into an emergency-reload loop.
+    from pathlib import Path as _Path
+    if _Path(file_path).name.startswith("."):
+        raise ValueError(f"Refusing to analyze dotfile/AppleDouble: {file_path}")
+
     # Load audio (mono, 22050 Hz default)
     y, sr = librosa.load(file_path, sr=22050, mono=True)
     duration = librosa.get_duration(y=y, sr=sr)

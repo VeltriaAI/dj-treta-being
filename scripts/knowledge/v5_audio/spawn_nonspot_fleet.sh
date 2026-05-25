@@ -8,17 +8,27 @@ RUN_ID="${1:-v5-prod-2026-04-30}"
 DATASET_VERSION="${2:-v5}"
 TOTAL_SHARDS="${3:-20}"
 IMAGE=dj-treta-v5-worker-1
-BUCKET=djtreta-music-v5-mumbai
+BUCKET="${BUCKET:-djtreta-music-v6-multi}"
 
-# Quota-aware distribution. asia-south1 quota is mostly consumed by other
-# infra (only 1 IP free). Other regions ~8 free each. 7+6+6+1 = 20.
+# 10 YouTube-unblocked regions × 2 workers each. Keeps per-region IP
+# concentration low (<3 workers) so YouTube's per-IP rate limit doesn't
+# trip. Verified 2026-05-07 via realistic 5-track probe.
+# asia-east1, asia-south2, me-west1 are YT-blocked — DO NOT USE.
 zone_for_shard() {
   local s="$1"
-  if [ "$s" -lt 7 ]; then echo "asia-east1-a"
-  elif [ "$s" -lt 13 ]; then echo "europe-west1-b"
-  elif [ "$s" -lt 19 ]; then echo "us-central1-a"
-  else echo "asia-south1-a"
-  fi
+  case $((s / 2)) in
+    0) echo "asia-south1-a" ;;
+    1) echo "asia-southeast1-a" ;;
+    2) echo "asia-southeast2-a" ;;
+    3) echo "asia-northeast1-a" ;;
+    4) echo "asia-northeast3-a" ;;
+    5) echo "asia-east2-a" ;;
+    6) echo "europe-west1-b" ;;
+    7) echo "europe-west2-a" ;;
+    8) echo "europe-west3-a" ;;
+    9) echo "europe-west4-a" ;;
+    *) echo "asia-south1-a" ;;
+  esac
 }
 
 spawn_one() {

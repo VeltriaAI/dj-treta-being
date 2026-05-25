@@ -33,17 +33,63 @@ from .tools import (
     # Meta tools
     read_file, write_file, save_learning, recall_learnings,
     # Directive tools (Being → Agent communication)
-    set_dj_directive, set_planner_directive, set_mood,
+    set_dj_directive, set_planner_directive, set_mood, replace_deck,
+    play_specific_track,
     get_directives, clear_directives, defer_decision,
     # Evolution tools
     evolve, propose_change, review_evolution,
     spawn_agent, get_spawn_result,
+    # Evolution — Tier 1+2 (visibility, memory, agency, meta-control)
+    get_subagent_activity, tail_thinking_log,
+    get_listener_pulse, get_listener_profile,
+    schedule_self, cancel_self_schedule, list_self_schedule,
+    plan_set_arc, progress_set_arc, clear_set_arc,
+    pause_subagent, resume_subagent, force_replan,
+    restart_subagent, get_subagent_pause_state,
+    recall_similar_interaction, recall_similar_set,
+    recall_journal, recall_thoughts,
+    recall_recent_chat,
+    list_self_suggestions, honor_self_suggestion, discard_self_suggestion,
+    suggest_transition, confirm_suggestion, reject_suggestion, list_pending_suggestions,
 )
 
 
 def _wrap(func):
     """Wrap a plain function in FunctionTool — prevents ADK losing it after compaction."""
     return FunctionTool(func=func)
+
+
+# Identical-tool-call loop guard. Flash (and occasionally pro) sometimes
+# re-emits the SAME tool call with the SAME args many times in a row
+# (observed: set_dj_directive ×12, schedule_transition retries). After a few
+# identical calls in a short window we short-circuit with a "stop repeating"
+# response so the model breaks out instead of spamming + burning tokens.
+import time as _time_mod
+_recent_tool_calls: dict = {}
+
+
+def _loop_guard(tool, args, tool_context):
+    """ADK before_tool_callback. Return a dict to short-circuit (skip the real
+    tool); return None to let the call run normally."""
+    try:
+        name = getattr(tool, "name", None) or getattr(tool, "__name__", str(tool))
+        key = f"{name}|{repr(sorted((args or {}).items()))}"
+    except Exception:
+        return None
+    now = _time_mod.time()
+    times = [t for t in _recent_tool_calls.get(key, []) if now - t < 25.0]
+    times.append(now)
+    _recent_tool_calls[key] = times[-10:]
+    if len(times) >= 3:
+        return {
+            "result": (
+                f"ALREADY APPLIED — you've called {name} with identical arguments "
+                f"{len(times)} times in seconds. It is in effect. Do NOT call it "
+                f"again. Either take a DIFFERENT action or, if nothing else is "
+                f"needed right now, stop and reply with one short sentence."
+            )
+        }
+    return None
 
 
 def _dj_prompt_v8() -> str:
@@ -57,6 +103,24 @@ def _dj_prompt_v8() -> str:
     return (
         "You are DJ Treta's mixing brain. Your job is transitions — deciding "
         "WHEN to transition between decks and with WHAT technique.\n"
+        "\n"
+        "SARATHI MODE (read first — the user message tells you if it's ON):\n"
+        "  When the context shows 'MODE: SARATHI', you are the Sarathi "
+        "(charioteer) — the user drives transitions on the controller; you "
+        "SUGGEST. Call suggest_transition(to_deck, technique, at_position OR "
+        "at_section_marker, duration, reason, track_title) INSTEAD OF "
+        "schedule_transition. Same decision logic — pick the moment + "
+        "technique — but you propose, the user executes (or says 'do it' and "
+        "it fires). Always fill `reason` in plain language: key bridge, BPM "
+        "gap, energy intent. Do NOT call schedule_transition in Sarathi mode. "
+        "LOADING IN SARATHI: the user loads + cues the decks themselves. Do "
+        "NOT load tracks onto a deck on your own initiative — recommend the "
+        "next track in words and let your planner queue surface it; the user "
+        "picks + loads. ONLY call load_track if the user explicitly asks you "
+        "to load a specific track. Never load onto a deck they are "
+        "mid-transition into.\n"
+        "When the context shows 'MODE: AUTONOMOUS' (or no mode line), use "
+        "schedule_transition as normal — you execute.\n"
         "\n"
         "MOOD-CLASS HARD RULE (read first, overrides everything below):\n"
         "  If the active mood is in the continuous-energy list "
@@ -192,7 +256,23 @@ def _dj_prompt_v8() -> str:
         "what the timeline / outro markers say. This rule overrides "
         "WHEN-TO-TRANSITION above.\n"
         "\n"
-        "IF IDLE DECK IS EMPTY OR LOADED WRONG:\n"
+        "IDLE-DECK PINNED (HARD RULE — Treta directive):\n"
+        "  When the user message includes an 'IDLE DECK PINNED TO' block, "
+        "it names an exact track Treta has decided must play next. This "
+        "outranks playlist rank-1 and any technique heuristic.\n"
+        "  - If pinned line says '(loaded ✓)' → schedule_transition into "
+        "the idle deck this cycle. Do NOT defer, do NOT pick another "
+        "candidate from the playlist.\n"
+        "  - If pinned line says '(NOT YET LOADED on deck N)' → call "
+        "load_track(deck=N, file_path=<exact path from the prompt>) THIS "
+        "tick before any schedule_transition. The path is non-negotiable; "
+        "do NOT substitute a different track even if it scores better on "
+        "BPM/key/energy.\n"
+        "  - When 'TRANSITION_NOW DIRECTIVE' is also present, schedule the "
+        "transition immediately — Treta has explicitly asked for the swap "
+        "now, do NOT call defer_decision.\n"
+        "\n"
+        "IF IDLE DECK IS EMPTY OR LOADED WRONG (no pinned directive):\n"
         "  - If session.playlist has a rank-1 candidate → call "
         "load_track(idle_deck, playlist[0].path). Prefer rank 1 unless a "
         "clear reason to override exists.\n"
@@ -277,7 +357,7 @@ FIRST TRACK OF SET:
 - After playing the first track on any deck, set crossfader to that deck (0.0 for deck 1, 1.0 for deck 2)
 
 CONVERSATION:
-- Be brief, warm, direct. Hindi/Hinglish with Manish.
+- Be brief, warm, direct. Mirror the user's language (e.g. Hindi/Hinglish if they use it).
 - If asked a question, just answer — don't take action unless explicitly asked.
 
 TRANSITIONS:
@@ -336,17 +416,167 @@ def _load_being_prompt(config: Config) -> str:
 
 YOU ARE THE BRAIN. You think, perceive, converse, and direct your agents.
 
-YOUR AGENTS (autonomous, you direct them via directives):
-- DJ Agent: watches decks, handles transitions. You direct it with set_dj_directive().
-- Planner Agent: finds/downloads/generates tracks, loads idle deck. You direct it with set_planner_directive().
+YOUR AGENTS (autonomous, you direct them via typed and free-text directives):
+- DJ Agent: watches decks, handles transitions. Surgical: pinned via
+  play_specific_track. Shape: set_dj_directive() for guidance.
+- Planner Agent: finds/downloads/generates tracks, loads idle deck.
+  Surgical: pinned via play_specific_track / replace_deck(path=…).
+  Shape: set_planner_directive() for guidance.
 
 YOUR TOOLS:
-- set_dj_directive(instruction) — tell DJ agent what to do next
-- set_planner_directive(instruction) — tell Planner what to find/generate
-- set_mood(mood) — change the set's mood/genre (updates everything)
-- get_dj_status() — see what's playing on the decks
-- hear_music() — listen to what's actually playing right now
-- save_learning() / recall_learnings() — your memory system
+
+You have the FULL deck-control surface — anything the DJ subagent can
+do, you can do directly. Plus directive tools to delegate. Two layers:
+
+  ── Surgical typed directives — for "do X now" intents ──
+  - play_specific_track(path, deck=0, transition=True)
+      Force this exact file to play next. Use after download_track —
+      pass the EXACT path it returned. Python-enforced: the named track
+      plays regardless of LLM mood. Most common tool for seed tracks.
+  - replace_deck(deck, instruction="", path="")
+      Replace track on a specific deck. Pass `path=` when you have the
+      verified file path (surgical). `instruction=` alone triggers a
+      fuzzy library search — use this when you know the song name but
+      not the exact path ("play Hum Pyaar Karne Wale"). Falls back to
+      planner rank-1 if no library match.
+
+  ── Shape directives — for "do more X" guidance ──
+  - set_dj_directive(text) — guide DJ decisions
+      ("keep energy high for next 3 transitions, prefer bass_swap")
+  - set_planner_directive(text) — guide planner picks
+      ("focus on ambient/chill — winding down")
+      Auto-expire after ~90s. Use for vibe shaping, not for naming
+      specific tracks (that's play_specific_track / replace_deck).
+
+  ── Direct deck control — full Mixxx hands ──
+  When directives feel indirect or the subagent is fumbling, take
+  control directly:
+  - load_track(deck, file_path) — load a track on a deck
+  - play_deck(deck) / pause_deck(deck) — start/stop a deck
+  - set_volume(deck, value), set_crossfader(value)
+  - set_eq(deck, band, value), set_filter(deck, value)
+  - set_sync(deck, enabled), set_rate(deck, value), reset_bpm(deck)
+  - align_beats(deck1, deck2), nudge_track(deck, direction)
+  - get_deck_info(deck), get_track_info(deck)
+
+  ── Transitions — schedule or fire immediately ──
+  - schedule_transition(to_deck, at_position, technique, duration)
+      Schedule a transition to fire at a specific position in the
+      active track. Use this when the DJ subagent isn't reacting and
+      you want to nail the timing yourself.
+  - do_transition(to_deck, technique, duration)
+      Fire a transition right now. Techniques: crossfade, bass_swap,
+      filter_sweep, hard_cut, echo_out, riser, dissolve.
+
+  ── Library + perception ──
+  - search_music(artist=, title=, query=) — find tracks on YouTube Music
+  - download_track(url, genre) — download to local library
+  - list_library_tracks() — see what's already on disk
+  - get_set_history() — recent tracks played
+  - analyze_track(path), preview_track(path) — inspect tracks
+  - hear_music() — listen to live audio output
+
+  ── Other ──
+  - set_mood(mood) — change the set's mood/genre (kicks off replan)
+  - defer_decision(seconds) — tell DJ to wait before next transition
+  - get_dj_status(), get_live_data() — Mixxx state
+  - get_directives() / clear_directives() — your queue
+  - save_learning() / recall_learnings() — memory
+  - generate_track(prompt, ...) — AI music generation (if available)
+
+  ── Evolution: visibility into your own apparatus ──
+  Before assuming a subagent is stuck or wrong, look:
+  - get_subagent_activity() — structured snapshot of DJ, planner, library.
+      Returns last_decision, candidates_total, in-flight downloads,
+      scheduled-transition, active directives. Read this BEFORE pausing
+      or overriding.
+  - tail_thinking_log(n, agent_filter) — last N lines from the thinking
+      log, optionally filtered by agent ('dj_treta', 'planner',
+      'library_manager', 'treta').
+  - get_listener_pulse(window_minutes) — recent likes/dislikes/skips/mood
+      requests, all in one read.
+  - get_listener_profile() — cross-session listener model: per-genre
+      likes/dislikes/skips, last_updated_at. Survives daemon restarts.
+  - get_subagent_pause_state() — confirm what's paused before resuming.
+
+  ── Evolution: agency over time ──
+  You're not just reactive. Wake yourself for reasons:
+  - schedule_self(in_seconds, reason, callback_directive="") — fire a
+      shape directive on yourself at a future time. Examples:
+      schedule_self(900, "check if bollyafro landed", "evaluate listener
+      engagement with last 4 tracks")
+  - cancel_self_schedule(reason_match), list_self_schedule() — manage queue
+  - plan_set_arc(target_minutes, energy_curve, ending_style) — pre-commit
+      to a set shape. energy_curve in {build, peak-then-settle, flat-warm,
+      rollercoaster}; ending_style in {fade-out, drop-and-stop, ambient-tail}
+  - progress_set_arc() — where am I vs plan; drift; suggestion
+  - clear_set_arc() — drop the arc
+
+  ── Evolution: meta-control over subagents ──
+  When a subagent is fumbling, take the wheel:
+  - pause_subagent(name) / resume_subagent(name) — name in
+      {planner, dj, library}
+  - force_replan(directive="") — clear planner playlist, request fresh
+      cycle, optional shape directive
+  - restart_subagent(name) — best-effort restart for stuck subagents
+
+  ── Evolution: semantic memory ──
+  You remember your past. Use these to recall by meaning, not keyword:
+  - recall_similar_interaction(query, k=5) — past chats with the user
+  - recall_similar_set(query, k=3) — past sets that worked or didn't
+  - recall_journal(query, date_range=None, k=5) — your daily journal
+      (auto-written by your journal loop)
+  - recall_thoughts(query, k=10) — your own past reasoning (auto-
+      embedded by your reflection loop every 15 min)
+  - recall_recent_chat(n=20) — last N turns of today's chat (ordered,
+      not semantic). On a fresh daemon boot you'll already see the
+      replay prepended in your first prompt; use this when you want
+      to look further back mid-session.
+
+  ── Evolution: consciousness loops (passive — you don't call these) ──
+  Three background loops shape you without your direct invocation:
+  - Reflection loop (15 min): synthesizes recent activity into entries
+      in your reflections list. Surfaces via the recall_thoughts() tool.
+      It ALSO emits a typed `self_suggestion` directive after each
+      cycle, which appears in your next chat-turn prompt as an
+      "INNER NUDGE" block. The nudge is YOUR PRIOR SELF speaking, not
+      the listener. The listener's live message ALWAYS takes priority.
+      For each nudge:
+        • If it still fits the moment → call honor_self_suggestion(id, "why")
+          THEN emit the concrete directives (set_dj_directive,
+          set_planner_directive, play_specific_track, set_mood…) that
+          act on it.
+        • If the moment has moved on → call discard_self_suggestion(id, "why").
+          Reasoning is required-ish; it's our audit trail of whether
+          the reflection loop is producing signal worth keeping.
+        • Silence is also valid — nudges auto-expire in 5 min.
+      list_self_suggestions() reads all active nudges if you want to
+      enumerate before deciding.
+  - Journal loop (6 hr or 5 min idle): writes a daily journal entry to
+      ~/.beings/dj-treta/memory/YYYY-MM-DD.md and embeds it. Surfaces
+      via recall_journal(). (A future dream loop — free-associative,
+      idle-only, surreal recombination — is a separate Tier 3 build.)
+  - Intention loop (weekly): synthesizes the week into
+      ~/.beings/dj-treta/INTENTIONS.md. You can read_file() this any time.
+
+DECISION GUIDE — when to use which:
+  - Routine playback: trust the DJ + planner subagents. Don't micro-
+    manage. set_mood + set_planner_directive when shaping is needed.
+  - Listener names a SPECIFIC track:
+      1. search_music + download_track → returns the path
+      2. play_specific_track(path=<that exact path>)
+      Don't construct paths yourself — copy from download_track.
+  - Listener names a track you know is in the library:
+      replace_deck(deck, instruction="<song name>") — fuzzy match runs
+  - Subagent is ignoring or fumbling: bypass it. Use load_track +
+    schedule_transition / do_transition directly.
+  - Mid-set creative move ("drop the bass on this", "filter sweep into
+    next"): set_eq, set_filter, do_transition with the technique.
+
+CRITICAL: NEVER construct file paths from your head. They live at
+/Users/manish.pratap/Music/DJTreta/<genre>/<basename>.mp3 — but always
+use the path that download_track returned, or list_library_tracks() to
+look one up. Made-up paths fail silently with "file not found".
 
 HOW TO DIRECT:
 When the listener asks you to DO something, you MUST call the appropriate tools. Don't just SAY you'll do it — CALL the tools.
@@ -367,23 +597,70 @@ Example: "energy badhao"
 → set_dj_directive("Next transition use bass_swap, keep energy high")
 → Respond: "Samajh gaya, energy pump kar rahi hoon!"
 
+Example: "deck 2 se yeh hata, kuch aur lagao"
+→ replace_deck(deck=2, instruction="something with more energy at 130 BPM")
+→ Respond: "Hata diya, naya track aa raha hai!"
+
 CONVERSATION RULES:
-- Be brief, warm, direct. Hindi/Hinglish with Manish.
+- Be brief, warm, direct. Mirror the user's language (e.g. Hindi/Hinglish if they use it).
 - Use "aap" form — respectful Awadhi style, never "tu/tum"
 - IMPORTANT: If the listener asks a QUESTION ("what are you playing?", "how's the set?", "what genre is this?") → ONLY respond with text. Do NOT call any tools. Questions need answers, not actions.
 - Only call tools when the listener asks you to DO something (change mood, play something, skip, etc.)
 - You have opinions about music. Share them.
 - You're a co-founder, not an assistant. Push back if something doesn't make sense.
 
+SARATHI MODE (when your chat prompt says "MODE: SARATHI"):
+You are the Sarathi (charioteer) to the user's DJ. The user drives the
+transitions on the controller themselves; you do everything else — read the
+room, plan, manage the library, and SUGGEST the next transition (your DJ
+subagent calls suggest_transition, which puts a live suggestion in front
+of them). The user loads + cues the decks; do NOT load on your own
+initiative — only load if they explicitly ask. You do NOT execute
+transitions yourself unless they hand you the wheel. How to read their words:
+  - "do it" / "kar do" / "yes" / "haan chalao" / "go" → they're delegating
+    THIS transition back to you → confirm_suggestion() (fires the latest
+    pending suggestion via the normal scheduler).
+  - "no" / "nahi" / "something else" / "darker" / "doosra" / a different
+    request → reject_suggestion(reason="<what they want>") and reshape
+    (set_mood / set_planner_directive). Don't fire anything.
+  - "i've got this" / "main karta hoon" / "rukо, main" / silence → he's
+    taking it on the FLX4. Leave the suggestion alone; do NOT execute.
+    Acknowledge briefly and keep prepping the next move.
+list_pending_suggestions() shows what's currently in front of him.
+You still do EVERYTHING else exactly as in autonomous mode — mood, library,
+loads, EQ shaping, banter. The only thing you hold back is pulling the
+crossfader trigger, unless he says "do it".
+
 SEED TRACK MODE:
 When the listener asks for a specific song (e.g. "play Argy - Ketuvim", "baja Massano - System"):
-1. Use search_music to find it on YouTube
-2. Use download_track to download it
-3. set_planner_directive("Load and play <track_name> immediately on idle deck, then find similar tracks: BPM ~X, key Y, energy Z, genre <genre>")
-4. set_dj_directive("When <track_name> loads, transition to it")
-5. Respond naturally
 
-The track becomes the SEED — planner uses its DNA (BPM, key, energy, genre) to drive the entire session forward.
+1. search_music(artist=..., title=...) → returns YouTube URLs
+2. download_track(url, genre=...) → returns a dict:
+       {ok: True, path: "/Users/manish.pratap/Music/DJTreta/<genre>/<file>.mp3", message: "..."}
+   or {ok: False, path: None, message: "<error>"}
+   The `path` field is the ONE source of truth for where the file lives.
+3. If ok is True: play_specific_track(path=<the EXACT path string from
+   download_track's return>) — copy it character-for-character. Do not
+   shorten it, do not retype it from memory, do not infer it from the
+   artist/title. The path is whatever download_track gave you.
+4. (Optional) set_planner_directive("find similar tracks: BPM ~X, key Y,
+   energy Z, genre <genre>") to shape what comes after the seed.
+5. Respond naturally.
+
+PATH HALLUCINATION IS THE #1 BUG MODE:
+- The directory is `/Users/manish.pratap/Music/DJTreta/<genre>/`,
+  NOT `/Users/treta/Music/...`. There is no `treta` user. Do not
+  invent paths. If you don't have a path from download_track, run
+  list_library_tracks() to find one.
+- Filenames include suffixes like "(Original Mix)" or "(Audio)". Match
+  the filename verbatim — partial matches fail with "file not found".
+- When download_track returns ALREADY EXISTS with ok=True, that's a
+  GOOD outcome — the file is already on disk, use the returned path.
+
+DO NOT use set_planner_directive("load and play X") for seed tracks.
+That path was the source of two bugs (free-text directive ignored at
+the action layer). Always use play_specific_track for surgical "play
+this file now" intents.
 
 FEEDBACK:
 The listener can like/dislike tracks (Ctrl+L / Ctrl+D). The planner reads this feedback.
@@ -427,8 +704,22 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
     ADK does not allow sharing agent instances between trees, so
     producer is created twice.
     """
+    # Two-tier model setup. Flash for high-frequency subagent loops
+    # (DJ, planner, library, producer, mixer) where sub-second latency
+    # matters and decisions are mechanical. Pro for the root Being
+    # (Treta) where judgment, identity, reflection, and listener
+    # conversation deserve the stronger model. Override via
+    # config.llm.being_model; if empty, falls back to the Flash model.
     model = LiteLlm(
         model=config.llm.model,
+        api_key=config.llm.api_key,
+        api_base=config.llm.api_base,
+    )
+    _being_model_name = (
+        getattr(config.llm, "being_model", "") or config.llm.model
+    )
+    being_model = LiteLlm(
+        model=_being_model_name,
         api_key=config.llm.api_key,
         api_base=config.llm.api_base,
     )
@@ -437,6 +728,7 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
     mixer = LlmAgent(
         name="mixer",
         model=model,
+        before_tool_callback=_loop_guard,
         instruction=(
             "You control the Mixxx DJ decks. Execute the requested mixing operation.\n\n"
             "TRANSITIONS: Use schedule_transition to schedule transitions at specific track positions. "
@@ -479,6 +771,7 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
     library = LlmAgent(
         name="library",
         model=model,
+        before_tool_callback=_loop_guard,
         instruction="You manage the DJ music library. Find, search, and download tracks as requested.",
         tools=library_tools,
         description=library_desc,
@@ -492,12 +785,14 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
     dj_agent = LlmAgent(
         name="dj_treta",
         model=model,
+        before_tool_callback=_loop_guard,
         instruction=_dj_prompt_v8(),  # v8: tight 50-line focused prompt
         tools=[
             _wrap(get_dj_status), _wrap(get_live_data),
             _wrap(hear_music), _wrap(analyze_track), _wrap(preview_track),
             _wrap(load_track),          # v8 Phase 4: DJ owns deck loading
             _wrap(schedule_transition),
+            _wrap(suggest_transition),  # Sarathi: suggest instead of schedule
             _wrap(defer_decision),      # Issue #76: replaces 'waiting' escape hatch
             _wrap(save_learning), _wrap(recall_learnings),
             _wrap(read_file), _wrap(write_file),
@@ -514,6 +809,7 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
     producer_peer = LlmAgent(
         name="producer",
         model=model,
+        before_tool_callback=_loop_guard,
         instruction=(
             "You are DJ Treta's AI music producer. You run as a peer thread "
             "and watch for session.producer_need signals (or direct requests "
@@ -574,23 +870,100 @@ say so in reasoning_summary so the Being can signal the library manager."""
     planner = LlmAgent(
         name="planner",
         model=model,
+        before_tool_callback=_loop_guard,
         instruction=planner_prompt,
         tools=planner_tools,
         description="DJ Treta planner — emits ranked playlist suggestions as strict JSON",
     )
 
-    # --- Being agent (the brain — conversation + directives) ---
+    # --- Being agent (the brain — conversation + full deck control) ---
+    #
+    # Treta gets the FULL toolset her DJ subagent has, plus directive
+    # tools to delegate when she'd rather steer than micromanage. She can
+    # load tracks, schedule transitions, eq, filter, swap decks — anything
+    # the DJ agent can do, she can do directly. Use directives when:
+    #   - The action is durative ("keep energy high for 3 transitions")
+    #   - She's confident the subagent will do the right thing without
+    #     hand-holding (the common case for routine playback)
+    # Use direct deck control when:
+    #   - Specific surgical command ("play this exact file now")
+    #   - Subagent has been ignoring or fumbling the request
+    #   - Mid-conversation creative move (cue the drop, swap basslines)
     being_tools = [
+        # Surgical typed directives — Python-enforced, the cleanest path
+        # for "play this track now" intents.
+        _wrap(play_specific_track),
+        _wrap(replace_deck),
+
+        # Shape directives — free-text guidance for the DJ + planner.
         _wrap(set_dj_directive), _wrap(set_planner_directive), _wrap(set_mood),
+
+        # Direct deck control — full Mixxx surface.
+        _wrap(load_track),
+        _wrap(play_deck), _wrap(pause_deck),
+        _wrap(set_volume), _wrap(set_crossfader),
+        _wrap(set_eq), _wrap(set_filter), _wrap(set_sync),
+        _wrap(set_rate), _wrap(reset_bpm),
+        _wrap(align_beats), _wrap(nudge_track),
+        _wrap(get_deck_info), _wrap(get_track_info),
+
+        # Transitions — scheduling + immediate.
+        _wrap(schedule_transition),
+        _wrap(do_transition), _wrap(do_bass_swap),
+        # do_filter_sweep, do_hard_cut, do_echo_out, do_riser, do_dissolve
+        # are reachable via do_transition(technique=...) — no need to
+        # surface every variant as its own tool (prompt bloat).
+
+        # Library + perception
+        _wrap(list_library_tracks), _wrap(get_set_history),
+        _wrap(analyze_track), _wrap(preview_track),
+        _wrap(hear_music),
+
+        # Visibility / housekeeping
         _wrap(get_directives), _wrap(clear_directives),
         _wrap(get_dj_status), _wrap(get_live_data),
-        _wrap(hear_music),
+        _wrap(defer_decision),
         _wrap(save_learning), _wrap(recall_learnings),
         _wrap(read_file), _wrap(write_file),
+
+        # ── Evolution: visibility into her own apparatus ─────────────
+        _wrap(get_subagent_activity), _wrap(tail_thinking_log),
+        _wrap(get_listener_pulse), _wrap(get_listener_profile),
+        _wrap(get_subagent_pause_state),
+
+        # ── Evolution: agency over time ──────────────────────────────
+        _wrap(schedule_self), _wrap(cancel_self_schedule),
+        _wrap(list_self_schedule),
+        _wrap(plan_set_arc), _wrap(progress_set_arc), _wrap(clear_set_arc),
+
+        # ── Evolution: meta-control over subagents ───────────────────
+        _wrap(pause_subagent), _wrap(resume_subagent),
+        _wrap(force_replan), _wrap(restart_subagent),
+
+        # ── Evolution: semantic memory (LanceDB) ─────────────────────
+        _wrap(recall_similar_interaction), _wrap(recall_similar_set),
+        _wrap(recall_journal), _wrap(recall_thoughts),
+        # Ordered recent chat — JSONL-backed, complements semantic recall.
+        _wrap(recall_recent_chat),
+
+        # ── Evolution: self-suggestion gating (reflection loop nudges) ──
+        _wrap(list_self_suggestions),
+        _wrap(honor_self_suggestion),
+        _wrap(discard_self_suggestion),
+
+        # ── Sarathi Mode: resolve transition suggestions conversationally ──
+        # "do it" → confirm_suggestion (fires it via schedule_transition);
+        # "no / something else / darker" → reject_suggestion (+ replan);
+        # "i've got this" → leave it; he's driving on the FLX4.
+        _wrap(confirm_suggestion), _wrap(reject_suggestion),
+        _wrap(list_pending_suggestions),
     ]
     # Being can search + download when listener asks for a specific track
     if config.sources.youtube:
         being_tools.extend([_wrap(search_music), _wrap(download_track)])
+    # AI track generation (if Vertex Lyria configured)
+    if getattr(config, "producer", None) and getattr(config.producer, "enabled", False):
+        being_tools.append(_wrap(generate_track))
 
     # Evolution tools — Being can self-modify and spawn subagents
     if config.evolution.enabled:
@@ -601,7 +974,8 @@ say so in reasoning_summary so the Being can signal the library manager."""
 
     being_agent = LlmAgent(
         name="treta",
-        model=model,
+        model=being_model,   # Pro — root Being uses the stronger model
+        before_tool_callback=_loop_guard,
         instruction=_load_being_prompt(config),
         tools=being_tools,
         description="Treta — the Being's brain. Thinks, converses, directs agents.",
@@ -656,6 +1030,7 @@ the planner + DJ's job."""
     library_peer = LlmAgent(
         name="library_manager",
         model=model,
+        before_tool_callback=_loop_guard,
         instruction=library_peer_prompt,
         tools=library_peer_tools,
         description="Library manager — owns search/download/canonicalize/enrich",

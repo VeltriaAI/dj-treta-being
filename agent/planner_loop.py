@@ -8,13 +8,40 @@ reads that playlist instead of running SQL filters. See REFACTOR_PLAN.md
 
 import json
 import logging
+import os
 import threading
 import time
 from pathlib import Path
+from typing import Optional
 
 import httpx
 
 log = logging.getLogger("dj-treta")
+
+
+# Hard-genre gate: when the resolved mood is in this map, candidates must
+# match at least one of the listed substrings against subgenre/genre. Keeps
+# bolly-vocal tech-house tracks from polluting a `techno` plan when they
+# happen to land inside the BPM/energy window.
+#
+# Moods NOT in this map are intentionally cross-genre (bollyafro, fusion,
+# experimental) and don't get a hard gate.
+HARD_GENRE_GATE = {
+    "techno":          ("techno",),
+    "techno-deep":     ("techno",),
+    "deep-techno":     ("techno",),
+    "melodic-techno":  ("techno", "melodic"),
+    "minimal-techno":  ("techno", "minimal"),
+    "peak-techno":     ("techno",),
+    "dark-techno":     ("techno",),
+    "psytrance":       ("psy", "trance"),
+    "psy-trance":      ("psy", "trance"),
+    "trance":          ("trance",),
+    "afro-house":      ("afro",),
+    "deep-house":      ("deep house", "house"),
+    "tech-house":      ("tech house",),
+    "drum-and-bass":   ("drum", "bass", "dnb"),
+}
 
 
 def _format_current_timeline(current_meta: dict | None) -> str:
@@ -83,6 +110,12 @@ class PlannerMixin:
         time.sleep(5)  # let heartbeat boot first
         while self._running:
             try:
+                # Meta-control: Treta can pause the planner when she
+                # wants direct control. Cycle sleeps and re-checks.
+                if getattr(self.session, "planner_paused", False):
+                    time.sleep(5)
+                    continue
+
                 from .observability import tick as _obs_tick
                 _obs_tick("planner")
                 status = _get_status(self.config.mixxx.url)
@@ -124,12 +157,23 @@ class PlannerMixin:
                     or getattr(self.session, "replan_requested", False)
                     or playlist_is_stale
                 )
+                # Sarathi: Manish drives the transitions, so the track-change
+                # replan trigger rarely fires and the Up Next queue goes stale /
+                # thin. Keep it fresh on a time cadence (and immediately when
+                # it's thin) so the Up Next panel always offers a real list of
+                # candidates for him to pick from.
+                if getattr(self.session, "sarathi_mode", False):
+                    _n = len((playlist or {}).get("tracks", []) or [])
+                    _age = time.time() - getattr(self, "_last_plan_ts", 0.0)
+                    if _n < 5 or _age > 30:
+                        needs_plan = True
                 if needs_plan and getattr(self.session, "replan_requested", False):
                     self.session.replan_requested = False
 
                 if needs_plan and not self._planner_busy:
                     self._planner_busy = True
                     self._tracks_since_plan = 0
+                    self._last_plan_ts = time.time()
                     try:
                         self._run_planner(status, current_track)
                         # BUG-7 fix (Phase A2 dry run #2 2026-04-19):
@@ -150,6 +194,87 @@ class PlannerMixin:
                 log.warning(f"Planner loop error: {type(e).__name__}: {e}")
                 log.warning(traceback.format_exc()[:500])
             time.sleep(15)  # 15s — fast enough for short generated tracks (~150s)
+
+    def _topup_playlist_local(self, validated, library, current_meta,
+                              played_paths, title_played_fn, target=8):
+        """Fill the playlist up to `target` with real local-library tracks.
+
+        Robust Up-Next floor: the LLM playlist can be thin or empty, but the
+        cockpit Up Next panel + Sarathi candidate list need a dependable list
+        of real tracks following the current energy. We pick current-genre,
+        not-yet-played tracks ranked by BPM proximity to the current track
+        (falling back to the mood BPM-range center) and append them after the
+        LLM's existing ranks.
+        """
+        tracks = validated.get("tracks") or []
+        if len(tracks) >= target:
+            return
+        have_paths = {t.get("path", "") for t in tracks}
+        have_paths.discard("")
+
+        # Anchor BPM: current track, else mood-range center.
+        cur_bpm = 0.0
+        if current_meta:
+            try:
+                cur_bpm = float(current_meta.get("bpm") or 0)
+            except Exception:
+                cur_bpm = 0.0
+        if not cur_bpm:
+            mp = getattr(self.session, "mood_profile", None) or {}
+            rng = mp.get("bpm_range") if isinstance(mp, dict) else None
+            if rng and len(rng) == 2:
+                try:
+                    cur_bpm = (float(rng[0]) + float(rng[1])) / 2.0
+                except Exception:
+                    cur_bpm = 0.0
+
+        # Restrict to the current genre folder so we don't pull off-mood tracks.
+        slug = (self.mood or "").strip().lower().replace(" ", "-")
+
+        # Pull the FULL library incl. unanalyzed tracks — most freshly
+        # downloaded tracks have no BPM/key yet, but they're real files that
+        # resolve + display fine, and we want them in the Up Next list. (The
+        # analyzed-only `library` arg the planner uses is too small here.)
+        try:
+            from .db import get_library_with_metadata as _glib
+            full_library = _glib(include_unanalyzed=True) or library
+        except Exception:
+            full_library = library
+
+        candidates = []
+        for tk in full_library:
+            p = tk.get("path", "") or ""
+            if not p or p in have_paths or p in played_paths:
+                continue
+            # DB paths are relative ("melodic-techno/foo.mp3"); accept both
+            # relative and absolute forms of the genre-folder match.
+            if slug and (f"{slug}/" not in p):
+                continue
+            if title_played_fn(tk.get("title", "")):
+                continue
+            try:
+                bpm = float(tk.get("bpm") or 0)
+            except Exception:
+                bpm = 0.0
+            score = abs(bpm - cur_bpm) if (bpm and cur_bpm) else 999.0
+            candidates.append((score, tk))
+
+        candidates.sort(key=lambda x: x[0])
+        rank = len(tracks)
+        for _score, tk in candidates:
+            if len(tracks) >= target:
+                break
+            rank += 1
+            tracks.append({
+                "rank": rank,
+                "path": tk.get("path", ""),
+                "title": tk.get("title", "") or tk.get("canonical_song", "") or "",
+                "bpm": tk.get("bpm") or 0,
+                "key_camelot": tk.get("key_camelot", "") or "",
+                "downloaded": True,
+                "source": "local-topup",
+            })
+        validated["tracks"] = tracks
 
     def _run_planner(self, status, current_track):
         """Invoke the planner agent; write its structured JSON playlist to Session.
@@ -191,15 +316,35 @@ class PlannerMixin:
             energy = current_meta.get('energy_peak') or '?'
             current_info = f"{current_track} | BPM:{bpm:.0f} Key:{key} Energy:{energy}"
 
-        # Consume transient directive / intent fields (they'll be re-set by Being
-        # on next user/agent interaction).
+        # Read shape directive (free-text) for prompt injection. We no
+        # longer clear it after one consume — shape directives have a TTL
+        # and auto-expire via session.expire_stale(), so a directive the
+        # LLM ignored on cycle N still applies on cycle N+1 until it
+        # naturally expires (~90s default) or is replaced by a new call.
+        # See plan: atomic-cuddling-manatee — fixes Bug 2 fire-once-clear.
+        try:
+            self.session.expire_stale()
+        except Exception as exc:
+            log.warning(f"directive expire_stale failed: {exc}")
         directive = self.planner_directive or ""
-        if directive:
-            log.info(f"Planner directive consumed: {directive[:80]}")
-            self.planner_directive = ""
+
+        # user_intent stays one-shot (replace_deck legacy path uses it).
         intent = self.user_intent or ""
         if intent:
             self.user_intent = ""
+
+        # Detect a replace_deck intent before the planner LLM call so we
+        # can act on it after the playlist is generated. Replace intents
+        # are JSON dicts; bare strings flow through unchanged as free-form
+        # intent text for the prompt.
+        replace_intent = None
+        if intent and intent.lstrip().startswith("{"):
+            try:
+                parsed = json.loads(intent)
+                if isinstance(parsed, dict) and parsed.get("action") == "replace_deck":
+                    replace_intent = parsed
+            except Exception:
+                pass
 
         feedback_line = ""
         try:
@@ -437,6 +582,22 @@ class PlannerMixin:
                     # Re-rank remaining so rank numbers stay 1..N
                     for i, t in enumerate(validated["tracks"]):
                         t["rank"] = i + 1
+            # Deterministic Up-Next top-up. The LLM playlist often comes back
+            # thin/empty (Flash hallucinates paths with knowledge off; the
+            # played-filter is aggressive in long sets). Guarantee a real,
+            # valid, full Up Next by topping up from the local library —
+            # current-genre, already-played excluded, ranked by BPM fit. These
+            # are real on-disk files so they always resolve in the cockpit and
+            # load cleanly. Appended AFTER the LLM's ranks, so auto-mode rank-1
+            # (the LLM's pick) is unchanged.
+            try:
+                self._topup_playlist_local(
+                    validated, library, current_meta,
+                    played_paths, _title_matches_played, target=8,
+                )
+            except Exception as exc:
+                log.warning(f"playlist local top-up failed: {exc}")
+
             # Override LLM-hallucinated planned_at with real wall-clock time.
             # Flash occasionally emits 2024-era timestamps from its training
             # corpus; downstream logic (TUI age display, stale-playlist check)
@@ -449,6 +610,12 @@ class PlannerMixin:
                 f"Planner wrote playlist: {len(validated['tracks'])} candidates, "
                 f"mood_snapshot={validated.get('mood_snapshot', '')}"
             )
+
+            # Replace-deck intent: bypass the "idle deck has fresh cued
+            # track" auto-load gate and directly eject + load the rank-1
+            # downloaded candidate from the freshly written playlist.
+            if replace_intent:
+                self._execute_replace_intent(replace_intent, validated)
             if hasattr(self, '_ws_broadcast'):
                 self._ws_broadcast("log", {
                     "text": f"Planner: {len(validated['tracks'])} candidates planned"
@@ -629,6 +796,31 @@ class PlannerMixin:
 
         self._emit_kb(f"union+dedup → {len(ktracks)} unique candidates")
 
+        # Hard genre gate. When the mood has a strict genre family
+        # (techno, psytrance, etc), drop candidates whose subgenre doesn't
+        # match — even if their BPM/energy fit. Cross-genre moods skip this.
+        gate = HARD_GENRE_GATE.get(mood_slug.lower())
+        if gate:
+            before = len(ktracks)
+            def _passes_gate(t):
+                fields = " ".join([
+                    (getattr(t, "subgenre", "") or ""),
+                    (getattr(t, "primary_genre", "") or ""),
+                    (getattr(t, "label", "") or ""),
+                ]).lower()
+                return any(g in fields for g in gate)
+            ktracks = [t for t in ktracks if _passes_gate(t)]
+            self._emit_kb(
+                f"hard genre gate ({mood_slug}, allow={list(gate)}) "
+                f"→ {len(ktracks)}/{before}"
+            )
+            if not ktracks:
+                self._emit_kb(
+                    f"genre gate emptied candidate pool — falling back to v8",
+                    level="WARN",
+                )
+                return []
+
         merged = merge_candidates_against_local(ktracks)
         n_dl = sum(1 for m in merged if getattr(m, "downloaded", False))
         self._emit_kb(f"merge_against_local → {n_dl} downloaded, {len(merged)-n_dl} need-download")
@@ -740,10 +932,44 @@ class PlannerMixin:
         OR loaded with a track that is NOT in the new playlist's top-5.
         Otherwise DJ spams load_track on every planner tick even though
         idle already has a valid candidate cued.
+
+        Typed-directive override: if there is an active `load_track`
+        directive (from play_specific_track or replace_deck(path=…))
+        targeting the idle deck and the named path differs from what's
+        currently loaded, return True regardless of playlist top-5.
+        Surgical directives must override the gate or the named track
+        never gets loaded — see plan: atomic-cuddling-manatee Bug 2.
         """
         from .main import _active_idle_decks
         _, idle_deck = _active_idle_decks(status)
         d_idle = status.get(f"deck{idle_deck}", {})
+
+        # Get the idle deck's loaded path from Mixxx (used by both the
+        # directive check and the top-5 gate below).
+        idle_path = ""
+        if d_idle.get("track_loaded"):
+            try:
+                import httpx
+                tinfo = httpx.get(
+                    f"{self.config.mixxx.url}/api/deck/{idle_deck}/track_info",
+                    timeout=2,
+                ).json()
+                idle_path = tinfo.get("file_path", "")
+            except Exception:
+                idle_path = ""
+
+        # Directive override.
+        try:
+            d_load = self.session.find_active_directive(
+                "load_track", target="planner", deck=idle_deck,
+            )
+            if d_load:
+                want = (d_load.get("payload") or {}).get("path", "")
+                if want and want != idle_path:
+                    return True
+        except Exception:
+            pass
+
         if not d_idle.get("track_loaded"):
             return True  # empty — definitely needs load
         # Idle has a track loaded. Check if it's in the current playlist's
@@ -751,16 +977,6 @@ class PlannerMixin:
         playlist = getattr(self.session, "playlist", None)
         if not playlist or not playlist.get("tracks"):
             return False  # no playlist → nothing to compare; let DJ decide
-        # Get the idle deck's loaded path from Mixxx
-        try:
-            import httpx
-            tinfo = httpx.get(
-                f"{self.config.mixxx.url}/api/deck/{idle_deck}/track_info",
-                timeout=2,
-            ).json()
-            idle_path = tinfo.get("file_path", "")
-        except Exception:
-            return False  # can't tell; don't spam signal
         if not idle_path:
             return True
         top_paths = {t.get("path", "") for t in playlist["tracks"][:5]}
@@ -786,6 +1002,75 @@ class PlannerMixin:
 
         active_deck, idle_deck = _active_idle_decks(status)
         d_idle = status.get(f"deck{idle_deck}", {})
+
+        # Typed-directive override (load_track). Honored before the
+        # "fresh cued, skip" gate because a surgical directive from
+        # Treta (e.g. play_specific_track) outranks the fresh-cued
+        # heuristic — that's the whole point of being able to say
+        # "play X now". See plan: atomic-cuddling-manatee Bug 2.
+        try:
+            d_load = self.session.find_active_directive(
+                "load_track", target="planner", deck=idle_deck,
+            )
+        except Exception:
+            d_load = None
+        if d_load:
+            want_path = (d_load.get("payload") or {}).get("path", "")
+            want_title = (d_load.get("payload") or {}).get("title", "")
+            # Resolve current idle deck path.
+            try:
+                import httpx
+                tinfo = httpx.get(
+                    f"{self.config.mixxx.url}/api/deck/{idle_deck}/track_info",
+                    timeout=2,
+                ).json()
+                current_idle_path = tinfo.get("file_path", "")
+            except Exception:
+                current_idle_path = ""
+            if want_path and want_path != current_idle_path:
+                if not os.path.exists(want_path):
+                    log.warning(
+                        f"[directive-load] path no longer on disk: {want_path!r} "
+                        f"— marking directive expired, falling through to LLM playlist"
+                    )
+                    # Drop the directive so we don't loop on a missing file.
+                    try:
+                        self.session.mark_satisfied(d_load.get("id"))
+                    except Exception:
+                        pass
+                else:
+                    log.info(
+                        f"[directive-load] deck={idle_deck} ← {want_title or want_path} "
+                        f"(directive {d_load.get('id')})"
+                    )
+                    ok = load_on_deck(self.config.mixxx.url, idle_deck, want_path)
+                    if ok:
+                        try:
+                            refresh_duration(self.config.mixxx.url, idle_deck, want_path)
+                        except Exception:
+                            pass
+                        try:
+                            self.session.mark_satisfied(d_load.get("id"))
+                        except Exception:
+                            pass
+                        if hasattr(self, "_ws_broadcast"):
+                            self._ws_broadcast(
+                                "log",
+                                {"text": f"Directive load deck {idle_deck}: {(want_title or '')[:50]}"},
+                            )
+                        return
+                    else:
+                        log.warning(
+                            f"[directive-load] load_on_deck failed for {want_path!r} "
+                            f"— falling through to LLM playlist"
+                        )
+            elif want_path and want_path == current_idle_path:
+                # Directive's track is already on idle — mark satisfied so the
+                # transition_now directive bound to it can proceed.
+                try:
+                    self.session.mark_satisfied(d_load.get("id"))
+                except Exception:
+                    pass
 
         # Skip if idle already has a fresh track (>60s remaining).
         if d_idle.get("track_loaded") and float(d_idle.get("remaining_seconds", 0) or 0) > 60:
@@ -886,6 +1171,200 @@ class PlannerMixin:
                 "log", {"text": f"Loaded deck {idle_deck}: {title_display[:50]}"}
             )
         refresh_duration(self.config.mixxx.url, idle_deck, track_path)
+
+    # ── Fuzzy library matcher (for replace_deck instruction-mode) ────
+    #
+    # Treta often calls replace_deck with a free-text instruction
+    # naming a track she wants ("play Hum Pyaar Karne Wale from
+    # Dhurandhar"). When she doesn't have a verified path, we search
+    # the local library for a basename match BEFORE falling back to
+    # the planner's rank-1 guess. Closes the gap where the file is on
+    # disk but the planner LLM ranks something else as #1.
+    #
+    # Stop-words filter common verbs Treta puts in front
+    # ("play X", "load X", "from <album>", etc.) so they don't
+    # contaminate the score.
+    _FUZZY_STOP_WORDS = frozenset({
+        "play", "load", "skip", "next", "the", "a", "an", "in", "on",
+        "of", "from", "by", "and", "feat", "ft", "with", "for", "to",
+        "now", "please", "yaar", "bro", "mix", "remix", "extended",
+        "original", "edit", "version", "audio", "video", "official",
+        "genre", "deck", "track", "song",
+    })
+
+    def _fuzzy_match_library(self, instruction: str) -> Optional[dict]:
+        """Find the local library track whose basename best matches `instruction`.
+
+        Returns a dict shaped like a playlist track (path, title, rank=0),
+        or None when no match clears the score floor. Path is RELATIVE to
+        ~/Music/DJTreta/ (consistent with the playlist `path` convention),
+        so load_on_deck resolves it via the same code path as planner picks.
+        """
+        import re
+        from pathlib import Path as _P
+
+        music_dir = _P.home() / "Music" / "DJTreta"
+        if not music_dir.exists():
+            return None
+
+        # Tokenize instruction: lowercase, alphanumeric tokens, drop
+        # short tokens (< 3 chars) and stop-words.
+        def _toks(s: str) -> set[str]:
+            words = re.findall(r"[a-z0-9]+", s.lower())
+            return {
+                w for w in words
+                if len(w) >= 3 and w not in self._FUZZY_STOP_WORDS
+            }
+
+        wanted = _toks(instruction)
+        if not wanted:
+            return None
+
+        best = None
+        best_score = 0.0
+        for mp3 in music_dir.glob("*/*.mp3"):
+            base_toks = _toks(mp3.stem)
+            if not base_toks:
+                continue
+            overlap = wanted & base_toks
+            if not overlap:
+                continue
+            # Token-set ratio: matched tokens / total unique tokens in the
+            # instruction. Bias toward filenames that cover MORE of the
+            # instruction (avoids "play Argy Tataki" matching every Argy
+            # track equally).
+            score = len(overlap) / max(len(wanted), 1)
+            # Tie-breaker: prefer shorter basenames (less noise).
+            if score > best_score or (
+                score == best_score
+                and best is not None
+                and len(mp3.stem) < len(best["title"])
+            ):
+                # Path stored as RELATIVE (genre/file.mp3) for parity
+                # with playlist['path'] convention. load_on_deck handles
+                # both relative and absolute via _resolve_track_path.
+                rel_path = str(mp3.relative_to(music_dir))
+                best = {
+                    "path": rel_path,
+                    "title": mp3.stem,
+                    "rank": 0,
+                }
+                best_score = score
+
+        # Score floor: more than 50% of instruction tokens must hit. The
+        # strict-greater rejects "play Argy - Ketuvim" → "Argy - Papito"
+        # (only the artist token matches, score=0.5). When the listener
+        # names a specific song that isn't on disk, prefer falling back
+        # to the planner's playlist rank-1 over silently substituting a
+        # different song by the same artist.
+        if best is None or best_score <= 0.50:
+            return None
+        return best
+
+    def _execute_replace_intent(self, intent: dict, playlist: dict) -> bool:
+        """Force-replace a track on a specific deck.
+
+        Triggered when the Being calls replace_deck() (which writes a
+        structured intent into session.user_intent). Bypasses the planner's
+        usual "idle deck has a fresh cued track, skip load" gate so a clear
+        user intent ("get this off deck 2") actually changes what's there.
+
+        Strategy: pick the highest-rank downloaded candidate from the
+        freshly-written playlist, eject the target deck, then load. The
+        downloaded restriction means listener feedback is immediate
+        (no 30-120s YouTube fetch wait).
+        """
+        from .playback_applier import load_on_deck, refresh_duration
+
+        deck = int(intent.get("deck", 0))
+        if deck not in (1, 2):
+            log.warning(f"replace_deck: invalid deck {deck}")
+            return False
+
+        # Path-mode: if the intent carries an explicit `path`, honour it
+        # directly without consulting the LLM playlist. This is the
+        # typed-directive path — replace_deck(deck, path=…) writes the
+        # resolved path here, no rank-1 guessing. See plan:
+        # atomic-cuddling-manatee Bug 2.
+        explicit_path = intent.get("path") or ""
+        if explicit_path:
+            if not os.path.exists(explicit_path):
+                log.warning(
+                    f"replace_deck (path mode): file not found {explicit_path!r}"
+                )
+                return False
+            pick = {
+                "path": explicit_path,
+                "title": Path(explicit_path).stem,
+                "rank": 0,
+            }
+        else:
+            # Instruction-fuzzy mode: when Treta calls replace_deck with a
+            # specific track described in `instruction` ("play Hum Pyaar
+            # Karne Wale", "One Bottle Down by Honey Singh"), search the
+            # local library for a basename match BEFORE falling back to the
+            # planner's rank-1 guess. Closes the gap where Treta knows
+            # which track she wants but doesn't have a verified path.
+            instruction = (intent.get("instruction") or "").strip()
+            pick = None
+            if instruction:
+                pick = self._fuzzy_match_library(instruction)
+                if pick:
+                    log.info(
+                        f"replace_deck (fuzzy): instruction={instruction[:60]!r} "
+                        f"→ {pick['title'][:60]!r}"
+                    )
+
+            if pick is None:
+                tracks = (playlist or {}).get("tracks") or []
+                for t in sorted(tracks, key=lambda x: x.get("rank", 99)):
+                    if t.get("downloaded") and t.get("path"):
+                        pick = t
+                        break
+            if not pick:
+                tracks_n = len((playlist or {}).get("tracks") or [])
+                log.warning(
+                    f"replace_deck: no downloaded candidate in playlist "
+                    f"(have {tracks_n} entries) and fuzzy-match found nothing "
+                    f"— skipping eject"
+                )
+                return False
+
+        track_path = pick["path"]
+        title_display = pick.get("title") or Path(track_path).stem
+
+        # Step 1: eject. Mixxx clears the deck's loaded track. Done first
+        # so even if the load fails, the wrong-track is gone (silence is
+        # better than the wrong song).
+        try:
+            httpx.post(
+                f"{self.config.mixxx.url}/api/control",
+                json={"group": f"[Channel{deck}]", "key": "eject", "value": 1},
+                timeout=3,
+            )
+        except Exception as exc:
+            log.warning(f"replace_deck: eject failed for deck {deck}: {exc}")
+
+        # Step 2: load the new pick. load_on_deck handles the /api/load
+        # POST and waits for Mixxx to confirm.
+        ok = load_on_deck(self.config.mixxx.url, deck, track_path)
+        if not ok:
+            log.warning(f"replace_deck: load_on_deck failed for {track_path!r}")
+            return False
+        try:
+            refresh_duration(self.config.mixxx.url, deck, track_path)
+        except Exception:
+            pass
+
+        log.info(
+            f"replace_deck: deck {deck} ← {title_display[:60]} "
+            f"(rank {pick.get('rank')})"
+        )
+        if hasattr(self, '_ws_broadcast'):
+            self._ws_broadcast("log", {
+                "text": f"Replaced deck {deck}: {title_display[:50]}"
+            })
+        return True
 
     def _auto_load_track(self, filepath):
         """Load a freshly generated track on the idle deck."""

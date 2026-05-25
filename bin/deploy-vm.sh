@@ -33,6 +33,10 @@ done
 : "${VM_HOST:?VM_HOST required (set in .env.deploy or pass --host)}"
 : "${VM_PATH:?VM_PATH required (set in .env.deploy or pass --path)}"
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
+# The systemd service runs the pip-INSTALLED package from this venv, NOT the
+# rsync'd source tree. VM_PATH is just the staging dir; the code only goes live
+# after `pip install` reinstalls it into VENV. (Operator-mode install, 2026-04-29.)
+VENV="${VENV:-/opt/djclaw/venv}"
 
 GIT_HEAD=$(cd "$LOCAL_REPO" && git rev-parse HEAD)
 GIT_BRANCH=$(cd "$LOCAL_REPO" && git rev-parse --abbrev-ref HEAD)
@@ -69,7 +73,19 @@ rsync -avP --delete $DRY \
 ssh -i "$SSH_KEY" "$VM_USER@$VM_HOST" \
   "echo '$GIT_BRANCH @ $GIT_HEAD ($(date -u +%Y-%m-%dT%H:%M:%SZ))' > $VM_PATH/DEPLOYED_FROM"
 
-# 3. Hot-swap restart (Mixxx + stream + hls UNTOUCHED — music keeps playing).
+# 3. Reinstall the package into the venv so the running service picks up the new
+# code. Without this the rsync'd source in VM_PATH is dead weight — the service
+# imports the pip-installed `agent` package from VENV, not VM_PATH. --no-deps
+# keeps it fast and avoids dependency churn on a live box; verify the import +
+# bail before the restart if it fails (don't restart onto broken code).
+ssh -i "$SSH_KEY" "$VM_USER@$VM_HOST" "
+  set -e
+  '$VENV/bin/pip' install --force-reinstall --no-deps '$VM_PATH' 2>&1 | tail -2
+  '$VENV/bin/python' -c 'import agent, agent.tools.transitions, agent.playback_applier' \
+    && echo 'import OK' || { echo 'IMPORT FAILED — not restarting'; exit 1; }
+"
+
+# 4. Hot-swap restart (Mixxx + stream + hls UNTOUCHED — music keeps playing).
 ssh -i "$SSH_KEY" "$VM_USER@$VM_HOST" '
   sudo systemctl restart dj-treta-agent dj-treta-mcp dj-treta-litellm
   sleep 5
