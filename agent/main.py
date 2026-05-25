@@ -45,12 +45,24 @@ from .ws_server import WSServerMixin
 from .being_heartbeat import BeingHeartbeatMixin
 from .runtime_paths import runtime_path
 
+from logging.handlers import RotatingFileHandler
+# force=True: imported libs (litellm / google-adk) configure the root logger
+# on import, which made our basicConfig a silent no-op — so INFO execution
+# logs never reached stderr and were invisible. Force our config + add a
+# rotating file handler so the FULL log is always tailable at agent.log.
+_AGENT_LOG = runtime_path("agent.log")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%H:%M:%S",
+    force=True,
+    handlers=[
+        logging.StreamHandler(),
+        RotatingFileHandler(str(_AGENT_LOG), maxBytes=5_000_000, backupCount=2),
+    ],
 )
 log = logging.getLogger("dj-treta")
+log.setLevel(logging.INFO)
 
 STATE_FILE = runtime_path("state.json")
 COMMAND_FILE = runtime_path("command.json")
@@ -626,7 +638,7 @@ class DJTretaBeing(
             self.session.mood = self.config.set.default_mood
         # If mood is set but profile hasn't resolved (e.g., mood was applied
         # before callback was registered on a prior run), kick resolver now.
-        elif self.session.mood and not (self.session.mood_profile or {}).get("canonical_slug"):
+        elif self.session.mood and not (self.session.mood_profile if isinstance(self.session.mood_profile, dict) else {}).get("canonical_slug"):
             _on_mood_change("mood", "", self.session.mood)
 
         # Phase A2: track when idle_needs_load flips True so the watchdog
