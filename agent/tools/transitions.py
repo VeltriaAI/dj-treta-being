@@ -49,6 +49,199 @@ def _bars_to_seconds(bars: int, bpm: float) -> float:
     return bars * 4 * 60.0 / bpm
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# E1 — Master Clock & Bar-Quantized Transitions
+#
+# The outgoing deck is the master clock for a transition: every blend starts on
+# its next DOWNBEAT (bar boundary), not at a raw position in seconds. We read
+# beat phase from Mixxx control objects on [ChannelN]:
+#   - `beat_distance` : 0..1 fraction of the way through the CURRENT beat
+#                       (0.0 == on the beat). Documented, stable 2.3/2.4/2.5.
+#   - `beat_active`   : 1 on the beat sample, 0 otherwise — a per-beat pulse we
+#                       edge-count to find bar (every-4th-beat) boundaries.
+#   - `bpm`           : current (rate-adjusted) tempo, from /api/status.
+# We DON'T assume the build exposes an absolute beat index, so bars are tracked
+# by counting beat_active rising edges modulo `beats_per_bar`.
+#
+# Pure math is split into helpers (`_beats_to_next_bar`, `_seconds_until_bar`)
+# so the bar-boundary logic is unit-testable without a live Mixxx.
+# ──────────────────────────────────────────────────────────────────────────
+
+_BEATS_PER_BAR = 4  # 4/4 assumed throughout (matches _bars_to_seconds)
+
+
+def _beats_to_next_bar(beats_into_bar: int, beat_distance: float,
+                       beats_per_bar: int = _BEATS_PER_BAR) -> float:
+    """Pure: fractional beats remaining until the next bar downbeat.
+
+    `beats_into_bar` is how many whole beats we are past the last downbeat
+    (0..beats_per_bar-1). `beat_distance` is 0..1 progress through the current
+    beat. Returns beats remaining to the NEXT downbeat — always in
+    (0, beats_per_bar]. When we are exactly on a downbeat (beats_into_bar==0,
+    beat_distance≈0) the next bar is a full `beats_per_bar` away.
+    """
+    beats_into_bar = int(beats_into_bar) % beats_per_bar
+    bd = min(max(float(beat_distance), 0.0), 1.0)
+    # Position within the bar, in beats: completed beats + progress through now.
+    pos = beats_into_bar + bd
+    remaining = beats_per_bar - pos
+    # If we're within a hair of the downbeat, the "next" bar is a full bar away
+    # (avoid firing a zero-length wait that lands us on the current downbeat).
+    if remaining <= 1e-6:
+        remaining = float(beats_per_bar)
+    return remaining
+
+
+def _seconds_until_bar(beats_into_bar: int, beat_distance: float, bpm: float,
+                       beats_per_bar: int = _BEATS_PER_BAR) -> float:
+    """Pure: seconds until the next bar downbeat at `bpm`."""
+    if not bpm or bpm <= 0:
+        bpm = 120.0
+    beats = _beats_to_next_bar(beats_into_bar, beat_distance, beats_per_bar)
+    return beats * 60.0 / bpm
+
+
+def _read_beat_phase(deck: int) -> dict | None:
+    """Read live beat phase for `deck`: {bpm, beat_distance, beat_active}.
+
+    Returns None if Mixxx is unreachable or the controls are missing (the
+    callers then degrade gracefully to the legacy beat-only wait).
+    """
+    group = f"[Channel{deck}]"
+    out: dict = {}
+    bd = _mixxx_get(f"/api/control?group={group}&key=beat_distance")
+    if _mixxx_failed(bd):
+        return None
+    try:
+        out["beat_distance"] = float(bd.get("value", -1) if isinstance(bd, dict) else -1)
+    except (TypeError, ValueError):
+        return None
+    ba = _mixxx_get(f"/api/control?group={group}&key=beat_active")
+    try:
+        out["beat_active"] = int(float(ba.get("value", 0))) if not _mixxx_failed(ba) else 0
+    except (TypeError, ValueError):
+        out["beat_active"] = 0
+    st = _mixxx_get("/api/status")
+    bpm = 0.0
+    if not _mixxx_failed(st) and isinstance(st, dict):
+        try:
+            bpm = float(st.get(f"deck{deck}", {}).get("bpm", 0) or 0)
+        except (TypeError, ValueError):
+            bpm = 0.0
+    out["bpm"] = bpm
+    return out
+
+
+def _ensure_quantize(deck: int) -> None:
+    """E1 invariant: turn Mixxx `quantize` ON for `deck` so cue/loop/play and
+    sync land snapped to the beatgrid. Idempotent — safe to call on every
+    transition entry (load is owned by load_track, so we re-assert here)."""
+    _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "quantize", "value": 1})
+
+
+def _wait_bar_boundary(deck: int, beats_per_bar: int = _BEATS_PER_BAR,
+                       timeout_s: float = 4.0, threshold: float = 0.05) -> bool:
+    """Block until the next BAR downbeat on `deck` (master clock), or timeout.
+
+    Counts `beat_active` rising edges to track position within the bar, then
+    returns on the beat that completes a full bar (i.e. the next downbeat).
+    The first detected beat seeds the bar-phase, so the very next bar boundary
+    is at most `beats_per_bar` beats away. Falls back to the single-beat wait
+    (`_wait_phrase_boundary`) if `beat_active` never pulses (control missing).
+
+    Returns True if a bar boundary was hit, False on timeout.
+
+    NOTE: live-validate — without an absolute beat index we can't know WHICH
+    beat of the bar we start on; we treat the first observed beat as beat 0 of
+    a bar. This still guarantees bar-LENGTH spacing between fires, which is what
+    keeps successive transitions phase-consistent. Tighter absolute-downbeat
+    alignment needs a Mixxx-side beat-in-bar control (follow-up for integrator).
+    """
+    deadline = _time_mod.monotonic() + timeout_s
+    group = f"[Channel{deck}]"
+    beats_counted = 0
+    last_active = -1
+    saw_any_beat = False
+    while _time_mod.monotonic() < deadline:
+        r = _mixxx_get(f"/api/control?group={group}&key=beat_active")
+        if not _mixxx_failed(r):
+            try:
+                v = int(float(r.get("value", 0) if isinstance(r, dict) else 0))
+            except (TypeError, ValueError):
+                v = 0
+            if v == 1 and last_active == 0:
+                saw_any_beat = True
+                beats_counted += 1
+                if beats_counted % beats_per_bar == 0:
+                    return True
+            last_active = v
+        _time_mod.sleep(0.02)
+    if not saw_any_beat:
+        # beat_active unavailable on this build — degrade to a single-beat align.
+        return _wait_phrase_boundary(deck, timeout_s=min(2.0, timeout_s), threshold=threshold)
+    log.warning(f"bar-boundary wait on deck {deck} timed out after {timeout_s}s")
+    return False
+
+
+def transition_timing_selftest(n: int = 8, deck: int = None,
+                               beats_per_bar: int = _BEATS_PER_BAR) -> str:
+    """E1 timing self-test: measure bar-boundary alignment drift over N fires.
+
+    For each of `n` iterations it waits for the next bar boundary on the
+    master (outgoing) deck and records the residual beat-phase error
+    (`beat_distance` at the moment we "fire"). Reports mean/max absolute drift
+    as a FRACTION OF A BEAT and the implied % timing error. With no live Mixxx
+    this returns a clear "unavailable" string rather than fabricating numbers.
+
+    Args:
+        n: number of simulated bar fires to sample (default 8).
+        deck: which deck is the master clock; defaults to whichever deck is
+            currently playing (per /api/status), else deck 1.
+        beats_per_bar: bar length in beats (default 4).
+    """
+    status = _mixxx_get("/api/status")
+    if _mixxx_failed(status):
+        return f"timing-selftest: Mixxx unreachable ({_mixxx_failed(status)}) — cannot measure drift."
+    if deck is None:
+        deck = 1
+        if isinstance(status, dict):
+            for d in (1, 2):
+                if status.get(f"deck{d}", {}).get("playing"):
+                    deck = d
+                    break
+    phase0 = _read_beat_phase(deck)
+    if phase0 is None:
+        return (f"timing-selftest: beat-phase controls unavailable on deck {deck} "
+                f"(beat_distance not exposed). Bar-quantize degrades to beat-only align.")
+
+    errors: list[float] = []
+    for _ in range(max(1, n)):
+        hit = _wait_bar_boundary(deck, beats_per_bar=beats_per_bar, timeout_s=4.0)
+        ph = _read_beat_phase(deck)
+        if ph is None:
+            break
+        bd = ph.get("beat_distance", 0.0)
+        # Residual: distance from the nearest beat (0 == perfect). Both ends of
+        # the 0..1 range are "on the beat" (just before / just after).
+        residual = min(bd, 1.0 - bd) if bd >= 0 else 0.0
+        errors.append(residual)
+        if not hit:
+            break
+
+    if not errors:
+        return f"timing-selftest: no bar boundaries observed on deck {deck} (deck not playing?)."
+    mean_err = sum(errors) / len(errors)
+    max_err = max(errors)
+    bpm = phase0.get("bpm") or 120.0
+    # 1 beat == (100/beats_per_bar)% of a bar; express drift vs a full beat.
+    return (
+        f"timing-selftest (deck {deck}, n={len(errors)}, bpm≈{bpm:.1f}): "
+        f"mean drift {mean_err*100:.1f}% of a beat, max {max_err*100:.1f}% — "
+        f"{'PASS (≤5% of a beat)' if max_err <= 0.05 else 'CHECK (>5% of a beat)'}. "
+        f"Bar boundaries quantized to the {beats_per_bar}-beat downbeat of the master deck."
+    )
+
+
 def _tempo_ride(deck: int, target_bpm: float = None, duration_s: float = 60.0):
     """Tempo ride — gradually adjust BPM like a real DJ.
 
@@ -293,7 +486,9 @@ def do_transition(to_deck: int, duration: int = 60, bpm_after: str = "anchor", g
     _mixxx_post("/api/play", {"deck": to_deck})
     _time.sleep(0.3)
     _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "beatsync_phase", "value": 1})
-    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "quantize", "value": 1})
+    # E1: quantize ON for BOTH decks so cue/loop/sync snap to the grid.
+    _ensure_quantize(to_deck)
+    _ensure_quantize(out_deck)
     _time.sleep(0.1)
 
     # Verify it actually started playing
@@ -305,10 +500,11 @@ def do_transition(to_deck: int, duration: int = 60, bpm_after: str = "anchor", g
         if not deck_state2.get("playing", False):
             return f"ABORTED: Deck {to_deck} failed to start playing."
 
-    # Phrase-boundary wait — start near a downbeat on outgoing deck so the
-    # crossfade lines up musically. 2s timeout: if no boundary detected we
-    # fire anyway (better to mix than to stall).
-    _wait_phrase_boundary(out_deck, timeout_s=2.0, threshold=0.05)
+    # E1: bar-quantized start — block until the next DOWNBEAT (bar boundary)
+    # on the outgoing deck (the master clock) so the crossfade begins on a
+    # musical bar, not a raw beat. Falls back to single-beat align if the
+    # build lacks beat_active; fires anyway on timeout (better to mix than stall).
+    _wait_bar_boundary(out_deck, timeout_s=4.0, threshold=0.05)
 
     # Crossfader parked center; blend on the channel faders (club-DJ style).
     _center_crossfader()
@@ -457,8 +653,10 @@ def do_bass_swap(to_deck: int, duration: int = 60, bpm_after: str = "anchor", gl
     _mixxx_post("/api/volume", {"deck": to_deck, "level": 0.0})
     _mixxx_post("/api/play", {"deck": to_deck})
 
-    # Wait for downbeat alignment before starting (small wait, won't stall fade).
-    _wait_phrase_boundary(out_deck, timeout_s=2.0, threshold=0.05)
+    # E1: quantize both decks + bar-quantized start so the swap lands on a bar.
+    _ensure_quantize(to_deck)
+    _ensure_quantize(out_deck)
+    _wait_bar_boundary(out_deck, timeout_s=4.0, threshold=0.05)
 
     swap_done = False
     mid_restored = False
@@ -551,6 +749,11 @@ def do_filter_sweep(to_deck: int, duration: int = 45, bpm_after: str = "anchor",
     _mixxx_post("/api/play", {"deck": to_deck})
     _time.sleep(0.3)
 
+    # E1: quantize both decks + bar-quantized start so the sweep opens on a bar.
+    _ensure_quantize(to_deck)
+    _ensure_quantize(out_deck)
+    _wait_bar_boundary(out_deck, timeout_s=4.0, threshold=0.05)
+
     # Outgoing resonance group — used in the last 25% to build a "scream"
     # before the handoff. TODO live-validate: parameter2 on the QuickEffect's
     # Effect1 is documented as the resonance/Q on the standard Mixxx filter
@@ -609,6 +812,8 @@ def do_hard_cut(to_deck: int, bpm_after: str = "anchor", glide_duration: int = 6
         align: When to fire the cut.
             - "downbeat" (default): wait up to 2s for outgoing beat_distance
               near 0 before cutting.
+            - "bar": E1 bar-quantized — fire on the next BAR downbeat (every
+              4th beat) of the outgoing master clock. Tightest musical cut.
             - "now": fire immediately, no wait.
             - "phrase": count 16 beats on the outgoing deck, then cut on the
               next downbeat. Uses beat_active edge transitions.
@@ -625,11 +830,15 @@ def do_hard_cut(to_deck: int, bpm_after: str = "anchor", glide_duration: int = 6
 
     # Sync BPMs first so the post-cut feel is musical, even on hard cut.
     _mixxx_post("/api/sync", {"deck": to_deck})
-    # Quantize on incoming so play landings snap to the grid.
-    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "quantize", "value": 1})
+    # E1: quantize on BOTH decks so play landings + the cut snap to the grid.
+    _ensure_quantize(to_deck)
+    _ensure_quantize(out_deck)
 
-    # Alignment: optional wait for downbeat / phrase boundary before firing.
-    if align == "phrase":
+    # Alignment: optional wait for downbeat / bar / phrase boundary before firing.
+    if align == "bar":
+        # E1: fire on the next BAR downbeat of the outgoing master clock.
+        _wait_bar_boundary(out_deck, timeout_s=4.0, threshold=0.05)
+    elif align == "phrase":
         # Count 16 beats on outgoing via beat_active edges, then wait for
         # the next downbeat. TODO live-validate: `beat_active` is the 2.4
         # docs name for the per-beat pulse. If silent, we still time out
@@ -823,6 +1032,9 @@ def do_echo_out(to_deck: int, duration: int = 32, bpm_after: str = "anchor", gli
     _mixxx_post("/api/play", {"deck": to_deck})
     _time.sleep(0.2)
     _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "beatsync_phase", "value": 1})
+    # E1: quantize both decks so the echo wash + handoff stay grid-locked.
+    _ensure_quantize(to_deck)
+    _ensure_quantize(out_deck)
 
     # Engage echo on the outgoing deck.
     _echo_engage(out_deck)
@@ -1091,8 +1303,10 @@ def do_riser(to_deck: int, duration: int = 32, bpm_after: str = "anchor", glide_
     # Center the crossfader so both decks pass through master.
     _mixxx_post("/api/crossfade", {"position": 0.5})
 
-    # Wait for downbeat alignment.
-    _wait_phrase_boundary(out_deck, timeout_s=2.0, threshold=0.05)
+    # E1: quantize both decks + bar-quantized start (riser build begins on a bar).
+    _ensure_quantize(to_deck)
+    _ensure_quantize(out_deck)
+    _wait_bar_boundary(out_deck, timeout_s=4.0, threshold=0.05)
 
     fps = 10
     total = int(duration * fps)
@@ -1185,7 +1399,10 @@ def do_dissolve(to_deck: int, duration: int = 16, bpm_after: str = "anchor", gli
     _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "beatsync_phase", "value": 1})
 
     _mixxx_post("/api/crossfade", {"position": 0.5})
-    _wait_phrase_boundary(out_deck, timeout_s=2.0, threshold=0.05)
+    # E1: quantize both decks + bar-quantized start for the dissolve.
+    _ensure_quantize(to_deck)
+    _ensure_quantize(out_deck)
+    _wait_bar_boundary(out_deck, timeout_s=4.0, threshold=0.05)
 
     # Linear volume crossfade. No EQ/filter changes.
     fps = 10
@@ -1200,6 +1417,362 @@ def do_dissolve(to_deck: int, duration: int = 16, bpm_after: str = "anchor", gli
     _finish_channel_fader(out_deck, to_deck, bpm_after, glide_duration)
 
     return f"Dissolved to Deck {to_deck} over {duration}s (bpm_after={bpm_after}). Deck {out_deck} ejected."
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# E2 — Native FX Transition Engine
+#
+# Drives Mixxx's NATIVE effects via the EXISTING /api/control endpoint. No new
+# C++ endpoints, no VST host (deferred to v11). We use EffectRack1's effect
+# units, addressed by their standard control-object group names:
+#   [EffectRack1_EffectUnitN]                 → unit-level: enabled, mix,
+#                                                group_[ChannelM]_enable
+#   [EffectRack1_EffectUnitN_EffectK]         → slot-level: enabled, metaknob,
+#                                                parameterX, loaded
+# To keep units from fighting each other we reserve:
+#   Unit 1  → Echo (already used by do_echo_out)
+#   Unit 2  → Delay throw   (do_delay_throw)
+#   Unit 3  → Reverb tail   (do_reverb_tail)
+# The EQ side-chain duck (do_sidechain_duck) is pure EQ/volume automation —
+# no effect unit needed, so it always works regardless of which effects are
+# loaded in the rack.
+#
+# Effect LOADING (which DSP sits in a slot) is the one part that varies by
+# Mixxx build. `_fx_load_effect` attempts the documented `loaded` /
+# `effect_selector` writes but treats failure as a no-op: if the named effect
+# isn't loadable via /api/control on this build, the routine still runs the
+# volume/EQ automation (so the transition completes) but the wet tail is
+# silent — a clearly observable, non-fatal degrade. See FOLLOW-UPS in the
+# module-level note for the integrator.
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def _fx_unit(n: int) -> str:
+    return f"[EffectRack1_EffectUnit{n}]"
+
+
+def _fx_load_effect(unit_n: int, slot: int, effect_id: str) -> None:
+    """Best-effort: load `effect_id` (e.g. "Echo", "Reverb") into a slot.
+
+    Tries the control-object writes documented for Mixxx 2.4
+    (`[EffectRack1_EffectUnitN_EffectK]` key `loaded` + an effect-group
+    selector). Builds differ on the exact mechanism, so any failure is a
+    silent no-op — the caller's volume/EQ automation still runs and we rely
+    on a pre-loaded effect if the load didn't take. Documented as a follow-up.
+    """
+    slot_group = f"[EffectRack1_EffectUnit{unit_n}_Effect{slot}]"
+    # Some builds expose a string control to pick the effect by id; others
+    # only allow it via the GUI / a numeric next_effect cycling control. We
+    # attempt the string write and move on regardless of the response.
+    _mixxx_post("/api/control", {"group": slot_group, "key": "loaded", "value": 1})
+    _mixxx_post("/api/control", {"group": slot_group, "key": "effect_selector",
+                                 "value": effect_id})
+    _mixxx_post("/api/control", {"group": slot_group, "key": "enabled", "value": 1})
+
+
+def _fx_engage(unit_n: int, deck: int, slot: int = 1, effect_id: str = "") -> str:
+    """Route `deck` through EffectUnit `unit_n`, mix=0 (silent insert).
+
+    Returns the unit group string for convenience. Optionally tries to load
+    `effect_id` into the slot first. Caller ramps `mix` up afterwards.
+    """
+    unit = _fx_unit(unit_n)
+    if effect_id:
+        _fx_load_effect(unit_n, slot, effect_id)
+    _mixxx_post("/api/control", {"group": unit, "key": "mix", "value": 0.0})
+    _mixxx_post("/api/control", {"group": unit, "key": "enabled", "value": 1})
+    _mixxx_post("/api/control", {"group": unit,
+                                 "key": f"group_[Channel{deck}]_enable", "value": 1})
+    _mixxx_post("/api/control", {"group": f"[EffectRack1_EffectUnit{unit_n}_Effect{slot}]",
+                                 "key": "enabled", "value": 1})
+    return unit
+
+
+def _fx_disengage(unit_n: int, deck: int) -> None:
+    """Tear down FX routing for `deck` on unit `unit_n`. Idempotent."""
+    unit = _fx_unit(unit_n)
+    _mixxx_post("/api/control", {"group": unit, "key": "mix", "value": 0.0})
+    _mixxx_post("/api/control", {"group": unit,
+                                 "key": f"group_[Channel{deck}]_enable", "value": 0})
+
+
+def _fx_set_wet(unit_n: int, value: float) -> None:
+    _mixxx_post("/api/control", {"group": _fx_unit(unit_n), "key": "mix",
+                                 "value": round(min(max(value, 0.0), 1.0), 3)})
+
+
+def do_delay_throw(to_deck: int, duration: int = 24, bpm_after: str = "anchor",
+                   glide_duration: int = 60, duration_bars: int = None,
+                   throw_beats: int = 4) -> str:
+    """E2 FX technique — DELAY THROW. A post-fader echo "throw" on the outgoing
+    deck: at the bar boundary the outgoing is cut while its last `throw_beats`
+    ring out through a wet delay tail, and the incoming opens underneath. The
+    classic acapella/vocal-tag throw — momentum carries across the seam on the
+    delay, not on a long blend.
+
+    Best for: vocal tags, breakdown exits, energy lifts where you want a
+    rhythmic echo to bridge the cut rather than a long volume fade.
+
+    Shape (bar-quantized, master clock = outgoing deck):
+      0%   : engage Delay unit on outgoing (mix=0). Wait for next bar downbeat.
+      cut  : on the downbeat — outgoing wet snaps to ~0.85, outgoing fader
+             drops to 0 over ~`throw_beats` beats (the tail keeps ringing),
+             incoming fader rides 0 → 1 simultaneously.
+      tail : wet decays 0.85 → 0 over the throw window; then disengage + eject.
+
+    Args:
+        to_deck: Deck to transition TO (1 or 2).
+        duration: Total seconds (8-48). Default 24.
+        bpm_after: "anchor" | "keep" | "reset" | target-BPM string.
+        glide_duration: Seconds for BPM glide (when bpm_after != anchor/keep).
+        duration_bars: Optional — override duration from bars at outgoing BPM.
+        throw_beats: Length of the throw tail in beats (default 4 = 1 bar).
+
+    FOLLOW-UP: relies on a Delay/Echo effect being loadable into EffectUnit2
+    via /api/control on this build; if not pre-loaded the fader automation
+    still runs but the echo tail is silent. See module note.
+    """
+    import time as _time
+
+    out_deck = 1 if to_deck == 2 else 2
+    status = _mixxx_get("/api/status")
+    if err := _mixxx_failed(status):
+        return f"ABORTED: cannot reach Mixxx: {err}"
+    if status:
+        ds = status.get(f"deck{to_deck}", {})
+        if not ds.get("track_loaded", False):
+            return f"ABORTED: Deck {to_deck} has no track loaded! Load a track first."
+        if float(ds.get("remaining_seconds", 0) or 0) < 20:
+            return f"ABORTED: Deck {to_deck} track too short -- load a fresh track first."
+
+    out_bpm = 120.0
+    if status:
+        try:
+            out_bpm = float(status.get(f"deck{out_deck}", {}).get("bpm", 120.0) or 120.0) or 120.0
+        except Exception:
+            out_bpm = 120.0
+
+    if duration_bars is not None:
+        duration = int(round(_bars_to_seconds(duration_bars, out_bpm)))
+    duration = max(8, min(48, duration))
+
+    # Start incoming silently + synced.
+    _mixxx_post("/api/volume", {"deck": to_deck, "level": 0.0})
+    _mixxx_post("/api/sync", {"deck": to_deck})
+    _mixxx_post("/api/play", {"deck": to_deck})
+    _time.sleep(0.2)
+    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "beatsync_phase", "value": 1})
+    _center_crossfader()
+    _ensure_quantize(to_deck)
+    _ensure_quantize(out_deck)
+
+    # Engage delay on the outgoing deck (Unit 2), then fire on a bar downbeat.
+    _fx_engage(2, out_deck, slot=1, effect_id="Echo")
+    _wait_bar_boundary(out_deck, timeout_s=4.0, threshold=0.05)
+
+    # Throw: snap wet up, cut outgoing fader over the throw window while the
+    # incoming rides up. Tail length = throw_beats at the outgoing tempo.
+    throw_s = max(0.5, throw_beats * 60.0 / out_bpm)
+    _fx_set_wet(2, 0.85)
+    fps = 20
+    steps = max(4, int(throw_s * fps))
+    for i in range(steps + 1):
+        t = i / steps
+        _mixxx_post("/api/volume", {"deck": out_deck, "level": round(1.0 - t, 3)})
+        _mixxx_post("/api/volume", {"deck": to_deck, "level": round(t, 3)})
+        # Wet decays across the throw so the echo rings out instead of cutting.
+        _fx_set_wet(2, 0.85 * (1.0 - t))
+        _time.sleep(1.0 / fps)
+
+    _mixxx_post("/api/volume", {"deck": to_deck, "level": 1.0})
+    _mixxx_post("/api/pause", {"deck": out_deck})
+    _fx_set_wet(2, 0.0)
+    _fx_disengage(2, out_deck)
+    _finish_channel_fader(out_deck, to_deck, bpm_after, glide_duration)
+    return (f"Delay-throw to Deck {to_deck} ({throw_beats}-beat tail, "
+            f"bpm_after={bpm_after}). Deck {out_deck} ejected.")
+
+
+def do_reverb_tail(to_deck: int, duration: int = 32, bpm_after: str = "anchor",
+                   glide_duration: int = 60, duration_bars: int = None) -> str:
+    """E2 FX technique — REVERB TAIL. The outgoing deck dissolves into a
+    swelling reverb wash while the incoming opens underneath; the outgoing is
+    then cut and its reverb tail rings out over the incoming. A smoother,
+    "ambient" cousin of the echo-out — best for melodic/atmospheric handoffs
+    and key changes where a wet space masks the seam.
+
+    Shape (bar-quantized):
+      A 0-40% : outgoing held up; reverb wet ramps 0 → 0.7. Incoming silent.
+      B 40-85%: dual fade — outgoing 1→0, incoming 0→1, wet pinned at 0.7.
+      C 85-100% + tail : outgoing paused; reverb wet decays 0.7 → 0 so the
+                tail rings out over the now-solo incoming. Then disengage+eject.
+
+    Args:
+        to_deck: Deck to transition TO (1 or 2).
+        duration: Seconds (12-48). Default 32 (~16 bars at 120 BPM).
+        bpm_after: "anchor" | "keep" | "reset" | target-BPM string.
+        glide_duration: Seconds for BPM glide.
+        duration_bars: Optional — override duration from bars at outgoing BPM.
+
+    FOLLOW-UP: relies on a Reverb effect loadable into EffectUnit3 via
+    /api/control; if not pre-loaded the fades still run but the tail is silent.
+    """
+    import time as _time
+
+    out_deck = 1 if to_deck == 2 else 2
+    status = _mixxx_get("/api/status")
+    if err := _mixxx_failed(status):
+        return f"ABORTED: cannot reach Mixxx: {err}"
+    if status:
+        ds = status.get(f"deck{to_deck}", {})
+        if not ds.get("track_loaded", False):
+            return f"ABORTED: Deck {to_deck} has no track loaded! Load a track first."
+        if float(ds.get("remaining_seconds", 0) or 0) < 20:
+            return f"ABORTED: Deck {to_deck} track too short -- load a fresh track first."
+
+    out_bpm = 120.0
+    if status:
+        try:
+            out_bpm = float(status.get(f"deck{out_deck}", {}).get("bpm", 120.0) or 120.0) or 120.0
+        except Exception:
+            out_bpm = 120.0
+    if duration_bars is not None:
+        duration = int(round(_bars_to_seconds(duration_bars, out_bpm)))
+    duration = max(12, min(48, duration))
+
+    _mixxx_post("/api/volume", {"deck": to_deck, "level": 0.0})
+    _mixxx_post("/api/sync", {"deck": to_deck})
+    _mixxx_post("/api/play", {"deck": to_deck})
+    _time.sleep(0.2)
+    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "beatsync_phase", "value": 1})
+    _center_crossfader()
+    _ensure_quantize(to_deck)
+    _ensure_quantize(out_deck)
+
+    _fx_engage(3, out_deck, slot=1, effect_id="Reverb")
+    _wait_bar_boundary(out_deck, timeout_s=4.0, threshold=0.05)
+
+    fps = 10
+    total = int(duration * fps)
+    A_END, B_END, WET_PEAK = 0.40, 0.85, 0.7
+    for i in range(total + 1):
+        t = i / total if total else 1.0
+        if t <= A_END:
+            a = t / A_END
+            _mixxx_post("/api/volume", {"deck": out_deck, "level": 1.0})
+            _fx_set_wet(3, WET_PEAK * a)
+        elif t <= B_END:
+            b = (t - A_END) / (B_END - A_END)
+            _mixxx_post("/api/volume", {"deck": out_deck, "level": round(1.0 - b, 3)})
+            _mixxx_post("/api/volume", {"deck": to_deck, "level": round(b, 3)})
+            _fx_set_wet(3, WET_PEAK)
+        else:
+            _mixxx_post("/api/volume", {"deck": out_deck, "level": 0.0})
+            _mixxx_post("/api/volume", {"deck": to_deck, "level": 1.0})
+            _fx_set_wet(3, WET_PEAK)
+        _time.sleep(1.0 / fps)
+
+    # Pause outgoing; let the reverb tail ring out (~6 beats, clamped 2-6s).
+    _mixxx_post("/api/pause", {"deck": out_deck})
+    tail_s = max(2.0, min(6.0, (60.0 / out_bpm) * 6.0))
+    tail_steps = max(6, int(tail_s * fps))
+    for s in range(tail_steps + 1):
+        _fx_set_wet(3, WET_PEAK * (1.0 - s / tail_steps))
+        _time.sleep(tail_s / tail_steps)
+
+    _fx_disengage(3, out_deck)
+    _finish_channel_fader(out_deck, to_deck, bpm_after, glide_duration)
+    return (f"Reverb-tail to Deck {to_deck} over {duration}s "
+            f"(bpm_after={bpm_after}). Deck {out_deck} ejected.")
+
+
+def do_sidechain_duck(to_deck: int, duration: int = 32, bpm_after: str = "anchor",
+                      glide_duration: int = 60, duration_bars: int = None,
+                      pump_beats: int = 1) -> str:
+    """E2 FX technique — SIDE-CHAIN-STYLE EQ DUCK. Emulates LFO-Tool-style
+    side-chain pumping without a VST: the incoming deck's volume is "ducked"
+    on every downbeat (sharp drop, smooth recover over the beat) so it appears
+    to breathe under the outgoing kick — the produced pump deadmau5 gets from a
+    side-chain compressor. As the blend progresses the duck depth eases off and
+    the incoming settles to steady. Pure volume/EQ automation — no effect unit,
+    so it works on any build.
+
+    Best for: house/techno energy lifts and layered intros where you want the
+    incoming pad/bass to pulse with the outgoing groove before taking over.
+
+    Shape (bar-quantized):
+      Both decks audible. Incoming rides 0 → 1 over the duration; ON every beat
+      its volume is ducked to (1 - depth) then recovers across the beat. `depth`
+      starts at ~0.6 and eases to 0 by the end so the pump fades into a clean
+      steady level as the outgoing drops away.
+
+    Args:
+        to_deck: Deck to transition TO (1 or 2).
+        duration: Seconds (12-48). Default 32.
+        bpm_after: "anchor" | "keep" | "reset" | target-BPM string.
+        glide_duration: Seconds for BPM glide.
+        duration_bars: Optional — override duration from bars at outgoing BPM.
+        pump_beats: Period of the pump in beats (default 1 = duck every beat).
+    """
+    import time as _time
+
+    out_deck = 1 if to_deck == 2 else 2
+    status = _mixxx_get("/api/status")
+    if err := _mixxx_failed(status):
+        return f"ABORTED: cannot reach Mixxx: {err}"
+    if status:
+        ds = status.get(f"deck{to_deck}", {})
+        if not ds.get("track_loaded", False):
+            return f"ABORTED: Deck {to_deck} has no track loaded! Load a track first."
+        if float(ds.get("remaining_seconds", 0) or 0) < 20:
+            return f"ABORTED: Deck {to_deck} track too short -- load a fresh track first."
+
+    out_bpm = 120.0
+    if status:
+        try:
+            out_bpm = float(status.get(f"deck{out_deck}", {}).get("bpm", 120.0) or 120.0) or 120.0
+        except Exception:
+            out_bpm = 120.0
+    if duration_bars is not None:
+        duration = int(round(_bars_to_seconds(duration_bars, out_bpm)))
+    duration = max(12, min(48, duration))
+    pump_beats = max(1, int(pump_beats))
+
+    _mixxx_post("/api/volume", {"deck": to_deck, "level": 0.0})
+    _mixxx_post("/api/sync", {"deck": to_deck})
+    _mixxx_post("/api/play", {"deck": to_deck})
+    _time.sleep(0.2)
+    _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "beatsync_phase", "value": 1})
+    _center_crossfader()
+    _ensure_quantize(to_deck)
+    _ensure_quantize(out_deck)
+    _wait_bar_boundary(out_deck, timeout_s=4.0, threshold=0.05)
+
+    beat_s = 60.0 / out_bpm
+    pump_period = beat_s * pump_beats
+    fps = 20
+    total = int(duration * fps)
+    elapsed = 0.0
+    for i in range(total + 1):
+        t = i / total if total else 1.0
+        base_in = t                      # incoming rises 0 → 1
+        out_vol = 1.0 - t                # outgoing rides down
+        depth = 0.6 * (1.0 - t)          # pump depth eases to 0 by the end
+        # Phase within the current pump period (0 = just ducked).
+        phase = (elapsed % pump_period) / pump_period
+        # Sharp drop on the downbeat, exponential-ish recover over the period.
+        duck = depth * (1.0 - phase) ** 2
+        in_vol = max(0.0, base_in * (1.0 - duck))
+        _mixxx_post("/api/volume", {"deck": to_deck, "level": round(in_vol, 3)})
+        _mixxx_post("/api/volume", {"deck": out_deck, "level": round(max(0.0, out_vol), 3)})
+        _time.sleep(1.0 / fps)
+        elapsed += 1.0 / fps
+
+    _mixxx_post("/api/volume", {"deck": to_deck, "level": 1.0})
+    _finish_channel_fader(out_deck, to_deck, bpm_after, glide_duration)
+    return (f"Side-chain duck to Deck {to_deck} over {duration}s "
+            f"(pump every {pump_beats} beat[s], bpm_after={bpm_after}). "
+            f"Deck {out_deck} ejected.")
 
 
 def schedule_transition(to_deck: int, at_position: int = 0, technique: str = "crossfade", duration: int = 45, bpm_after: str = "anchor", glide_duration: int = 60, at_section_marker: str = "") -> str:
@@ -1218,7 +1791,7 @@ def schedule_transition(to_deck: int, at_position: int = 0, technique: str = "cr
             OPTIONAL — defaults to the active track's mix-out if omitted.
             Server clamps to [current_position+5, duration-5-transition_duration]
             so a hallucinated or stale value can't fire past-end / in-the-past.
-        technique: "crossfade" (smooth blend), "bass_swap" (EQ swap, techno), "filter_sweep" (progressive reveal), "echo_out" (fade with echo, mood shift), "hard_cut" (instant switch, genre change), "riser" (HP+resonance build then handoff), "dissolve" (short clean volume crossfade).
+        technique: "crossfade" (smooth blend), "bass_swap" (EQ swap, techno), "filter_sweep" (progressive reveal), "echo_out" (fade with echo, mood shift), "hard_cut" (instant switch, genre change), "riser" (HP+resonance build then handoff), "dissolve" (short clean volume crossfade), "delay_throw" (E2 — post-fader echo throw on the cut, vocal tags/lifts), "reverb_tail" (E2 — ambient reverb wash + ring-out, melodic/key changes), "sidechain_duck" (E2 — side-chain-style pump on the incoming, house/techno lifts).
         duration: Transition duration in seconds (10-90). Ignored for hard_cut.
         bpm_after: What to do with BPM after the transition completes. "keep" = leave synced BPM (default, best when ±5 BPM), "reset" = glide back to native file BPM, or a number like "126.0" = glide to that specific BPM.
         glide_duration: Seconds for the BPM change when bpm_after is "reset" or a target BPM (5-60, default 10). Ignored when bpm_after="keep".

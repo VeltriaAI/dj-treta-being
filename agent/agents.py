@@ -22,6 +22,8 @@ from .tools import (
     set_volume, set_crossfader, set_eq, set_filter, set_sync,
     get_live_data, get_track_info, do_transition, do_bass_swap,
     set_rate, reset_bpm, align_beats, nudge_track,
+    # --- E2 FX techniques + E1 timing self-test (integrator: merge with above) ---
+    do_delay_throw, do_reverb_tail, do_sidechain_duck, transition_timing_selftest,
     # Library tools
     list_library_tracks, search_music, download_track, get_set_history,
     # Perception tools
@@ -913,6 +915,12 @@ say so in reasoning_summary so the Being can signal the library manager."""
         # do_filter_sweep, do_hard_cut, do_echo_out, do_riser, do_dissolve
         # are reachable via do_transition(technique=...) — no need to
         # surface every variant as its own tool (prompt bloat).
+        # --- E2 FX techniques (integrator: keep additive) ---
+        # New native-FX transitions + the E1 timing self-test. These ARE
+        # surfaced directly: they take extra FX params (throw_beats, pump_beats)
+        # and the self-test is an explicit diagnostic the agent can run.
+        _wrap(do_delay_throw), _wrap(do_reverb_tail), _wrap(do_sidechain_duck),
+        _wrap(transition_timing_selftest),
 
         # Library + perception
         _wrap(list_library_tracks), _wrap(get_set_history),

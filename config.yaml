@@ -29,6 +29,17 @@ transitions:
   lookahead_seconds: 120
   default_duration: 60
   fps: 20
+  # --- E1/E2 (integrator: merge into transitions config; not yet read by code,
+  # documents the intended knobs so the executor/loader can wire them) ---
+  # E1 master clock / bar-quantize:
+  beats_per_bar: 4          # 4/4 assumed; bar = downbeat every 4 beats
+  bar_quantize: true        # start blends on the outgoing deck's next downbeat
+  quantize_on_load: true    # assert Mixxx [ChannelN] quantize=1 (cue/loop snap)
+  bar_wait_timeout_s: 4.0   # max wait for a bar boundary before firing anyway
+  # E2 native-FX effect-unit assignments (EffectRack1):
+  fx_unit_echo: 1           # do_echo_out  (pre-loaded Echo expected in Unit1)
+  fx_unit_delay: 2          # do_delay_throw (Delay/Echo in Unit2)
+  fx_unit_reverb: 3         # do_reverb_tail (Reverb in Unit3)
 
 daemon:
   heartbeat_interval_seconds: 30.0

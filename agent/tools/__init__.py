@@ -55,6 +55,12 @@ from .transitions import (
     do_echo_out,
     do_riser,
     do_dissolve,
+    # E2 FX techniques
+    do_delay_throw,
+    do_reverb_tail,
+    do_sidechain_duck,
+    # E1 timing self-test
+    transition_timing_selftest,
     schedule_transition,
 )
 
@@ -167,6 +173,9 @@ from ..memory import (
 # the semantic-recall tools above.
 from ..chat_persistence import recall_recent_chat
 
+# --- E4: State Sequencing & Set Archive ---
+from .state_set import get_set_archive, replay_set as replay_set_archive
+
 __all__ = [
     # helpers
     "_SELF_DIR", "_music_dir", "_roots", "_is_under_allowed_roots",
@@ -179,7 +188,9 @@ __all__ = [
     "align_beats", "nudge_track",
     # transitions
     "do_transition", "do_bass_swap", "do_filter_sweep", "do_hard_cut",
-    "do_echo_out", "do_riser", "do_dissolve", "schedule_transition",
+    "do_echo_out", "do_riser", "do_dissolve",
+    "do_delay_throw", "do_reverb_tail", "do_sidechain_duck",
+    "transition_timing_selftest", "schedule_transition",
     # perception
     "hear_music", "analyze_track", "preview_track",
     # discovery
