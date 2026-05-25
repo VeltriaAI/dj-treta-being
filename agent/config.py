@@ -144,6 +144,40 @@ class EvolutionConfig:
     require_tests: bool = True
 
 
+# --- E6 Visuals ---
+
+@dataclass
+class VisualsOSCConfig:
+    """OSC target for visual apps (TouchDesigner / Max / resolume / p5.js)."""
+    host: str = "127.0.0.1"
+    port: int = 7000
+
+
+@dataclass
+class VisualsOmniConfig:
+    """Gemini Omni reactive video generation.
+
+    Leave model="" to auto-try candidates (gemini-omni-flash → flash → 1.5-flash).
+    Set enabled=true ONLY after confirming model access via your LiteLLM gateway.
+    See agent/visuals/omni.py for full setup instructions.
+    """
+    enabled: bool = False
+    model: str = ""
+
+
+@dataclass
+class VisualsConfig:
+    """E6 — Generative Visual Layer.
+
+    Master switch: enabled=false by default.  Never flip on the live VM
+    until v10 integration is stable and tested locally first.
+    """
+    enabled: bool = False
+    omni_interval_seconds: float = 30.0   # min gap between Omni calls (s)
+    osc: VisualsOSCConfig = field(default_factory=VisualsOSCConfig)
+    omni: VisualsOmniConfig = field(default_factory=VisualsOmniConfig)
+
+
 @dataclass
 class Config:
     mixxx: MixxxConfig = field(default_factory=MixxxConfig)
@@ -161,6 +195,8 @@ class Config:
     sources: SourcesConfig = field(default_factory=SourcesConfig)
     knowledge: KnowledgeConfig = field(default_factory=KnowledgeConfig)
     evolution: EvolutionConfig = field(default_factory=EvolutionConfig)
+    # --- E6 Visuals ---
+    visuals: VisualsConfig = field(default_factory=VisualsConfig)
 
 
 def _pick_fields(d: dict, cls: type) -> dict:
@@ -337,6 +373,15 @@ def load_config(path: str | Path | None = None) -> Config:
         cfg.knowledge = KnowledgeConfig(**_pick_fields(raw["knowledge"], KnowledgeConfig))
     if "evolution" in raw:
         cfg.evolution = EvolutionConfig(**_pick_fields(raw["evolution"], EvolutionConfig))
+    # --- E6 Visuals ---
+    if "visuals" in raw:
+        vraw = raw["visuals"]
+        vc = VisualsConfig(**_pick_fields(vraw, VisualsConfig))
+        if "osc" in vraw and isinstance(vraw["osc"], dict):
+            vc.osc = VisualsOSCConfig(**_pick_fields(vraw["osc"], VisualsOSCConfig))
+        if "omni" in vraw and isinstance(vraw["omni"], dict):
+            vc.omni = VisualsOmniConfig(**_pick_fields(vraw["omni"], VisualsOmniConfig))
+        cfg.visuals = vc
 
     # Env-var overrides — keep secrets and machine-specific values out of code.
     env_key = os.environ.get("DJTRETA_LLM_API_KEY") or os.environ.get("LLM_API_KEY")
