@@ -24,14 +24,14 @@ class MixxxConfig:
 
 @dataclass
 class LLMConfig:
-    model: str = "openai/gemini-3-flash"
+    model: str = "openai/gemini-3.5-flash"
     # The root Being (Treta) uses a stronger model than the high-frequency
     # subagent loops. Pro for judgment / identity / reflection /
     # conversation. Flash for mechanical sub-second loops (DJ, planner,
     # library, producer, mixer). Cost is fine because Treta fires only
     # on listener chat + scheduled wakes, while subagents tick every
     # 5–30s. Set to empty string to fall back to `model` for everyone.
-    being_model: str = "openai/gemini-3.1-pro"
+    being_model: str = "openai/gemini-3.5-flash"
     api_base: str = "http://localhost:4000"
     api_key: str = ""
     temperature: float = 0.7
