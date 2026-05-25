@@ -149,21 +149,34 @@ def _apply_bpm_after(deck: int, bpm_after: str = "anchor", glide_duration: int =
     the deck has actually drifted. The ride runs after the crossfade completes
     (deck already audible solo), so blocking here is fine.
 
-    bpm_after="anchor" → (default) just release sync, leave the rate as-is.
-                         (Tempo-riding after a transition was disabled 2026-05-23:
-                         it produced audible gradual speed changes and fought
-                         tracks with mis-detected beatgrids — observed an 89-BPM-
-                         tagged track ridden toward 125. Cross-track drift, if it
-                         recurs, is better fixed by resetting rate to native at
-                         LOAD time, not by gliding a live deck.)
-    bpm_after="keep"   → disable sync, leave rate untouched (same as anchor now)
+    bpm_after="anchor" → (default) release sync and SNAP the surviving deck back
+                         to its native tempo (rate_ratio=1.0) instantly. During a
+                         blend the incoming deck is sync-stretched to beatmatch the
+                         outgoing; releasing sync alone LEAVES that stretch, so a
+                         wide-BPM-gap mix strands the deck running fast/slow for the
+                         rest of the track (observed live: a 149-BPM track left at
+                         128 = -14%, and a 128 left at 142 = +11%). The outgoing deck
+                         is already paused+silent when this runs (see
+                         _finish_channel_fader), so the snap is inaudible as a
+                         beat-slip — it just returns the now-solo track to its true
+                         speed. This is an INSTANT snap, NOT a glide: the old
+                         tempo-RIDE (disabled 2026-05-23) caused audible gradual
+                         creep and fought mis-detected beatgrids. A single snap at
+                         the transition boundary reads as "new track, its own tempo".
+    bpm_after="keep"   → disable sync, leave rate exactly as the blend left it
+                         (explicit opt-out of the native snap — for close-BPM mixes
+                         where holding the matched tempo is desired).
     bpm_after="reset"  → tempo ride back to native file BPM (explicit only)
     bpm_after="126.5"  → tempo ride to a specific BPM (explicit agent decision)
     """
     _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "sync_enabled", "value": 0})
 
-    if bpm_after in ("keep", "anchor"):
-        # Release sync (done above); do NOT tempo-ride the live deck.
+    if bpm_after == "anchor":
+        # Release sync (done above) + snap to native so no synced stretch survives.
+        _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "rate_ratio", "value": 1.0})
+        return
+    elif bpm_after == "keep":
+        # Release sync only; caller explicitly wants the matched tempo held.
         return
     elif bpm_after == "reset":
         _tempo_ride(deck, target_bpm=None, duration_s=max(30, min(120, glide_duration)))
