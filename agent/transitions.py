@@ -146,5 +146,9 @@ class TransitionMixin:
             # ~90s idle-empty window. This removes the race entirely.
             if hasattr(self, "session"):
                 self.session.idle_needs_load = True
+                # v10: stamp completion so P4 (proactive mix) holds off for
+                # min_play_time_seconds — let the new track breathe instead of
+                # being mixed out instantly (kills back-to-back churn).
+                self.session.last_transition_at = time.time()
             runtime_path("scheduled-transition.json").unlink(missing_ok=True)
             runtime_path("transition-pending.lock").unlink(missing_ok=True)

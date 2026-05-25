@@ -471,6 +471,19 @@ class HeartbeatMixin:
             log.debug(
                 f"P4 DJ invoke skipped — idle deck {idle_deck} owned by {owner}"
             )
+        elif (time.time() - getattr(self.session, "last_transition_at", 0.0)
+                < self.config.planner.min_play_time_seconds):
+            # v10 anti-churn: just transitioned — let the fresh track BREATHE
+            # for min_play_time_seconds before proactively mixing again. This
+            # is the cooldown that was missing (min_play_time_seconds was dead
+            # config). End-of-track rescue (P2) is a higher priority and is
+            # NOT gated, so a short track still mixes out safely; and right
+            # after a transition the new track has its full length ahead, so
+            # the cooldown always releases well before its mix_out.
+            _cd_left = self.config.planner.min_play_time_seconds - (
+                time.time() - getattr(self.session, "last_transition_at", 0.0))
+            log.debug(f"P4 DJ invoke skipped — post-transition cooldown "
+                      f"({_cd_left:.0f}s left, letting the groove ride)")
         elif (transition_window
                 and not self._agent_busy and not self._transition_pending
                 and not sched_file_exists):
