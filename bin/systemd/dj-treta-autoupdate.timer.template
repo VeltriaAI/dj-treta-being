@@ -1,0 +1,10 @@
+[Unit]
+Description=Poll for new DJ Treta releases and deploy them (every 5 min)
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
