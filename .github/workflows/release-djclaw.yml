@@ -47,6 +47,20 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install build
 
+      - name: Sync package version to the release tag
+        run: |
+          # Artifacts MUST be named/versioned to match the tag, or the VM
+          # auto-updater (compares installed version vs latest tag, downloads
+          # djclaw-<version>.tar.gz) can neither detect nor find them.
+          # Historically version was hand-set in pyproject.toml and never
+          # bumped, so every release shipped 9.1.2 artifacts regardless of tag.
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VER="${TAG#v}"
+          echo "$VER" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+([-.].+)?$' \
+            || { echo "tag '$TAG' is not valid semver" >&2; exit 1; }
+          sed -i -E "s/^version = \".*\"/version = \"$VER\"/" pyproject.toml
+          echo "built version:"; grep -E '^version = ' pyproject.toml
+
       - name: Build sdist + wheel
         run: |
           python -m build
