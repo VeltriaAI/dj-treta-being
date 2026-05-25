@@ -115,5 +115,26 @@ evolution:
   reflect_every_n_tracks: 5
   auto_evolve: false
   max_evolve_per_day: 2
+
+# --- E6 Visuals ---
+# Generative Visual Layer — drives live reactive visuals from Treta's audio.
+# Everything here is disabled by default; flip enabled: true ONLY on a local
+# dev machine (never on the live VM until v10 integration is stable).
+#
+# OSC parity: same /treta/* address schema as deadmau5's TouchDesigner hook,
+# so any OSC visual app (TD, Max/MSP, resolume, p5.js bridge) can react.
+#
+# Omni: prototype Gemini Omni reactive video generation.  Requires the model
+# to be reachable via your LiteLLM gateway.  Set omni.enabled: true only
+# after confirming model access (see agent/visuals/omni.py for setup steps).
+visuals:
+  enabled: false                   # master guard — never let this affect the live set
+  omni_interval_seconds: 30.0      # minimum gap between Omni generation calls (s)
+  osc:
+    host: "127.0.0.1"             # OSC target host (change to TD machine IP for networked setup)
+    port: 7000                    # OSC target port (match your TouchDesigner / visual app)
+  omni:
+    enabled: false                 # flip true once you've confirmed Gemini Omni model access
+    model: ""                      # leave empty to try candidates: gemini-omni-flash → flash → 1.5-flash
   max_budget_per_evolve_usd: 0.50
   require_tests: true

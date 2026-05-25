@@ -988,6 +988,18 @@ say so in reasoning_summary so the Being can signal the library manager."""
             _wrap(spawn_agent), _wrap(get_spawn_result),
         ])
 
+    # --- E6 Visuals ---
+    # Add visual status + palette-override tools when the visual layer is enabled.
+    # The VisualEngine singleton is registered separately (in main.py / daemon)
+    # via agent.visuals.engine.register_engine(engine) after construction.
+    # These tools are safe to call even when disabled — they return {"enabled": False}.
+    if getattr(getattr(config, "visuals", None), "enabled", False):
+        from .visuals.engine import get_visual_status, set_visual_palette
+        being_tools.extend([
+            _wrap(get_visual_status),
+            _wrap(set_visual_palette),
+        ])
+
     being_agent = LlmAgent(
         name="treta",
         model=being_model,   # Pro — root Being uses the stronger model
