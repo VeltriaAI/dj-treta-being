@@ -399,6 +399,14 @@ class DJTretaBeing(
         self.session.mood = value or ""
 
     @property
+    def mood_profile(self):
+        return self.session.mood_profile
+
+    @mood_profile.setter
+    def mood_profile(self, value):
+        self.session.mood_profile = value
+
+    @property
     def tracks_played(self) -> list:
         return self.session.tracks_played
 
