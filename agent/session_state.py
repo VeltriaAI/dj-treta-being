@@ -181,7 +181,7 @@ _FIELD_DEFAULTS: dict[str, Any] = {
     #     directive) instead of schedule_transition
     #   - heartbeat P2 emergency safety net tightens to remaining<12s
     #   - heartbeat P4 skips while manish_in_motion
-    "sarathi_mode": True,
+    "sarathi_mode": False,  # default AUTONOMOUS — she DJs herself on boot
     # True while Manish is physically working a transition on the FLX4
     # (detected via crossfader/deck deltas). Suppresses P4 + new
     # suggestions so Treta stays quiet during his mix. Auto-clears at

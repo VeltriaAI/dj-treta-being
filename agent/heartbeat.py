@@ -332,28 +332,25 @@ class HeartbeatMixin:
         self._silence_since = None
         self._music_has_played = True
 
-        # Crossfader-strand guard (autonomous only — in Sarathi, Manish owns
-        # the crossfader). If exactly one deck is playing but the crossfader is
-        # parked full to the OTHER (silent) deck, the playing deck is muted →
-        # listeners hear silence while nothing_playing stays False, so the P1
-        # net above never fires. Re-center. Root cause: an interrupted blend
-        # (e.g. an agent restart mid-transition) leaves the fader stranded.
-        # (Crossfader maps -1=full deck1 .. +1=full deck2; 0.5 API pos = center.)
+        # Crossfader centered-invariant (autonomous only — in Sarathi, Manish
+        # owns the crossfader). The whole set is mixed on the channel (volume)
+        # faders with the crossfader parked at center; ANY off-center value
+        # attenuates or mutes a deck and breaks the next channel-fader blend
+        # (an incoming track raised on its volume fader stays quiet if the
+        # crossfader is shoved to the other side). Re-center whenever it has
+        # drifted and we're not mid-transition. Covers: the boot default,
+        # an interrupted blend that stranded the fader, or a stray API set.
+        # (Mixxx crossfader is -1=full deck1 .. +1=full deck2, center 0;
+        # the /api/crossfade pos 0.5 maps to center.)
         if not _sarathi and not self._transition_pending:
-            d1p = status.get("deck1", {}).get("playing")
-            d2p = status.get("deck2", {}).get("playing")
-            if bool(d1p) != bool(d2p):  # exactly one deck playing
-                xf = float(status.get("crossfader", 0) or 0)
-                if (d1p and xf > 0.8) or (d2p and xf < -0.8):
-                    try:
-                        httpx.post(f"{self.config.mixxx.url}/api/crossfade",
-                                   json={"position": 0.5}, timeout=3)
-                        log.warning(
-                            f"[XF-GUARD] crossfader stranded at {xf:.2f} while "
-                            f"deck{'1' if d1p else '2'} plays — re-centered"
-                        )
-                    except Exception as exc:
-                        log.debug(f"XF-GUARD recenter failed: {exc}")
+            xf = float(status.get("crossfader", 0) or 0)
+            if abs(xf) > 0.1:
+                try:
+                    httpx.post(f"{self.config.mixxx.url}/api/crossfade",
+                               json={"position": 0.5}, timeout=3)
+                    log.warning(f"[XF-GUARD] crossfader off-center at {xf:.2f} — re-centered")
+                except Exception as exc:
+                    log.debug(f"XF-GUARD recenter failed: {exc}")
 
         idle_ready = idle_loaded and idle_remaining > 60
         duration = float(d_active.get("duration", 0) or 0)
@@ -1228,7 +1225,11 @@ class HeartbeatMixin:
                 # emergency play would be silent without this (music-never-stop).
                 httpx.post(f"{url}/api/volume", json={"deck": 1, "level": 1.0}, timeout=3)
                 httpx.post(f"{url}/api/play", json={"deck": 1}, timeout=3)
-                httpx.post(f"{url}/api/crossfade", json={"position": 0.0}, timeout=3)
+                # Channel-fader model: keep the crossfader CENTERED and silence
+                # the other deck via its volume fader (not by shoving the
+                # crossfader full-left, which would break the next blend).
+                httpx.post(f"{url}/api/volume", json={"deck": 2, "level": 0.0}, timeout=3)
+                httpx.post(f"{url}/api/crossfade", json={"position": 0.5}, timeout=3)
                 time.sleep(2)
                 log.info(f"Emergency play: {Path(track).stem[:50]} (rate reset)")
                 self._record_playing_tracks()
@@ -1251,7 +1252,8 @@ class HeartbeatMixin:
                     time.sleep(2)
                     httpx.post(f"{url}/api/volume", json={"deck": 1, "level": 1.0}, timeout=3)
                     httpx.post(f"{url}/api/play", json={"deck": 1}, timeout=3)
-                    httpx.post(f"{url}/api/crossfade", json={"position": 0.0}, timeout=3)
+                    httpx.post(f"{url}/api/volume", json={"deck": 2, "level": 0.0}, timeout=3)
+                    httpx.post(f"{url}/api/crossfade", json={"position": 0.5}, timeout=3)
                     log.info(f"Emergency play: {Path(filepath).stem[:50]}")
                     self._record_playing_tracks()
             elif self.config.sources.youtube:
