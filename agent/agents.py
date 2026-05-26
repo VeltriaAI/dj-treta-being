@@ -1002,7 +1002,7 @@ say so in reasoning_summary so the Being can signal the library manager."""
 
     being_agent = LlmAgent(
         name="treta",
-        model=being_model,   # Pro — root Being uses the stronger model
+        model=being_model,   # config.llm.being_model (currently gemini-3.5-flash, same as subagents)
         before_tool_callback=_loop_guard,
         instruction=_load_being_prompt(config),
         tools=being_tools,
