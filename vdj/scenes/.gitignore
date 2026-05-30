@@ -1,0 +1,5 @@
+# generated scene assets (veo-3 clips + stills) — regenerate from prompts, don't bloat git
+*.mp4
+*.png
+*.jpg
+!.gitignore
