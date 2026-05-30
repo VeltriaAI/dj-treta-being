@@ -121,7 +121,6 @@ async function pollMeta() {
     if (ti.title !== S.title || ti.artist !== S.artist) {
       S.title = ti.title || ''; S.artist = ti.artist || '';
       showNowPlaying(S.title, S.artist);
-      director(S.genre, nk);
     }
   } catch (e) { /* ignore */ }
 }
@@ -194,8 +193,8 @@ void main(){
   vec2 r = vec2(fbm(uv*1.5 + 1.7*q + t*0.6), fbm(uv*1.5 + 1.7*q - t*0.5));
   float f = fbm(uv*2.2 + 2.0*r + vec2(0.0, t));
 
-  // beat zoom + buildup push-in + drop kick-back
-  float zoom = 1.0 - 0.06*beatPulse - 0.10*uBuild + 0.05*uDrop;
+  // throttle: energy + buildup push in (faster travel), kick breathes, drop punches
+  float zoom = 1.0 - 0.06*beatPulse - 0.10*uBuild - 0.05*energy + 0.10*uDrop;
   vec2 cuv = uv*zoom;
   vec3 col;
 
@@ -206,7 +205,7 @@ void main(){
     vec2 tuv = cuv*0.5 + 0.5;
     tuv = (tuv - 0.5)*os + 0.5;
     vec2 warp = ((r-0.5)*(0.05 + energy*0.10) + (q-0.5)*0.03*beatPulse) * wAmt;
-    vec2 base = tuv + warp;
+    vec2 base = tuv + warp + normalize(uv + vec2(1e-4)) * uDrop * 0.05; // warp-burst out of center on drop
     float ca = (0.004 + 0.012*beatPulse + 0.03*uDrop) * mix(1.0, 1.4, uIsVideo); // chroma on kick/drop
     col = vec3(scene(base+vec2(ca,0.), base, base-vec2(ca,0.), 0),
                scene(base+vec2(ca,0.), base, base-vec2(ca,0.), 1),
@@ -239,11 +238,15 @@ void main(){
   // drop — white burst from center + full-frame flash
   col += vec3(1.0) * uDrop * (0.7*exp(-d*1.8) + 0.18);
 
-  // vignette + soft filmic
-  col *= 1.0 - 0.45*pow(d*0.85, 2.2);
-  col = col/(col+0.6);                          // reinhard-ish
-  col = pow(col, vec3(0.85));
-  o = vec4(col, 1.0);
+  // grade — neon-on-black like pro VJ loops: deep vignette, crushed blacks,
+  // lifted luminous highlights, punchier saturation.
+  col *= 1.0 - 0.55*pow(d*0.82, 2.2);           // stronger vignette frames the space
+  col = col/(col+0.48);                          // tonemap (less midtone lift)
+  col = max(col - 0.018, 0.0) / 0.982;           // crush near-blacks to true black
+  col = pow(col, vec3(0.92));
+  float sl = dot(col, vec3(0.299, 0.587, 0.114));
+  col = mix(vec3(sl), col, 1.18);                // saturation pop
+  o = vec4(clamp(col, 0.0, 1.0), 1.0);
 }`;
 
 function compile(type, src) {
@@ -284,12 +287,11 @@ let mix = 0, mixTarget = 0;             // 0 → texs[0], 1 → texs[1]
 let curSlug = null;
 let loopFading = false;
 
-const GENRE_ALIAS = {
-  'bollywood': 'bolly-house', 'bollywood-house': 'bolly-house', 'bolly': 'bolly-house',
-  'progressive-house': 'progressive', 'prog-house': 'progressive', 'prog': 'progressive',
-  'psy': 'psytrance', 'psy-trance': 'psytrance', 'psychedelic-trance': 'psytrance',
-  'melodic': 'melodic-techno', 'melodic-house-techno': 'melodic-techno',
-};
+// Energy-state "spaces" — the three altitudes of the journey, flown live off
+// Mixxx energy + section. The crossfade engine blends between them.
+let sceneState = null, stateSince = 0;
+const MIN_DWELL = 3.5;   // seconds in a state before a calm (non-drop) transition
+
 function makeVid() {
   const v = document.createElement('video');
   v.muted = true; v.loop = true; v.playsInline = true; v.preload = 'auto';
@@ -304,11 +306,24 @@ function makeVid() {
 }
 const vids = [makeVid(), makeVid()];
 
-function director(genre) {
-  let slug = (genre || 'default').toLowerCase().replace(/[^a-z0-9]+/g, '-');
-  slug = GENRE_ALIAS[slug] || slug;
-  if (slug === curSlug) return;          // same genre → let the current clip ride
-  setScene(slug);
+// Which space the music wants right now. Hysteresis (wider exit than entry
+// thresholds) keeps it from flapping at band edges.
+function desiredState() {
+  if (S.drop > 0.5) return 'neon';                 // the drop → punch to the peak
+  if (S.breakdown > 0.5) return 'float';           // breakdown → cut engines, float
+  const e = S.energy;
+  if (sceneState === 'neon')  return e > 0.55 ? 'neon'  : (e < 0.30 ? 'float' : 'wormhole');
+  if (sceneState === 'float') return e < 0.42 ? 'float' : (e > 0.72 ? 'neon' : 'wormhole');
+  return e > 0.72 ? 'neon' : (e < 0.28 ? 'float' : 'wormhole');   // from wormhole / initial
+}
+function updateScene(nowMs) {
+  const want = desiredState();
+  if (want === sceneState) return;
+  const dropForce = want === 'neon' && S.drop > 0.5;   // drops bypass the dwell timer
+  if (sceneState === null || dropForce || (nowMs - stateSince) / 1000 >= MIN_DWELL) {
+    sceneState = want; stateSince = nowMs;
+    setScene(want);
+  }
 }
 
 // First scene snaps in; later scenes crossfade.
@@ -373,9 +388,6 @@ function frame(now) {
   if (S.beatConf > 0 && S.kick < 0.6) { S.kick = 1; }  // confirm via beat_active
   S.beatConf *= Math.exp(-dt / 0.05);
   S.kick *= Math.exp(-dt / 0.13);                      // decay kick pulse
-  S.drop *= Math.exp(-dt / 0.55);                      // sharp burst, ~0.5s tail
-  S.breakdown += ((S._breakTarget || 0) - S.breakdown) * Math.min(1, dt * 2.5); // sustained
-  S.buildup += ((S._buildTarget || 0) - S.buildup) * Math.min(1, dt * 1.5);
 
   // ease hue toward target (avoid hard color jumps on key change)
   if (S.targetHue != null) {
@@ -475,4 +487,15 @@ document.addEventListener('visibilitychange', () => {
 setInterval(pollLive, 50);    // 20 Hz beat/VU
 setInterval(pollMeta, 1000);  // 1 Hz track/genre/key
 pollMeta();
-director('');
+
+// Section logic on its own tick (setInterval survives a backgrounded tab; rAF
+// doesn't). Eases drop/breakdown/buildup and flies between energy-state scenes.
+let _logicLast = performance.now();
+setInterval(() => {
+  const n = performance.now(), d = Math.min(0.2, (n - _logicLast) / 1000); _logicLast = n;
+  S.breakdown += ((S._breakTarget || 0) - S.breakdown) * Math.min(1, d * 2.5);
+  S.buildup += ((S._buildTarget || 0) - S.buildup) * Math.min(1, d * 1.5);
+  updateScene(n);   // choose scene from full-strength signals, THEN decay the drop
+  S.drop *= Math.exp(-d / 0.55);                       // sharp burst, ~0.5s tail
+}, 33);
+// scene is chosen live by updateScene() in the frame loop (energy-state driven)
