@@ -674,6 +674,11 @@ class DJTretaBeing(
         self._start_broadcast()
         self._start_set(mood=self.mood if self.mood else None)
 
+        # Room-sense (v11 Phase 0) — Treta hears her OWN mixer output.
+        # Started UNCONDITIONALLY, independent of relay.enabled. Pure
+        # GET-only read-path; owns its own PerceptionEngine.
+        threading.Thread(target=self._room_sense_loop, daemon=True).start()
+
         # Start relay (pushes state to dj.treta.life)
         if self.config.relay.enabled:
             from .relay import RelayEngine
@@ -749,6 +754,54 @@ class DJTretaBeing(
             asyncio.run(self.relay.run())
         except Exception as e:
             log.error(f"Relay loop crashed: {e}")
+
+    # ── Room-sense (v11 Phase 0) ───────────────────────────────────────
+
+    def _room_sense_loop(self):
+        """Treta hears her OWN mixer output (v11 Phase 0).
+
+        PURE READ-PATH. Owns its OWN PerceptionEngine (never shares the
+        relay's), GETs Mixxx /api/live every ~0.5s into a perception
+        history, and publishes a PerceptionEngine.analyze(active_deck)
+        snapshot to session.room_sense every ~2s. Decoupled from
+        relay.enabled — runs unconditionally.
+
+        GET-ONLY: this loop NEVER calls /api/load, /api/play,
+        /api/crossfade, /api/volume or /api/control. It cannot move audio.
+        The whole body is wrapped in try/except so a transient Mixxx error
+        (HTTP timeout, bad JSON) never kills the thread.
+        """
+        from .relay import PerceptionEngine
+
+        perception = PerceptionEngine()
+        mixxx = self.config.mixxx.url
+        last_publish = 0.0
+        PUBLISH_INTERVAL = 2.0   # publish analyze() snapshot every ~2s
+        SAMPLE_INTERVAL = 0.5    # poll /api/live every ~0.5s
+
+        while self._running:
+            try:
+                # GET-only live read into the perception history.
+                live = httpx.get(f"{mixxx}/api/live", timeout=1).json()
+                perception.add_reading(live)
+
+                now = time.time()
+                if now - last_publish >= PUBLISH_INTERVAL:
+                    last_publish = now
+                    # Determine active deck the same way the rest of the
+                    # code does — from /api/status via _active_idle_decks.
+                    active_deck = 1
+                    status = _get_status(mixxx)
+                    if status:
+                        active_deck, _ = _active_idle_decks(status)
+                    snapshot = perception.analyze(active_deck)
+                    snapshot["sampled_at"] = now
+                    self.session.room_sense = snapshot
+            except Exception as e:
+                # Transient Mixxx error — log at debug, never kill the thread.
+                log.debug(f"room-sense poll skipped: {e}")
+
+            time.sleep(SAMPLE_INTERVAL)
 
 
 # ── Entry point ───────────────────────────────────────────────────────

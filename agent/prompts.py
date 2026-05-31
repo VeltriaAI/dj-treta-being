@@ -99,6 +99,11 @@ def build_dj_user_message(
     # should schedule a transition into idle this cycle (no "let it
     # breathe" deferral) — Treta has explicitly asked for the swap.
     transition_now_pending: bool = False,
+    # v11 Phase 0 — room-sense: Treta's own mixer output, sampled ~3Hz by
+    # _room_sense_loop. Rendered as ONE staleness-gated advisory line
+    # (>15s old → dropped). Schema: {energy, energyDirection, ...,
+    # masterLoudness, sampled_at}. None = no read yet (drop the line).
+    room_sense: dict | None = None,
 ) -> str:
     """Build the user message for DJ agent heartbeat decisions.
 
@@ -153,6 +158,32 @@ def build_dj_user_message(
             f"co-being(s); do NOT schedule transitions targeting these decks "
             f"and do NOT load tracks onto them.\n"
         )
+
+    # ── ROOM-SENSE (v11 Phase 0) ────────────────────────────────────
+    # Treta hears her OWN mixer output. ONE terse advisory line, kept to
+    # a single line for Flash prompt-budget discipline. STALENESS-GATED:
+    # if the snapshot is older than 15s (room-sense loop stalled), drop it
+    # entirely rather than feed the DJ a frozen reading. The single
+    # most-actionable section tag is picked in priority order
+    # drop → breakdown → buildup (else none).
+    room_sense_line = ""
+    if room_sense and isinstance(room_sense, dict):
+        import time as _t
+        sampled_at = room_sense.get("sampled_at") or 0
+        if _t.time() - sampled_at <= 15:
+            energy = room_sense.get("energy", 0)
+            direction = room_sense.get("energyDirection", "steady")
+            if room_sense.get("dropDetected"):
+                tag = " [DROP]"
+            elif room_sense.get("breakdownDetected"):
+                tag = " [BREAKDOWN]"
+            elif room_sense.get("buildupDetected"):
+                tag = " [BUILDUP]"
+            else:
+                tag = ""
+            room_sense_line = (
+                f"ROOM (my output): energy {energy:.0f}/10 {direction}{tag}\n"
+            )
 
     # Compact playlist render — top 5 ranks, one-liner each.  Path is
     # included explicitly so DJ can pass it verbatim to load_track.
@@ -317,6 +348,7 @@ def build_dj_user_message(
         f"{directive_info}"
         f"{profile_line}"
         f"{ownership_line}"
+        f"{room_sense_line}"
         f"ACTIVE: '{active_track[:40]}' at {position:.0f}s/{duration:.0f}s "
         f"({remaining:.0f}s left, BPM:{active_bpm:.0f} file:{active_file_bpm:.0f}, "
         f"Camelot:{active_camelot_str} {active_energy_str})\n"

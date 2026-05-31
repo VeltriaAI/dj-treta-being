@@ -245,6 +245,14 @@ _FIELD_DEFAULTS: dict[str, Any] = {
     # now < this. Set by the defer_decision tool; naturally ages out.
     "dj_deferred_until": 0.0,
 
+    # v11 Phase 0: room-sense — Treta hears her OWN mixer output. The
+    # _room_sense_loop publishes a PerceptionEngine.analyze() snapshot
+    # (energy/direction/density/tension/breakdown/buildup/drop + sampled_at)
+    # here every ~2s. Read by the DJ prompt as one staleness-gated advisory
+    # line. NOT in CRITICAL_FIELDS — it's a ~3Hz transient, so the 500ms
+    # debounce flush is correct; sync-flush would hammer disk.
+    "room_sense": None,
+
     # v10: timestamp of the last completed transition. The P4 (proactive)
     # DJ invoke is gated for `planner.min_play_time_seconds` after this so a
     # fresh track gets to BREATHE instead of being mixed out instantly —

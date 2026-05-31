@@ -745,6 +745,7 @@ class HeartbeatMixin:
                 pinned_idle_path=pinned_idle_path,
                 pinned_idle_loaded=pinned_idle_loaded,
                 transition_now_pending=transition_now_pending,
+                room_sense=getattr(self.session, "room_sense", None),
             )
 
             # Sarathi Mode: prepend a MODE line so the DJ agent suggests
