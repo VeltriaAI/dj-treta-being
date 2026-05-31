@@ -65,7 +65,12 @@ python3 vdj/serve.py            # serves on http://localhost:8089, proxies Mixxx
 Open **http://localhost:8089** → drag the window onto the TV (extended display).
 
 **Controls:** `F` fullscreen · `D` debug HUD · `1` manual drop burst ·
-`2` toggle breakdown · `3` toggle buildup.
+`2` toggle breakdown · `3` toggle buildup · `5` FX mode (breathe ⇄ intense).
+
+**FX modes:** the shader layers live beat-driven FX over the footage, lerped by `uFx`.
+**breathe** (default) = clean footage + subtle beat accents, no crop/heavy warp — for studio
+footage. **intense** (`5`) = heavier warp/crop/chroma/vignette — for aggressive sets. Big
+moments (drop burst, breakdown hush, energy zoom, crossfades) and the grade are the same in both.
 
 Requires Mixxx running with its HTTP API on `:7778` (DJ Treta's normal setup).
 With no music playing it falls back to a calm procedural render.

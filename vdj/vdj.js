@@ -155,7 +155,7 @@ precision highp float;
 out vec4 o;
 uniform vec2  uRes;
 uniform float uTime, uPhase, uKick, uEnergy, uHue, uHasTex, uIsVideo, uMix;
-uniform float uDrop, uBreak, uBuild;
+uniform float uDrop, uBreak, uBuild, uFx;   // uFx: 0 = breathe (clean), 1 = intense
 uniform sampler2D uTex0, uTex1;
 
 // hsv→rgb
@@ -194,20 +194,20 @@ void main(){
   float f = fbm(uv*2.2 + 2.0*r + vec2(0.0, t));
 
   // throttle: energy + buildup push in (faster travel), kick breathes, drop punches
-  float zoom = 1.0 - 0.06*beatPulse - 0.10*uBuild - 0.05*energy + 0.10*uDrop;
+  float zoom = 1.0 - mix(0.03,0.06,uFx)*beatPulse - 0.10*uBuild - 0.05*energy + 0.10*uDrop;
   vec2 cuv = uv*zoom;
   vec3 col;
 
   if(uHasTex > 0.5){
-    // footage already moves → warp lighter; overscan crops the Veo watermark.
-    float wAmt = mix(1.0, 0.30, uIsVideo);
-    float os   = mix(1.0, 0.86, uIsVideo);     // sample inner 86% → ~7% crop/side
+    // breathe (uFx=0): footage near-clean. intense (uFx=1): heavy warp + crop.
+    float wAmt = mix(1.0, mix(0.06, 0.30, uFx), uIsVideo);
+    float os   = mix(1.0, mix(1.0, 0.92, uFx), uIsVideo);   // no crop in breathe; ~8% in intense
     vec2 tuv = cuv*0.5 + 0.5;
     tuv = (tuv - 0.5)*os + 0.5;
     vec2 warp = ((r-0.5)*(0.015 + energy*0.09) + (q-0.5)*0.03*beatPulse) * wAmt;
     vec2 base = tuv + warp + normalize(uv + vec2(1e-4)) * uDrop * 0.05; // warp-burst out of center on drop
     // chroma split ONLY on kick/drop — no baseline, or fine stars shred into RGB noise
-    float ca = (0.010*beatPulse + 0.03*uDrop) * mix(1.0, 1.4, uIsVideo);
+    float ca = (mix(0.003, 0.012, uFx)*beatPulse + 0.03*uDrop) * mix(1.0, 1.4, uIsVideo);
     col = vec3(scene(base+vec2(ca,0.), base, base-vec2(ca,0.), 0),
                scene(base+vec2(ca,0.), base, base-vec2(ca,0.), 1),
                scene(base+vec2(ca,0.), base, base-vec2(ca,0.), 2));
@@ -231,17 +231,17 @@ void main(){
   col *= 1.0 - 0.28 * uBreak;
 
   // kick bloom from center
-  col += hsv(vec3(uHue,0.3,1.0)) * beatPulse * 0.35 * exp(-d*2.5);
+  col += hsv(vec3(uHue,0.3,1.0)) * beatPulse * mix(0.18, 0.35, uFx) * exp(-d*2.5);
 
   // overall brightness pulse + energy lift
-  col *= 0.92 + 0.18*beatPulse + 0.10*energy;
+  col *= 0.92 + mix(0.10, 0.18, uFx)*beatPulse + 0.10*energy;
 
   // drop — white burst from center + full-frame flash
   col += vec3(1.0) * uDrop * (0.7*exp(-d*1.8) + 0.18);
 
   // grade — neon-on-black like pro VJ loops: deep vignette, crushed blacks,
   // lifted luminous highlights, punchier saturation.
-  col *= 1.0 - 0.55*pow(d*0.82, 2.2);           // stronger vignette frames the space
+  col *= 1.0 - mix(0.40, 0.55, uFx)*pow(d*0.82, 2.2);   // lighter vignette in breathe mode
   col = col/(col+0.48);                          // tonemap (less midtone lift)
   col = max(col - 0.018, 0.0) / 0.982;           // crush near-blacks to true black
   col = pow(col, vec3(0.92));
@@ -263,7 +263,7 @@ if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgram
 gl.useProgram(prog);
 const U = {};
 for (const n of ['uRes', 'uTime', 'uPhase', 'uKick', 'uEnergy', 'uHue', 'uHasTex',
-                 'uIsVideo', 'uMix', 'uDrop', 'uBreak', 'uBuild', 'uTex0', 'uTex1'])
+                 'uIsVideo', 'uMix', 'uDrop', 'uBreak', 'uBuild', 'uFx', 'uTex0', 'uTex1'])
   U[n] = gl.getUniformLocation(prog, n);
 
 gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);   // video/image rows are top-down
@@ -292,6 +292,9 @@ let loopFading = false;
 // Mixxx energy + section. The crossfade engine blends between them.
 let sceneState = null, stateSince = 0;
 const MIN_DWELL = 3.5;   // seconds in a state before a calm (non-drop) transition
+
+// FX intensity: 0 = breathe (clean footage, default), 1 = intense (heavy treatment). Key '5' toggles.
+let fxTarget = 0, fx = 0;
 
 // Clip LIBRARY per state (from /scenes manifest; falls back to flat <state>.mp4).
 // The engine rotates through a state's clips so a long set never repeats.
@@ -444,6 +447,8 @@ function frame(now) {
   gl.uniform1f(U.uDrop, S.drop);
   gl.uniform1f(U.uBreak, S.breakdown);
   gl.uniform1f(U.uBuild, S.buildup);
+  fx += (fxTarget - fx) * Math.min(1, dt * 3);   // ease between breathe/intense
+  gl.uniform1f(U.uFx, fx);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texs[0]); gl.uniform1i(U.uTex0, 0);
   gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, texs[1]); gl.uniform1i(U.uTex1, 1);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -467,6 +472,7 @@ function drawHud() {
     `key   ${S.keyStr}   hue ${(S.hue).toFixed(2)}\n` +
     `genre ${S.genre}\n` +
     `dir   ${S.energyDir}  ${S.drop > 0.1 ? 'DROP ' : ''}${S.breakdown > 0.3 ? 'BREAK ' : ''}${S.buildup > 0.3 ? 'BUILD' : ''}\n` +
+    `fx    ${fx < 0.5 ? 'breathe' : 'intense'}\n` +
     `scene ${hasVideo ? `${sceneState}:${(curClip || '').split('/').pop().replace('.mp4', '')}` : hasTex ? 'image' : 'procedural'}${mix > 0.01 && mix < 0.99 ? ' ⇄' : ''}`;
 }
 let npTimer;
@@ -487,6 +493,7 @@ addEventListener('keydown', (e) => {
   } else if (e.key === '1') { S.drop = 1; }                 // manual drop burst
   else if (e.key === '2') { S._breakTarget = S._breakTarget ? 0 : 1; }  // toggle breakdown
   else if (e.key === '3') { S._buildTarget = S._buildTarget ? 0 : 1; }  // toggle buildup
+  else if (e.key === '5') { fxTarget = fxTarget ? 0 : 1; }               // breathe ⇄ intense
 });
 
 // Chrome pauses <video> in a backgrounded tab; resume when we're visible again.
