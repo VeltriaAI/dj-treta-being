@@ -253,6 +253,16 @@ _FIELD_DEFAULTS: dict[str, Any] = {
     # debounce flush is correct; sync-flush would hammer disk.
     "room_sense": None,
 
+    # v11 Phase 2: last_event — a mirror of the latest Notebook row, set by
+    # the autonomous-wake observer (_on_event in main.py) so the existing
+    # session callback/observer bus can carry a wake signal to consumers
+    # (TUI/relay observability). Transient: NOT in CRITICAL_FIELDS — it is a
+    # high-frequency mirror of an append-only log that already persists in
+    # events.jsonl, so the 500ms debounce flush is correct; sync-flush would
+    # hammer disk. When config.evolution.enabled == false NOTHING writes this
+    # field, so behaviour stays byte-identical to the current P0/P1 build.
+    "last_event": None,
+
     # v10: timestamp of the last completed transition. The P4 (proactive)
     # DJ invoke is gated for `planner.min_play_time_seconds` after this so a
     # fresh track gets to BREATHE instead of being mixed out instantly —

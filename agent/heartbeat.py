@@ -560,39 +560,73 @@ class HeartbeatMixin:
                 _live_sugg = bool(list_pending_suggestions())
             except Exception:
                 _live_sugg = False
-        if getattr(self.session, "dj_paused", False):
-            log.debug("P4 DJ invoke skipped — dj_paused (Treta has the wheel)")
-        elif _sarathi and _live_sugg:
-            log.debug("P4 DJ invoke skipped — live suggestion already pending (sarathi, no re-suggest)")
-        elif (getattr(self.session, "manish_in_motion", False)
-                and time.time() < getattr(self.session, "manish_motion_until", 0.0)):
-            log.debug("P4 DJ invoke skipped — manish_in_motion (he's working a transition on the FLX4)")
-        elif time.time() < deferred_until:
-            log.debug(
-                f"P4 DJ invoke skipped — deferred until {deferred_until:.0f} "
-                f"({deferred_until - time.time():.0f}s left)"
-            )
-        elif self._deck_owned_by_external(idle_deck):
-            owner = self.session.deck_ownership.get(int(idle_deck))
-            log.debug(
-                f"P4 DJ invoke skipped — idle deck {idle_deck} owned by {owner}"
-            )
-        elif (time.time() - getattr(self.session, "last_transition_at", 0.0)
-                < self.config.planner.min_play_time_seconds):
-            # v10 anti-churn: just transitioned — let the fresh track BREATHE
-            # for min_play_time_seconds before proactively mixing again. This
-            # is the cooldown that was missing (min_play_time_seconds was dead
-            # config). End-of-track rescue (P2) is a higher priority and is
-            # NOT gated, so a short track still mixes out safely; and right
-            # after a transition the new track has its full length ahead, so
-            # the cooldown always releases well before its mix_out.
-            _cd_left = self.config.planner.min_play_time_seconds - (
-                time.time() - getattr(self.session, "last_transition_at", 0.0))
-            log.debug(f"P4 DJ invoke skipped — post-transition cooldown "
-                      f"({_cd_left:.0f}s left, letting the groove ride)")
-        elif (transition_window
-                and not self._agent_busy and not self._transition_pending
-                and not sched_file_exists):
+        # v11 Phase 2 refactor: the P4 priority ladder is now a single call to
+        # the frozen, unit-tested suppressor.p4_decision(). This is a PURE,
+        # behaviour-preserving extraction — the exact same inputs the inline
+        # if/elif chain read (via getattr fall-backs) are passed in, in the same
+        # order, and the returned decision is acted on EXACTLY as before:
+        #   - decision["skip"]   → log the same intent + fall through (no invoke)
+        #   - decision["invoke"] → run the unchanged DJ-invoke body below.
+        # Only the P4 branch is folded here; P1 silence / P2 emergency / P3
+        # scheduled-exec are untouched. A single `now` snapshot replaces the
+        # inline's microsecond-apart time.time() calls (same wall clock → same
+        # decision). _deck_owned_by_external is a pure guarded read, so eager
+        # evaluation for ladder_inputs is observably identical to the inline's
+        # lazy short-circuit. Guarded: if p4_decision can't be imported/used,
+        # fall back to invoking the inline action-guard directly so P4 still
+        # works (defensive only — the module is a sibling and always present).
+        from . import suppressor as _suppressor
+
+        _now_p4 = time.time()
+        _p4 = _suppressor.p4_decision(ladder_inputs={
+            "now": _now_p4,
+            "dj_paused": getattr(self.session, "dj_paused", False),
+            "sarathi": _sarathi,
+            "live_sugg": _live_sugg,
+            "manish_in_motion": getattr(self.session, "manish_in_motion", False),
+            "manish_motion_until": getattr(self.session, "manish_motion_until", 0.0),
+            "deferred_until": deferred_until,
+            "idle_deck_external": self._deck_owned_by_external(idle_deck),
+            "last_transition_at": getattr(self.session, "last_transition_at", 0.0),
+            "min_play_time_seconds": self.config.planner.min_play_time_seconds,
+            "transition_window": transition_window,
+            "agent_busy": self._agent_busy,
+            "transition_pending": self._transition_pending,
+            "sched_file_exists": sched_file_exists,
+        })
+
+        if _p4.get("skip"):
+            # Mirror the inline ladder's per-branch debug log (debug-level only,
+            # no behavioural effect). Reason strings come 1:1 from p4_decision.
+            _r = _p4.get("reason")
+            if _r == "dj_paused":
+                log.debug("P4 DJ invoke skipped — dj_paused (Treta has the wheel)")
+            elif _r == "sarathi_live_suggestion_pending":
+                log.debug("P4 DJ invoke skipped — live suggestion already pending (sarathi, no re-suggest)")
+            elif _r == "manish_in_motion":
+                log.debug("P4 DJ invoke skipped — manish_in_motion (he's working a transition on the FLX4)")
+            elif _r == "deferred":
+                log.debug(
+                    f"P4 DJ invoke skipped — deferred until {deferred_until:.0f} "
+                    f"({deferred_until - _now_p4:.0f}s left)"
+                )
+            elif _r == "idle_deck_external":
+                owner = self.session.deck_ownership.get(int(idle_deck))
+                log.debug(
+                    f"P4 DJ invoke skipped — idle deck {idle_deck} owned by {owner}"
+                )
+            elif _r == "post_transition_cooldown":
+                # v10 anti-churn: just transitioned — let the fresh track BREATHE
+                # for min_play_time_seconds before proactively mixing again.
+                # End-of-track rescue (P2) is higher priority and NOT gated, so
+                # a short track still mixes out safely.
+                _cd_left = self.config.planner.min_play_time_seconds - (
+                    _now_p4 - getattr(self.session, "last_transition_at", 0.0))
+                log.debug(f"P4 DJ invoke skipped — post-transition cooldown "
+                          f"({_cd_left:.0f}s left, letting the groove ride)")
+            # "no_window" → action guard failed (or window closed); the inline
+            # ladder simply fell through with no log. Preserve that silence.
+        elif _p4.get("invoke"):
             from .db import get_track_by_path
 
             # Get metadata for both tracks

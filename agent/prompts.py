@@ -1056,6 +1056,93 @@ def build_consciousness_user_message(context: str) -> str:
     )
 
 
+# ── Autonomous wake (v11 Phase 2) ─────────────────────────────────────
+
+
+def build_wake_user_message(event: dict, now_view: dict = None) -> str:
+    """Build the user message for an OFF-CADENCE autonomous wake (v11 Phase 2).
+
+    Unlike the periodic HEARTBEAT TICK, this fires because a single
+    high-salience Notebook event pulled the Being awake (crowd-collapse,
+    drop-landed, skip-burst, human directive, contradiction — see
+    agent/salience.py). The message tells her WHAT woke her (the event kind),
+    a one-line WHY (a terse digest of the event), and the current now_view
+    summary if one is supplied, then asks for a brief think-or-act.
+
+    Pure: takes plain dicts, never raises, returns "" inputs degrade gracefully.
+    The caller (main.py _on_event) is responsible for tagging the resulting
+    invocation author='being:wake' — this builder tags nothing.
+    """
+    ev = event if isinstance(event, dict) else {}
+
+    kind = str(ev.get("kind", "event")).strip() or "event"
+    author = str(ev.get("author", "")).strip()
+
+    # One-line WHY: prefer a human-readable summary off the payload, else a
+    # compact rendering of the payload, else just the kind.
+    why = ""
+    payload = ev.get("payload")
+    if isinstance(payload, dict):
+        why = str(
+            payload.get("summary")
+            or payload.get("text")
+            or payload.get("action")
+            or payload.get("reason")
+            or ""
+        ).strip()
+        if not why:
+            # Compact key:val of the most useful scalar fields, capped.
+            scalars = [
+                f"{k}={v}"
+                for k, v in payload.items()
+                if isinstance(v, (str, int, float, bool))
+            ]
+            why = ", ".join(scalars[:4])
+    elif isinstance(payload, str):
+        why = payload.strip()
+    why = (why or kind)[:160]
+
+    src = f" from {author}" if author else ""
+
+    # now_view summary — same shape as Notebook.now_view():
+    # {now_playing, up_next, room_sense, mood, recent}. Compact one-liner.
+    now_line = ""
+    if isinstance(now_view, dict):
+        nv_bits: list[str] = []
+        np = now_view.get("now_playing")
+        if isinstance(np, dict):
+            title = str(np.get("title") or np.get("path") or "").strip()
+            if title:
+                nv_bits.append(f"playing {title[:50]}")
+        elif isinstance(np, str) and np.strip():
+            nv_bits.append(f"playing {np.strip()[:50]}")
+        mood = now_view.get("mood")
+        if mood:
+            nv_bits.append(f"mood: {str(mood).strip()[:30]}")
+        rs = now_view.get("room_sense")
+        if isinstance(rs, dict):
+            energy = rs.get("energy")
+            direction = rs.get("direction")
+            rs_str = " ".join(
+                str(x) for x in (
+                    f"energy {energy}" if energy is not None else "",
+                    str(direction) if direction else "",
+                ) if x
+            ).strip()
+            if rs_str:
+                nv_bits.append(f"room: {rs_str[:40]}")
+        if nv_bits:
+            now_line = "Now: " + " | ".join(nv_bits) + "\n"
+
+    return (
+        f"WAKE — a high-salience {kind} event{src} pulled you off-cadence.\n"
+        f"Why: {why}\n"
+        f"{now_line}"
+        f"\nThis is not the periodic tick — something changed. "
+        f"Think briefly, act if it warrants it, or say HEARTBEAT_OK."
+    )
+
+
 # ── Timeline Formatting (shared) ──────────────────────────────────────
 
 

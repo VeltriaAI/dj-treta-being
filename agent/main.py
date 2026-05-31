@@ -683,6 +683,142 @@ class DJTretaBeing(
 
         self.session.register_callback("idle_needs_load", _on_idle_needs_load)
 
+        # ── v11 Phase 2: autonomous Being-wake (FLAG-GATED, default OFF) ──
+        # When config.evolution.enabled is TRUE, register _on_event on the
+        # Notebook's purpose-built salience-callback bus. High-salience
+        # appends (crowd-collapse, drop-landed, skip-burst, human directive,
+        # contradiction — scored by agent/salience.py) pull the Being awake
+        # off-cadence, subject to the suppressor's vetoes (agent/suppressor.py:
+        # in-flight / 60s cooldown / anti-echo / Sarathi / manish_in_motion).
+        #
+        # SHIP FLAG-FALSE: when the flag is FALSE (the default), NOTHING below
+        # runs — no callback is registered, no wake thread is ever spawned,
+        # _on_event is never defined into the bus. Overhead is exactly zero and
+        # P0/P1 behaviour is byte-identical to the current build. The whole
+        # block is wrapped in try/except so a wiring fault can never block boot.
+        #
+        # SAFETY: this is the OPTIONAL autonomous wake only. P1 silence
+        # recovery and P2 emergency-load sit ABOVE this and are NEVER routed
+        # through the scorer or any veto — music never stops regardless.
+        self._wake_in_flight = False
+        self._last_wake_at = 0.0
+        try:
+            _evo = getattr(self.config, "evolution", None)
+            if _evo is not None and getattr(_evo, "enabled", False):
+                from . import salience as _salience
+                from . import suppressor as _suppressor
+
+                def _on_event(event):
+                    # Fired from Notebook.append() when salience >= threshold.
+                    # MUST be fast + non-blocking: score, veto, then offload the
+                    # actual LLM invoke to a thread (mirrors _on_mood_change).
+                    # Fully guarded — a wake fault must never break the appender
+                    # (which is on the audio/billing hot path).
+                    try:
+                        # Mirror the latest row onto the session bus for
+                        # observability (TUI/relay). Transient field.
+                        try:
+                            self.session.last_event = event
+                        except Exception:
+                            pass
+
+                        if _salience.score_event(event) < _salience.WAKE_THRESHOLD:
+                            return
+
+                        now = time.time()
+                        vetoed, reason = _suppressor.wake_veto(
+                            event=event,
+                            sarathi_mode=bool(getattr(self.session, "sarathi_mode", False)),
+                            manish_in_motion=bool(getattr(self.session, "manish_in_motion", False)),
+                            last_wake_age_s=(now - self._last_wake_at),
+                            wake_in_flight=bool(self._wake_in_flight),
+                            cooldown_s=_suppressor.WAKE_COOLDOWN_S,
+                        )
+                        if vetoed:
+                            log.debug(f"autonomous wake vetoed — {reason}")
+                            return
+
+                        # Claim the in-flight slot BEFORE spawning so a second
+                        # high-salience append in the same instant can't stack
+                        # a concurrent wake (wake_veto rule 1 reads this).
+                        self._wake_in_flight = True
+
+                        def _wake():
+                            try:
+                                from .prompts import build_wake_user_message
+                                now_view = None
+                                _nb = None
+                                try:
+                                    from .notebook import get_notebook
+                                    _nb = get_notebook()
+                                    if _nb is not None:
+                                        now_view = _nb.now_view()
+                                except Exception:
+                                    _nb = None
+                                    now_view = None
+
+                                # Anti-echo handshake: stamp a being:wake marker
+                                # into the notebook so the suppressor's anti-echo
+                                # veto (author == "being:wake") recognises this
+                                # wake's footprint and never loops a wake on its
+                                # own activity. Low salience so the marker itself
+                                # can't pull a fresh wake. Guarded — a notebook
+                                # fault must never break the wake.
+                                if _nb is not None:
+                                    try:
+                                        _nb.append(
+                                            author="being:wake",
+                                            kind="decision",
+                                            payload={
+                                                "event": "autonomous_wake",
+                                                "trigger_kind": event.get("kind"),
+                                                "trigger_author": event.get("author"),
+                                            },
+                                            salience=0.1,
+                                        )
+                                    except Exception:
+                                        pass
+
+                                msg = build_wake_user_message(event, now_view)
+                                # Tag the invocation author='being:wake' where the
+                                # invoker accepts it; the marker append above is
+                                # the durable anti-echo carrier regardless.
+                                try:
+                                    self._invoke_being(msg, author="being:wake")
+                                except TypeError:
+                                    self._invoke_being(msg)
+                            except Exception as exc:
+                                log.warning(f"autonomous wake invoke failed: {exc}")
+                            finally:
+                                # Always release the slot + stamp the cooldown,
+                                # even on failure, so one bad wake can't wedge
+                                # the bus shut forever.
+                                self._wake_in_flight = False
+                                self._last_wake_at = time.time()
+
+                        threading.Thread(
+                            target=_wake, daemon=True, name="being-wake",
+                        ).start()
+                    except Exception as exc:
+                        # Never let a wake fault propagate into the appender.
+                        try:
+                            self._wake_in_flight = False
+                        except Exception:
+                            pass
+                        log.warning(f"_on_event wake handler error: {exc}")
+
+                if self._notebook is not None:
+                    self._notebook.register_salience_callback(
+                        _on_event, threshold=_salience.WAKE_THRESHOLD,
+                    )
+                    log.info(
+                        "v11 Phase 2: autonomous Being-wake ARMED "
+                        f"(threshold {_salience.WAKE_THRESHOLD}, "
+                        f"cooldown {_suppressor.WAKE_COOLDOWN_S}s)"
+                    )
+        except Exception as exc:
+            log.warning(f"autonomous wake wiring failed (non-fatal): {exc}")
+
         # Read startup mood if provided via CLI
         mood_file = runtime_path("mood.txt")
         if mood_file.exists():
