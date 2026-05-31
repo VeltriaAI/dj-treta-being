@@ -81,8 +81,21 @@ With no music playing it falls back to a calm procedural render.
 | `index.html`    | The live visual page (put this on the TV). |
 | `preview.html`  | Clip browser — plays clips one-by-one to review them. |
 | `gen-veo.py`    | **Clip generator.** Calls Vertex AI Veo directly (1080p). See below. |
-| `scenes/`       | Clips the engine plays. `float/wormhole/neon.mp4` are live; genre `.mp4`s are the library. (`.mp4`s gitignored.) |
+| `scenes/<state>/*.mp4` | The live clip **library**, one folder per energy state (`float/`, `wormhole/`, `neon/`). The engine rotates through each state's clips so a long set never repeats. (`.mp4`s gitignored.) |
+| `downloads/`    | Source library of downloaded clips (yt-dlp from CC sources). |
 | `explore/`      | Scratch clips under evaluation — NOT wired into the engine. (gitignored) |
+
+### Scene library & rotation
+The engine fetches `/scenes` (served by `serve.py`, which scans `scenes/<state>/*.mp4`,
+falling back to a flat `scenes/<state>.mp4`). On entering a state it plays that state's
+current clip; on each loop-seam it **advances to the next clip in the state**, crossfading —
+so the whole library cycles instead of one clip repeating. Add clips by dropping `.mp4`s into
+`scenes/float|wormhole|neon/` — no code change, picked up on page reload.
+
+**Sourcing (both wired):** generate originals (`gen-veo.py`, Veo 1080p direct) OR download
+licensed footage (`yt-dlp`). Current library is Beeple loops (Creative Commons, free commercial)
++ NASA Orion nebula (public domain — credit NASA). ⚠️ VISUALDON is All-Rights-Reserved — do not
+use. Native-4K downloads need Pixabay/Pexels free API keys.
 | `experiments/`  | Prompt-optimization harness (see below). |
 
 ---

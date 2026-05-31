@@ -285,7 +285,7 @@ const CROSSFADE = 0.7;                  // seconds
 let hasTex = 0, hasVideo = 0;
 let live = 0;                           // index of the element currently shown
 let mix = 0, mixTarget = 0;             // 0 → texs[0], 1 → texs[1]
-let curSlug = null;
+let curClip = null;                     // current clip path, e.g. "float/dark-valley.mp4"
 let loopFading = false;
 
 // Energy-state "spaces" — the three altitudes of the journey, flown live off
@@ -293,10 +293,31 @@ let loopFading = false;
 let sceneState = null, stateSince = 0;
 const MIN_DWELL = 3.5;   // seconds in a state before a calm (non-drop) transition
 
+// Clip LIBRARY per state (from /scenes manifest; falls back to flat <state>.mp4).
+// The engine rotates through a state's clips so a long set never repeats.
+let LIBRARY = { float: ['float.mp4'], wormhole: ['wormhole.mp4'], neon: ['neon.mp4'] };
+const clipIdx = { float: 0, wormhole: 0, neon: 0 };
+async function loadLibrary() {
+  try {
+    const m = await (await fetch('/scenes?v=' + Date.now(), { cache: 'no-store' })).json();
+    for (const st of ['float', 'wormhole', 'neon']) {
+      if (Array.isArray(m[st]) && m[st].length) {
+        LIBRARY[st] = m[st];
+        clipIdx[st] = (performance.now() | 0) % m[st].length;   // varied start, no Math.random dep
+      }
+    }
+  } catch (e) { /* keep flat fallback */ }
+}
+function pickClip(state, advance) {
+  const list = LIBRARY[state] || [`${state}.mp4`];
+  if (advance) clipIdx[state] = (clipIdx[state] + 1) % list.length;
+  return list[clipIdx[state] % list.length];
+}
+
 function makeVid() {
   const v = document.createElement('video');
   v.muted = true; v.loop = true; v.playsInline = true; v.preload = 'auto';
-  v._slug = null;
+  v._clip = null;
   // Real Chrome won't decode a <video> that isn't in the DOM (it stalls at
   // readyState 0). Attach it hidden-but-rendered (not display:none) so the
   // media pipeline stays alive; the texture uses the full intrinsic resolution
@@ -323,50 +344,40 @@ function updateScene(nowMs) {
   const dropForce = want === 'neon' && S.drop > 0.5;   // drops bypass the dwell timer
   if (sceneState === null || dropForce || (nowMs - stateSince) / 1000 >= MIN_DWELL) {
     sceneState = want; stateSince = nowMs;
-    setScene(want);
+    setClip(pickClip(want, false));      // entering a state → its current clip
   }
 }
 
-// First scene snaps in; later scenes crossfade.
-function setScene(slug) {
-  if (curSlug === null) loadInto(live, slug, () => { curSlug = slug; mix = mixTarget = live; });
-  else crossfadeTo(slug);
+// Advance to the next clip within the current state — variety on the loop seam
+// and through a long sustained state, so the library actually cycles.
+function nextClipInState() {
+  if (sceneState) setClip(pickClip(sceneState, true), true);
 }
 
-function crossfadeTo(slug, restart) {
+// First clip snaps in; later clips crossfade. `path` is relative to scenes/.
+let imgMode = 0;
+function setClip(path, restart) {
+  if (path === curClip && !restart) return;
+  if (curClip === null) loadInto(live, path, () => { curClip = path; mix = mixTarget = live; });
+  else crossfadeTo(path, restart);
+}
+
+function crossfadeTo(path, restart) {
   const next = 1 - live;
-  loadInto(next, slug, () => { live = next; curSlug = slug; mixTarget = next; }, restart);
+  loadInto(next, path, () => { live = next; curClip = path; mixTarget = next; }, restart);
 }
 
-// Load `slug` into element `idx`, then start it and run `onReady`. If the
+// Load clip `path` into element `idx`, then start it and run `onReady`. If the
 // element already holds the clip, just (optionally) restart it.
-function loadInto(idx, slug, onReady, restart) {
+function loadInto(idx, path, onReady, restart) {
   const v = vids[idx];
   const begin = () => { if (restart) { try { v.currentTime = 0; } catch (e) {} } v.play().catch(() => {}); hasVideo = 1; hasTex = 1; imgMode = 0; onReady(); };
-  if (v._slug === slug && v.readyState >= 2) { begin(); return; }
-  v._slug = slug;
+  if (v._clip === path && v.readyState >= 2) { begin(); return; }
+  v._clip = path;
   v.onloadeddata = () => { v.onloadeddata = null; begin(); };
-  v.onerror = () => { v.onerror = null; loadImageFallback(idx, slug); };
-  v.src = `scenes/${slug}.mp4?v=` + Date.now();
+  v.onerror = () => { v.onerror = null; hasVideo = 0; hasTex = 0; imgMode = 0; }; // → procedural fallback
+  v.src = `scenes/${path}?v=` + Date.now();
   v.load();
-}
-
-// Rare path: no clip for this slug → try a still, else go procedural.
-let imgMode = 0;
-function loadImageFallback(idx, slug) {
-  const tries = [`scenes/${slug}.png`, `scenes/${slug}.jpg`, 'scenes/default.png'];
-  const attempt = (i) => {
-    if (i >= tries.length) { hasVideo = 0; hasTex = 0; imgMode = 0; return; } // procedural
-    const img = new Image();
-    img.onload = () => {
-      gl.bindTexture(gl.TEXTURE_2D, texs[idx]);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-      hasVideo = 0; hasTex = 1; imgMode = 1; live = idx; mix = mixTarget = idx; curSlug = slug;
-    };
-    img.onerror = () => attempt(i + 1);
-    img.src = tries[i] + '?v=' + Date.now();
-  };
-  attempt(0);
 }
 
 function resize() {
@@ -408,7 +419,7 @@ function frame(now) {
     const lv = vids[live];
     if (lv.duration && isFinite(lv.duration) && lv.currentTime >= lv.duration - CROSSFADE) {
       loopFading = true;
-      crossfadeTo(curSlug, true);
+      nextClipInState();        // advance to next clip in this state (or restart if only one)
     }
   }
   if (settled) loopFading = false;
@@ -456,7 +467,7 @@ function drawHud() {
     `key   ${S.keyStr}   hue ${(S.hue).toFixed(2)}\n` +
     `genre ${S.genre}\n` +
     `dir   ${S.energyDir}  ${S.drop > 0.1 ? 'DROP ' : ''}${S.breakdown > 0.3 ? 'BREAK ' : ''}${S.buildup > 0.3 ? 'BUILD' : ''}\n` +
-    `scene ${hasVideo ? `video:${curSlug}` : hasTex ? 'image' : 'procedural'}${mix > 0.01 && mix < 0.99 ? ' ⇄' : ''}`;
+    `scene ${hasVideo ? `${sceneState}:${(curClip || '').split('/').pop().replace('.mp4', '')}` : hasTex ? 'image' : 'procedural'}${mix > 0.01 && mix < 0.99 ? ' ⇄' : ''}`;
 }
 let npTimer;
 function showNowPlaying(title, artist) {
@@ -480,10 +491,11 @@ addEventListener('keydown', (e) => {
 
 // Chrome pauses <video> in a backgrounded tab; resume when we're visible again.
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) vids.forEach(v => { if (v._slug) v.play().catch(() => {}); });
+  if (!document.hidden) vids.forEach(v => { if (v._clip) v.play().catch(() => {}); });
 });
 
 // ───────────────────────── start ─────────────────────────
+loadLibrary();   // fetch the per-state clip library (rotation); flat fallback until it resolves
 (async () => { await pollLive(); anchorTime = performance.now(); })();
 setInterval(pollLive, 50);    // 20 Hz beat/VU
 setInterval(pollMeta, 1000);  // 1 Hz track/genre/key

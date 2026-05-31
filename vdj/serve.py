@@ -30,7 +30,29 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/mixxx/"):
             return self._proxy(self.path[len("/mixxx"):])
+        if self.path.split("?", 1)[0] == "/scenes":
+            return self._scenes_manifest()
         return self._serve_static()
+
+    def _scenes_manifest(self):
+        """List clips per energy state: scenes/<state>/*.mp4, falling back to the
+        flat scenes/<state>.mp4. Lets the engine rotate a whole library per state."""
+        import json
+        scenes = VDJ_DIR / "scenes"
+        out = {}
+        for st in ("float", "wormhole", "neon"):
+            d = scenes / st
+            clips = sorted(f"{st}/{p.name}" for p in d.glob("*.mp4")) if d.is_dir() else []
+            if not clips and (scenes / f"{st}.mp4").is_file():
+                clips = [f"{st}.mp4"]
+            out[st] = clips
+        body = json.dumps(out).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
 
     def _serve_static(self):
         """Static file serving WITH Range support so <video> can stream MP4."""
