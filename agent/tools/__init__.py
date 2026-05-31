@@ -127,6 +127,7 @@ from .spawn import (
 from .visibility import (
     get_subagent_activity,
     tail_thinking_log,
+    read_workspace,
 )
 from .listener import (
     get_listener_pulse,
@@ -212,7 +213,7 @@ __all__ = [
     "evolve", "propose_change", "review_evolution",
     "spawn_agent", "get_spawn_result",
     # evolution — visibility / memory / agency / meta-control
-    "get_subagent_activity", "tail_thinking_log",
+    "get_subagent_activity", "tail_thinking_log", "read_workspace",
     "get_listener_pulse", "get_listener_profile",
     "schedule_self", "cancel_self_schedule", "list_self_schedule",
     "plan_set_arc", "progress_set_arc", "clear_set_arc",

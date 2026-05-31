@@ -327,6 +327,32 @@ class DJTretaBeing(
         session_path = Path(__file__).parent.parent / ".beings" / "session.json"
         self.session = Session.load(session_path)
         register_session(self.session)
+
+        # ── Durable Notebook (v11 Phase 1) ───────────────────────────
+        # Append-only event log that SURVIVES restart (unlike thinking.log,
+        # which start() truncates). Replay seeds the gap-free seq + refills
+        # the ring; register the module singleton so tools/heartbeat reach it
+        # via get_notebook(). A daemon_boot marker is the restart signal —
+        # events.jsonl is intentionally NOT truncated in start(). Guarded so
+        # a notebook fault never blocks Being startup.
+        try:
+            from .notebook import Notebook, register_notebook
+            nb = Notebook(runtime_path("events.jsonl"))
+            nb.replay()
+            register_notebook(nb)
+            try:
+                nb.append(
+                    author="being:boot",
+                    kind="decision",
+                    payload={"event": "daemon_boot", "ts": time.time()},
+                    salience=0.4,
+                )
+            except Exception:
+                pass
+            self._notebook = nb
+        except Exception as _nb_exc:
+            log.warning(f"Notebook init failed (non-fatal): {_nb_exc}")
+            self._notebook = None
         # Back-reference so session-scoped tools (e.g. Sarathi suggest/confirm)
         # can reach _ws_broadcast. Underscore-prefixed → bypasses the session
         # observer and is never serialized to session.json.

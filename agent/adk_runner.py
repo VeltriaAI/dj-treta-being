@@ -245,6 +245,20 @@ class ADKRunnerMixin:
                                     "type": "think",
                                     "text": text[:500],
                                 })
+                            # Auto-tap into the shared notebook (percept).
+                            # A notebook fault must NEVER break thinking/billing/_ws_broadcast.
+                            try:
+                                from .notebook import get_notebook
+                                nb = get_notebook()
+                                if nb is not None:
+                                    nb.append(
+                                        author=agent_name,
+                                        kind="percept",
+                                        payload={"text": text[:300]},
+                                        dedup_key=f"think:{agent_name}",
+                                    )
+                            except Exception:
+                                pass
 
             # Tool calls
             func_calls = event.get_function_calls()
@@ -261,6 +275,32 @@ class ADKRunnerMixin:
                             "tool": fc.name,
                             "args": args_str,
                         })
+                    # Auto-tap into the shared notebook (decision/transition).
+                    # A notebook fault must NEVER break thinking/billing/_ws_broadcast.
+                    try:
+                        from .notebook import get_notebook
+                        nb = get_notebook()
+                        if nb is not None:
+                            _TRANSITION_TOOLS = {
+                                "schedule_transition", "do_transition", "do_bass_swap",
+                                "do_echo_out", "do_filter_sweep", "do_hard_cut",
+                                "do_riser", "do_dissolve",
+                            }
+                            if fc.name in _TRANSITION_TOOLS:
+                                nb.append(
+                                    author=agent_name,
+                                    kind="transition",
+                                    payload={"tool": fc.name, "args": args_str},
+                                    salience=0.9,
+                                )
+                            else:
+                                nb.append(
+                                    author=agent_name,
+                                    kind="decision",
+                                    payload={"tool": fc.name, "args": args_str},
+                                )
+                    except Exception:
+                        pass
 
             # Billing — usage_metadata
             if event.usage_metadata:

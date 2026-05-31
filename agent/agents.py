@@ -44,6 +44,7 @@ from .tools import (
     spawn_agent, get_spawn_result,
     # Evolution — Tier 1+2 (visibility, memory, agency, meta-control)
     get_subagent_activity, tail_thinking_log,
+    read_workspace,  # Being-only: live snapshot of the shared notebook event bus
     get_listener_pulse, get_listener_profile,
     schedule_self, cancel_self_schedule, list_self_schedule,
     plan_set_arc, progress_set_arc, clear_set_arc,
@@ -940,6 +941,10 @@ say so in reasoning_summary so the Being can signal the library manager."""
 
         # ── Evolution: visibility into her own apparatus ─────────────
         _wrap(get_subagent_activity), _wrap(tail_thinking_log),
+        # Being-only: live snapshot of the shared notebook event bus
+        # (agent.notebook). Deliberately NOT on DJ/planner/library lists —
+        # they get the cheaper prompt render.
+        _wrap(read_workspace),
         _wrap(get_listener_pulse), _wrap(get_listener_profile),
         _wrap(get_subagent_pause_state),
 

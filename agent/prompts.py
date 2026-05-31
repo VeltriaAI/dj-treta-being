@@ -11,6 +11,105 @@ and pass it in.
 import json
 
 
+# ── Notebook slice (v11 Phase 1) ────────────────────────────────────────
+# The Notebook (agent/notebook.py) is the durable append-only event log. This
+# renders a *derived*, ≤3-line digest of the live workspace for prompt
+# injection — NOT a raw event dump. Pure: takes plain dicts/lists (a now_view
+# and a tail), no Notebook/Session/Mixxx access. Returns "" when nothing
+# salient, so the caller can thread it like room_sense_line/feedback_line and
+# the slot collapses to nothing on a quiet workspace.
+
+
+def render_notebook_slice(
+    now_view: dict, tail: list, max_lines: int = 3
+) -> str:
+    """Render ≤`max_lines` DERIVED workspace lines from a notebook now_view + tail.
+
+    Args:
+        now_view: shape from Notebook.now_view() —
+            {now_playing, up_next, room_sense, mood, recent}.
+        tail: recent events (e.g. Notebook.tail(8, kinds=(...))) — each a
+            dict with at least {kind, author, payload}.
+        max_lines: hard ceiling on rendered lines (default 3).
+
+    Returns a string like
+        "WORKSPACE: planner held energy; DJ cued X; crowd steady"
+    or "" when nothing salient — never raises (defensive on every access).
+    """
+    try:
+        nv = now_view if isinstance(now_view, dict) else {}
+        events = tail if isinstance(tail, list) else []
+
+        bits: list[str] = []
+
+        # 1) Most-recent DECISION (planner/dj intent) — the "why".
+        decision = None
+        for e in reversed(events):
+            if isinstance(e, dict) and e.get("kind") == "decision":
+                decision = e
+                break
+        if decision:
+            p = decision.get("payload")
+            author = decision.get("author") or "agent"
+            summary = ""
+            if isinstance(p, dict):
+                summary = (
+                    p.get("summary")
+                    or p.get("action")
+                    or p.get("reason")
+                    or ""
+                )
+            elif isinstance(p, str):
+                summary = p
+            summary = str(summary).strip()
+            if summary:
+                bits.append(f"{author} {summary[:60]}")
+
+        # 2) Most-recent TRANSITION — the "what just happened on the decks".
+        transition = None
+        for e in reversed(events):
+            if isinstance(e, dict) and e.get("kind") == "transition":
+                transition = e
+                break
+        if transition:
+            p = transition.get("payload") or {}
+            if isinstance(p, dict):
+                tech = p.get("technique") or "transition"
+                to_deck = p.get("to_deck")
+                deck_str = f"→ deck {to_deck}" if to_deck is not None else ""
+                bits.append(f"last mix: {tech} {deck_str}".strip())
+
+        # 3) Crowd/room state — prefer a percept, else now_view.room_sense.
+        room_bit = ""
+        room_sense = nv.get("room_sense")
+        if isinstance(room_sense, dict):
+            energy = room_sense.get("energy")
+            direction = room_sense.get("energyDirection") or "steady"
+            if energy is not None:
+                try:
+                    room_bit = f"crowd {float(energy):.0f}/10 {direction}"
+                except (TypeError, ValueError):
+                    room_bit = f"crowd {direction}"
+        if not room_bit:
+            for e in reversed(events):
+                if isinstance(e, dict) and e.get("kind") == "percept":
+                    pp = e.get("payload")
+                    if isinstance(pp, dict):
+                        d = pp.get("energyDirection") or pp.get("direction")
+                        if d:
+                            room_bit = f"crowd {d}"
+                    break
+        if room_bit:
+            bits.append(room_bit)
+
+        if not bits:
+            return ""
+        return "WORKSPACE: " + "; ".join(bits[:max_lines])
+    except Exception:
+        # A notebook-slice fault must never break prompt building.
+        return ""
+
+
 # ── Mood-class → technique-whitelist mapping (Patch A, fix/mood-aware-technique)
 # Keyed by canonical_slug emitted by mood_resolver. Slugs are matched
 # case-insensitively. Anything not listed falls into the "flowing" default.
@@ -104,6 +203,11 @@ def build_dj_user_message(
     # (>15s old → dropped). Schema: {energy, energyDirection, ...,
     # masterLoudness, sampled_at}. None = no read yet (drop the line).
     room_sense: dict | None = None,
+    # v11 Phase 1 — Notebook slice: ≤3 DERIVED lines from the durable event
+    # log (rendered by render_notebook_slice). Threaded exactly like
+    # room_sense_line/ownership_line — "" collapses the slot on a quiet
+    # workspace. Caller (heartbeat) builds it from get_notebook().
+    workspace_line: str = "",
 ) -> str:
     """Build the user message for DJ agent heartbeat decisions.
 
@@ -344,11 +448,17 @@ def build_dj_user_message(
             f"context demands earlier (e.g. breakdown alignment).\n"
         )
 
+    # ── WORKSPACE (v11 Phase 1) ─────────────────────────────────────
+    # ≤3 derived lines from the durable Notebook (caller-built). One
+    # newline-terminated block, dropped entirely when empty.
+    workspace_block = f"{workspace_line}\n" if workspace_line else ""
+
     return (
         f"{directive_info}"
         f"{profile_line}"
         f"{ownership_line}"
         f"{room_sense_line}"
+        f"{workspace_block}"
         f"ACTIVE: '{active_track[:40]}' at {position:.0f}s/{duration:.0f}s "
         f"({remaining:.0f}s left, BPM:{active_bpm:.0f} file:{active_file_bpm:.0f}, "
         f"Camelot:{active_camelot_str} {active_energy_str})\n"
@@ -408,6 +518,7 @@ def build_planner_v8_message(
     user_intent: str = "",
     feedback_line: str = "",
     external_decks: list[int] | None = None,
+    workspace_line: str = "",
 ) -> str:
     """Build the v8 planner prompt — asks for STRICT JSON output.
 
@@ -528,6 +639,7 @@ def build_planner_v8_message(
         + intent_line
         + ownership_line
         + feedback_line
+        + (("\n" + workspace_line) if workspace_line else "")
         + "\n\n<library>\n"
         "Pick `path` values ONLY from this list — never invent a path.\n"
         + library_json
@@ -560,6 +672,7 @@ def build_planner_v9_message(
     user_intent: str = "",
     feedback_line: str = "",
     external_decks: list[int] | None = None,
+    workspace_line: str = "",
 ) -> str:
     """v9 planner prompt: dataset-driven candidates, current track full timeline.
 
@@ -681,6 +794,7 @@ def build_planner_v9_message(
         + intent_line
         + ownership_line
         + feedback_line
+        + (("\n" + workspace_line) if workspace_line else "")
         + "\n\nCandidate universe (pick by #rank; use path for LOCAL, "
         "mbid+video_id for DATASET):\n"
         + candidates_block

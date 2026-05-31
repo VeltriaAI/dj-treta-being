@@ -270,6 +270,24 @@ class HeartbeatMixin:
         except Exception as exc:
             log.debug(f"directive expire_stale failed: {exc}")
 
+        # v11 Phase 1 — throttled hourly Notebook compaction. compact() is the
+        # only whole-file rewrite; it's off the hot path and caller-gated, so
+        # we fire it at most once an hour from the heartbeat (it no-ops unless
+        # the JSONL exceeds max_disk_lines). Throttle ts lives on the instance
+        # (getattr default 0.0). Fully guarded — never breaks the heartbeat.
+        try:
+            from .notebook import get_notebook
+            _nb_c = get_notebook()
+            if _nb_c is not None:
+                _now = time.time()
+                if _now - getattr(self, "_nb_compact_last", 0.0) >= 3600:
+                    self._nb_compact_last = _now
+                    dropped = _nb_c.compact()
+                    if dropped:
+                        log.debug(f"Notebook compacted: {dropped} lines dropped")
+        except Exception as exc:
+            log.debug(f"notebook compact tick failed: {exc}")
+
         # ── Self-schedule fire ─────────────────────────────────────
         # Treta can wake herself via schedule_self(). Fire any entries
         # whose at_ts has passed; inject callback_directive as a shape
@@ -447,6 +465,28 @@ class HeartbeatMixin:
                     # transitions.py:152 (scheduled-transition completion stamp).
                     if hasattr(self, "session"):
                         self.session.last_transition_at = time.time()
+                    # v11 Phase 1 — log the completed transition to the durable
+                    # Notebook so the workspace slice (and Phase 2 wake) can see
+                    # what just happened on the decks. Salience 0.9 = high (a
+                    # deck change is the most consequential live event). Fully
+                    # guarded — a notebook fault must never break audio/billing.
+                    try:
+                        from .notebook import get_notebook
+                        _nb = get_notebook()
+                        if _nb is not None:
+                            _nb.append(
+                                author="dj",
+                                kind="transition",
+                                payload={
+                                    "technique": "auto_crossfade",
+                                    "to_deck": idle_deck,
+                                    "duration": 15,
+                                    "trigger": "track_ending_watchdog",
+                                },
+                                salience=0.9,
+                            )
+                    except Exception as _nb_exc:
+                        log.debug(f"notebook transition append failed: {_nb_exc}")
             threading.Thread(target=_auto, daemon=True).start()
             self._next_sleep = 5
             return
@@ -710,6 +750,23 @@ class HeartbeatMixin:
             except Exception as exc:
                 log.debug(f"pinned-idle resolve failed: {exc}")
 
+            # v11 Phase 1 — workspace slice from the durable Notebook. A
+            # ≤3-line DERIVED digest (decision / last mix / crowd) injected
+            # into the DJ prompt like room_sense. Fully guarded: a None
+            # notebook or any fault yields "" and the slot collapses.
+            workspace_line = ""
+            try:
+                from .notebook import get_notebook
+                from .prompts import render_notebook_slice
+                _nb = get_notebook()
+                if _nb is not None:
+                    workspace_line = render_notebook_slice(
+                        _nb.now_view(),
+                        _nb.tail(8, kinds=("decision", "transition", "percept")),
+                    )
+            except Exception as exc:
+                log.debug(f"workspace_line build failed: {exc}")
+
             instruction = build_dj_user_message(
                 active_track=active_track,
                 position=position,
@@ -746,6 +803,7 @@ class HeartbeatMixin:
                 pinned_idle_loaded=pinned_idle_loaded,
                 transition_now_pending=transition_now_pending,
                 room_sense=getattr(self.session, "room_sense", None),
+                workspace_line=workspace_line,
             )
 
             # Sarathi Mode: prepend a MODE line so the DJ agent suggests

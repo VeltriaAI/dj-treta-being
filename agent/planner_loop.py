@@ -469,6 +469,15 @@ class PlannerMixin:
             if o != "treta"
         ]
 
+        # Inject a terse workspace slice into the planner prompt: a <=2-line
+        # render of the shared Notebook's now_view (recent decisions /
+        # transitions + mood). Keeps the planner aware of what the rest of the
+        # crew just decided/did without a heavy state dump (Flash budget).
+        # Fully defensive: a notebook fault NEVER blocks planning, and we fall
+        # back to a minimal inline render if the shared renderer isn't wired
+        # into `.prompts` yet.
+        workspace_line = self._build_workspace_line()
+
         if v9_merged and len(v9_merged) >= 5:
             v9_mode = True
             current_timeline = _format_current_timeline(current_meta)
@@ -488,6 +497,7 @@ class PlannerMixin:
                 user_intent=intent,
                 feedback_line=feedback_line,
                 external_decks=external_decks,
+                workspace_line=workspace_line,
             )
         else:
             log.info(
@@ -504,6 +514,7 @@ class PlannerMixin:
                 user_intent=intent,
                 feedback_line=feedback_line,
                 external_decks=external_decks,
+                workspace_line=workspace_line,
             )
         result = self._invoke_planner(planner_msg)
 
@@ -832,6 +843,108 @@ class PlannerMixin:
             msg = f"{type(exc).__name__}: {exc}"
             log.warning(f"Planner output invalid — keeping last good playlist. {msg}")
             self.session.last_planner_error = msg
+
+    def _build_workspace_line(self) -> str:
+        """Render a terse (<=2-line) workspace slice for the planner prompt.
+
+        Pulls the shared crew Notebook's `now_view()` (recent decisions /
+        transitions + mood) and renders it via the SHARED renderer
+        `render_notebook_slice` (owned by the integrator in `.prompts`). This
+        keeps every prompt-consuming agent rendering the slice identically.
+
+        Defensive contract (matches the Notebook's "never break audio/billing"
+        rule):
+          * `get_notebook()` may return None (P1 boot, singleton not
+            registered) — return "" so the prompt builder simply omits the
+            slice.
+          * If `render_notebook_slice` isn't importable yet (integrator still
+            wiring `.prompts`), fall back to a minimal inline 1-liner built
+            from `nb.tail(5)`.
+          * Any exception is swallowed — a notebook fault NEVER blocks the
+            planner; the prompt just goes without the slice.
+        """
+        try:
+            from .notebook import get_notebook
+        except Exception:
+            return ""
+        try:
+            nb = get_notebook()
+        except Exception:
+            return ""
+        if nb is None:
+            return ""
+
+        # Preferred path: feed the SHARED renderer the now_view dict + a tail
+        # of recent decisions/transitions. Cap at 2 lines (terse — Flash
+        # budget). Signature: render_notebook_slice(now_view, tail, max_lines).
+        try:
+            from .prompts import render_notebook_slice
+        except Exception:
+            render_notebook_slice = None
+
+        if render_notebook_slice is not None:
+            try:
+                view = nb.now_view() if hasattr(nb, "now_view") else {}
+                try:
+                    tail = nb.tail(8, kinds=("decision", "transition"))
+                except Exception:
+                    tail = nb.tail(8) if hasattr(nb, "tail") else []
+                line = render_notebook_slice(view or {}, tail or [], max_lines=2)
+                return (line or "").strip()
+            except Exception as exc:
+                log.warning(f"render_notebook_slice failed (non-fatal): {exc}")
+                # fall through to inline fallback
+
+        # Fallback: minimal inline 1-liner from the last few events + mood.
+        try:
+            view = nb.now_view() if hasattr(nb, "now_view") else {}
+        except Exception:
+            view = {}
+        mood = ""
+        try:
+            mood = (view.get("mood") or "") if isinstance(view, dict) else ""
+        except Exception:
+            mood = ""
+        if not mood:
+            mp = getattr(self.session, "mood_profile", None) or {}
+            mood = (mp.get("canonical_slug") if isinstance(mp, dict) else "") or self.mood or ""
+
+        try:
+            recent = nb.tail(5, kinds=("decision", "transition"))
+        except Exception:
+            try:
+                recent = nb.tail(5)
+            except Exception:
+                recent = []
+
+        bits = []
+        for ev in (recent or [])[-3:]:
+            if not isinstance(ev, dict):
+                continue
+            kind = ev.get("kind") or "?"
+            payload = ev.get("payload")
+            if isinstance(payload, dict):
+                summary = (
+                    payload.get("summary")
+                    or payload.get("note")
+                    or payload.get("title")
+                    or payload.get("technique")
+                    or ""
+                )
+            else:
+                summary = str(payload) if payload is not None else ""
+            summary = (summary or "").replace("\n", " ").strip()
+            if len(summary) > 60:
+                summary = summary[:57] + "..."
+            bits.append(f"{kind}: {summary}" if summary else kind)
+
+        if not bits and not mood:
+            return ""
+        head = f"mood={mood}" if mood else ""
+        body = "; ".join(bits)
+        if head and body:
+            return f"WORKSPACE — {head} | recent: {body}"
+        return f"WORKSPACE — {head or 'recent: ' + body}"
 
     def _surface_v9_candidates(self, current_meta, played_list) -> list[dict]:
         """Build merged candidate list for v9 planner prompt.
