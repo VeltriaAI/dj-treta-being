@@ -10,10 +10,10 @@ mixxx:
   settings_path: "~/Library/Application Support/Mixxx-3.0"
 
 llm:
-  model: "openai/gemini-3.5-flash"
+  model: "openai/gemini-3-flash"
   # Being (Treta's own reasoning) on pro — flash didn't follow instructions
   # reliably and skipped tool calls (reverted 2026-05-23). Subagents stay flash.
-  being_model: "openai/gemini-3.5-flash"
+  being_model: "openai/gemini-3-flash"
   api_base: "http://localhost:4000"
   # Prefer env: DJTRETA_LLM_API_KEY or LLM_API_KEY (overrides this field)
   api_key: ""
