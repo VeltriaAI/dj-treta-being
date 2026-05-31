@@ -246,9 +246,15 @@ class PlannerMixin:
         # downloaded tracks have no BPM/key yet, but they're real files that
         # resolve + display fine, and we want them in the Up Next list. (The
         # analyzed-only `library` arg the planner uses is too small here.)
+        # When the treta_originals source is off, drop DJ Treta-generated
+        # originals from the Up-Next floor too (GH #68).
+        _sources = getattr(self.config, "sources", None)
+        _excl_orig = not getattr(_sources, "treta_originals", True)
         try:
             from .db import get_library_with_metadata as _glib
-            full_library = _glib(include_unanalyzed=True) or library
+            full_library = _glib(
+                include_unanalyzed=True, exclude_originals=_excl_orig
+            ) or library
         except Exception:
             full_library = library
 
@@ -381,8 +387,14 @@ class PlannerMixin:
                 except Exception:
                     pass
 
-        # LLM sees the whole analyzed library — no SQL pre-filter.
-        library = get_library_with_metadata(include_unanalyzed=False)
+        # LLM sees the whole analyzed library — no SQL pre-filter. When the
+        # treta_originals source is off, drop DJ Treta-generated originals so
+        # they never enter the planner candidate list (GH #68).
+        _sources = getattr(self.config, "sources", None)
+        _excl_orig = not getattr(_sources, "treta_originals", True)
+        library = get_library_with_metadata(
+            include_unanalyzed=False, exclude_originals=_excl_orig
+        )
 
         current_info = "NOTHING — silence!"
         if current_meta:
@@ -1429,9 +1441,14 @@ class PlannerMixin:
         # Primary path: trust the planner's session.playlist.
         # Pass played_paths so basename-match catches replays where DB
         # title ≠ Mixxx-reported title (BUG-17 pattern).
+        # exclude_originals: defensive belt-and-braces for GH #68 — never pick
+        # a DJ Treta original when the treta_originals source is off.
+        _sources = getattr(self.config, "sources", None)
+        _excl_orig = not getattr(_sources, "treta_originals", True)
         playlist = getattr(self.session, "playlist", None)
         pick = pick_next_candidate(
-            playlist, exclude_paths, played_titles, played_paths
+            playlist, exclude_paths, played_titles, played_paths,
+            exclude_originals=_excl_orig,
         )
 
         # Replay-guard post-filter: even after pick_next_candidate, defend

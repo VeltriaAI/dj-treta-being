@@ -727,7 +727,9 @@ def get_all_analyzed_tracks() -> list[dict]:
         db.close()
 
 
-def get_library_with_metadata(include_unanalyzed: bool = False) -> list[dict]:
+def get_library_with_metadata(
+    include_unanalyzed: bool = False, exclude_originals: bool = False
+) -> list[dict]:
     """Return every library track with its full canonical + analysis metadata.
 
     Used by the v8 planner: LLM sees the entire library in one shot and picks.
@@ -735,6 +737,11 @@ def get_library_with_metadata(include_unanalyzed: bool = False) -> list[dict]:
 
     When include_unanalyzed=False (default), skips tracks with no analyzed_at
     since we can't give the planner their BPM/key/energy.
+
+    When exclude_originals=True, drops DJ Treta-generated originals (GH #68).
+    generation.py writes artist='DJ Treta' (and may carry the same value in
+    canonical_artist), so both columns are checked so originals never reach the
+    planner candidate pool when the treta_originals source is off.
     """
     db = get_db()
     try:
@@ -744,8 +751,16 @@ def get_library_with_metadata(include_unanalyzed: bool = False) -> list[dict]:
             "canonical_version, remixer "
             "FROM tracks"
         )
+        clauses = []
         if not include_unanalyzed:
-            query += " WHERE analyzed_at IS NOT NULL"
+            clauses.append("analyzed_at IS NOT NULL")
+        if exclude_originals:
+            clauses.append("(artist IS NULL OR artist != 'DJ Treta')")
+            clauses.append(
+                "(canonical_artist IS NULL OR canonical_artist != 'DJ Treta')"
+            )
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
         return [dict(r) for r in db.execute(query).fetchall()]
     finally:
         db.close()

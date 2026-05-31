@@ -186,6 +186,19 @@ def _validate_transition(hint: Any, track_idx: int) -> dict:
     }
 
 
+# DJ Treta-generated originals are written by generation.py as
+# "DJ Treta - {name}.mp3" with ID3 artist 'DJ Treta'. The validated playlist
+# track dict carries only path/title (no artist), so the path-basename prefix
+# is the reliable original-detection signal here.
+_ORIGINAL_FILENAME_PREFIX = "DJ Treta - "
+
+
+def _is_original(track: dict) -> bool:
+    """True if `track` is a DJ Treta-generated original (filename-based)."""
+    path = track.get("path") or ""
+    return path.rsplit("/", 1)[-1].startswith(_ORIGINAL_FILENAME_PREFIX)
+
+
 def pick_next_candidate(
     playlist: dict | None,
     exclude_paths: set,
@@ -193,12 +206,18 @@ def pick_next_candidate(
     played_paths: set | None = None,
     *,
     downloaded_only: bool = True,
+    exclude_originals: bool = False,
 ) -> dict | None:
     """Return the highest-rank track from `playlist` not already played or on deck.
 
     `downloaded_only=True` (default) skips knowledge-dataset candidates that
     haven't been fetched yet — DJ can't load_track(path="").
     Returns None if the playlist is empty / all candidates excluded.
+
+    `exclude_originals=True` is a defensive belt-and-braces filter for GH #68:
+    when the treta_originals source is off, no DJ Treta-generated original can
+    be picked even if one leaked into the playlist. Defaults to False so
+    behavior is unchanged when treta_originals is on.
 
     Uses three dedup layers (any one excludes a candidate):
       1. exclude_paths — currently loaded on a deck
@@ -219,6 +238,8 @@ def pick_next_candidate(
     ranked = sorted(playlist["tracks"], key=lambda t: t.get("rank", 999))
     for track in ranked:
         if downloaded_only and not track.get("downloaded", True):
+            continue
+        if exclude_originals and _is_original(track):
             continue
         path = track.get("path") or ""
         if path in exclude_paths:

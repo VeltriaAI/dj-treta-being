@@ -490,7 +490,13 @@ class DeckWidget(Static):
             tags.append("[yellow]LOOP[/yellow]")
         if peak:
             tags.append("[red bold]PEAK[/red bold]")
-        if file_bpm > 0 and abs(bpm - file_bpm) > 2:
+        # DRIFT means the deck has drifted off its file BPM *unintentionally*.
+        # A synced deck, or one with a deliberate rate offset (pitch fader
+        # moved, e.g. 118→125 = -5.6% inside Mixxx's ±8% range), is honestly
+        # off file_bpm by design — that is NOT drift. Only flag when there is
+        # no intentional rate offset. (GH #70)
+        rate_intended = synced or abs(rate) > 0.5
+        if file_bpm > 0 and not rate_intended and abs(bpm - file_bpm) > 2:
             tags.append("[red]DRIFT[/red]")
         tags_str = " ".join(tags)
 
