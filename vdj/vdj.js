@@ -204,9 +204,10 @@ void main(){
     float os   = mix(1.0, 0.86, uIsVideo);     // sample inner 86% → ~7% crop/side
     vec2 tuv = cuv*0.5 + 0.5;
     tuv = (tuv - 0.5)*os + 0.5;
-    vec2 warp = ((r-0.5)*(0.05 + energy*0.10) + (q-0.5)*0.03*beatPulse) * wAmt;
+    vec2 warp = ((r-0.5)*(0.015 + energy*0.09) + (q-0.5)*0.03*beatPulse) * wAmt;
     vec2 base = tuv + warp + normalize(uv + vec2(1e-4)) * uDrop * 0.05; // warp-burst out of center on drop
-    float ca = (0.004 + 0.012*beatPulse + 0.03*uDrop) * mix(1.0, 1.4, uIsVideo); // chroma on kick/drop
+    // chroma split ONLY on kick/drop — no baseline, or fine stars shred into RGB noise
+    float ca = (0.010*beatPulse + 0.03*uDrop) * mix(1.0, 1.4, uIsVideo);
     col = vec3(scene(base+vec2(ca,0.), base, base-vec2(ca,0.), 0),
                scene(base+vec2(ca,0.), base, base-vec2(ca,0.), 1),
                scene(base+vec2(ca,0.), base, base-vec2(ca,0.), 2));
@@ -245,7 +246,7 @@ void main(){
   col = max(col - 0.018, 0.0) / 0.982;           // crush near-blacks to true black
   col = pow(col, vec3(0.92));
   float sl = dot(col, vec3(0.299, 0.587, 0.114));
-  col = mix(vec3(sl), col, 1.18);                // saturation pop
+  col = mix(vec3(sl), col, 1.10);                // gentle saturation pop (over-pop turns noise gaudy)
   o = vec4(clamp(col, 0.0, 1.0), 1.0);
 }`;
 
