@@ -990,9 +990,9 @@ say so in reasoning_summary so the Being can signal the library manager."""
 
     # --- E6 Visuals ---
     # Add visual status + palette-override tools when the visual layer is enabled.
-    # The VisualEngine singleton is registered separately (in main.py / daemon)
-    # via agent.visuals.engine.register_engine(engine) after construction.
-    # These tools are safe to call even when disabled — they return {"enabled": False}.
+    # NOTE: the daemon does NOT auto-register a VisualEngine today. A running
+    # visual host must call agent.visuals.engine.register_engine(engine); until
+    # then these tools return {"enabled": False}. (E6 is gated off in prod.)
     if getattr(getattr(config, "visuals", None), "enabled", False):
         from .visuals.engine import get_visual_status, set_visual_palette
         being_tools.extend([

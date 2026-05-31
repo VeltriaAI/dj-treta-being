@@ -48,6 +48,7 @@ from typing import Any, Dict, List
 
 import httpx
 
+from agent.runtime_paths import runtime_path
 from .session_writer import (
     read_session_json,
     read_state_json,
@@ -57,10 +58,13 @@ from .session_writer import (
 
 
 MIXXX_URL = "http://localhost:7778"
-DECK_OWNERSHIP_FILE = Path("/tmp/dj-treta-deck-ownership.json")
+# Use the daemon's runtime-path convention so MCP and daemon read/write the SAME
+# files. A hardcoded /tmp path silently broke deck-ownership + thinking-log
+# whenever DJTRETA_RUNTIME_DIR differed from /tmp (e.g. on the dev Mac, $TMPDIR).
+DECK_OWNERSHIP_FILE = runtime_path("deck-ownership.json")
 
 # Host-side paths / endpoints for recording + chat tools.
-THINKING_LOG_PATH = Path("/tmp/dj-treta-thinking.log")
+THINKING_LOG_PATH = runtime_path("thinking.log")
 RECORDING_PID_FILE = Path("/tmp/dj-treta-recording.pid")
 RECORDING_META_FILE = Path("/tmp/dj-treta-recording.meta")
 RECORDINGS_DIR = Path("/mnt/data/recordings")

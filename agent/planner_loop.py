@@ -311,7 +311,7 @@ class PlannerMixin:
             cand_key = tk.get("key_camelot", "") or ""
             key_penalty = ((10 - key_compatibility_score(cur_key, cand_key)) * 1.5
                            if (cur_key and cand_key) else 0.0)
-            cand_energy = tk.get("energy")
+            cand_energy = tk.get("energy_peak", tk.get("energy"))
             energy_gap = 0.0
             if energy_target is not None and cand_energy is not None:
                 try:

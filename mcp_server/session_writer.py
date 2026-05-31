@@ -31,7 +31,13 @@ from typing import Any, Dict, Optional
 from agent.runtime_paths import runtime_path
 
 COMMAND_FILE = runtime_path("command.json")
-SESSION_JSON = Path("/mnt/data/dj-treta/.beings/session.json")
+# Resolve to the real repo's session.json (repo root = mcp_server/..), with an
+# env override for VM/other deployments. The old hardcoded /mnt/data path made
+# dj_session_state return empty on any non-VM host (e.g. the dev Mac).
+SESSION_JSON = Path(
+    os.environ.get("DJTRETA_SESSION_JSON")
+    or (Path(__file__).resolve().parent.parent / ".beings" / "session.json")
+)
 STATE_JSON = runtime_path("state.json")
 
 
