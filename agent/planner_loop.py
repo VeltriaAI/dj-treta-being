@@ -313,12 +313,25 @@ class PlannerMixin:
                            if (cur_key and cand_key) else 0.0)
             cand_energy = tk.get("energy_peak", tk.get("energy"))
             energy_gap = 0.0
+            jump_penalty = 0.0
             if energy_target is not None and cand_energy is not None:
                 try:
-                    energy_gap = abs(float(cand_energy) - energy_target) * 2.0
+                    _ce = float(cand_energy)
+                    energy_gap = abs(_ce - energy_target) * 2.0
+                    # FIX-G "build don't jump": penalise candidates whose
+                    # energy distance from the target band exceeds the allowed
+                    # per-step jump, so the Up-Next floor prefers picks that
+                    # keep the arc smooth rather than leaping. Quadratic in the
+                    # overshoot beyond the jump budget — small overshoots are
+                    # cheap, big leaps are heavily down-ranked. Conservative
+                    # weight (3.0); tune here after an A/B listen.
+                    overshoot = abs(_ce - energy_target) - self._energy_max_jump()
+                    if overshoot > 0:
+                        jump_penalty = (overshoot ** 2) * 3.0
                 except Exception:
                     energy_gap = 0.0
-            score = bpm_gap + key_penalty + energy_gap
+                    jump_penalty = 0.0
+            score = bpm_gap + key_penalty + energy_gap + jump_penalty
             candidates.append((score, tk))
 
         candidates.sort(key=lambda x: x[0])
@@ -946,6 +959,46 @@ class PlannerMixin:
             result.append(d)
         return result
 
+    # --- FIX-G ---  "Build don't jump" energy-arc guardrails.
+    #
+    # `energy_max_jump` (max allowed per-step energy delta) and
+    # `peak_max_consecutive` (how many peak-energy steps before we force a
+    # dip) were defined in config but never enforced — the leapfrog applied
+    # uncapped cumulative +2/+4/+6/+8 ramps with no ceiling. These helpers
+    # surface the values defensively. Behaviour-changing → kept conservative
+    # and easy to tune; needs an A/B listen before full trust.
+    #
+    # The YAML value actually lands on `config.set.*` (SetConfig). We read
+    # `config.set` first, fall back to `config.planner` (per the FIX-G brief)
+    # in case the keys are ever moved, then to a hardcoded default. All reads
+    # are getattr-guarded so a missing namespace never throws.
+    # "Peak" = an energy step at or above this absolute level (1–10 scale).
+    _PEAK_ENERGY_FLOOR = 8
+
+    def _energy_max_jump(self) -> int:
+        """Max allowed per-step target-energy delta (>=1). Default 2."""
+        for ns in ("set", "planner"):
+            cfg_ns = getattr(self.config, ns, None)
+            val = getattr(cfg_ns, "energy_max_jump", None) if cfg_ns else None
+            if val is not None:
+                try:
+                    return max(1, int(val))
+                except Exception:
+                    pass
+        return 2
+
+    def _peak_max_consecutive(self) -> int:
+        """Max consecutive peak-energy steps before a forced dip (>=1). Default 3."""
+        for ns in ("set", "planner"):
+            cfg_ns = getattr(self.config, ns, None)
+            val = getattr(cfg_ns, "peak_max_consecutive", None) if cfg_ns else None
+            if val is not None:
+                try:
+                    return max(1, int(val))
+                except Exception:
+                    pass
+        return 3
+
     # --- E3/E5 ---  Dynamic real-time arrangement authoring (the leapfrog).
     def _build_arrangement_plan(self, validated_playlist, current_meta,
                                 goal: str = "", max_steps: int = 4):
@@ -1033,11 +1086,33 @@ class PlannerMixin:
 
         # Subsequent steps: walk the ranked candidates, ramping energy toward
         # the goal. Each step picks a transition technique fit for the move.
+        #
+        # FIX-G "build don't jump": clamp the per-step energy delta to
+        # ±energy_max_jump so the arc ramps in musical increments instead of
+        # leaping, and force a dip once we've sat at peak energy for more than
+        # peak_max_consecutive steps (give the room a breather). Both read
+        # defensively from config with safe defaults; conservative on purpose.
+        energy_max_jump = self._energy_max_jump()
+        peak_max_consec = self._peak_max_consecutive()
+        peak_run = 0  # consecutive steps at/above the peak-energy floor
         target_energy = cur_energy
         for t in tracks:
             if len([i for i in intents if i.track_path]) >= max_steps:
                 break
-            target_energy = max(1, min(10, target_energy + step_delta))
+            # Cap the requested step move to ±energy_max_jump before applying.
+            capped_delta = max(-energy_max_jump,
+                               min(energy_max_jump, step_delta))
+            target_energy = max(1, min(10, target_energy + capped_delta))
+            # Forced dip: if we've held peak for too long, pull energy down by
+            # one jump-unit regardless of the goal's ramp direction so the set
+            # breathes rather than flat-lining at the ceiling.
+            if target_energy >= self._PEAK_ENERGY_FLOOR:
+                peak_run += 1
+                if peak_run > peak_max_consec:
+                    target_energy = max(1, target_energy - energy_max_jump)
+                    peak_run = 0  # reset the run after the dip
+            else:
+                peak_run = 0
             tmeta = self._candidate_meta(t)
             technique = self._technique_for_move(cur_energy, target_energy, tmeta)
             # Phantom grid-start when the candidate has a beatgrid anchor — lets

@@ -215,9 +215,48 @@ class HeartbeatMixin:
         except Exception as exc:
             log.debug(f"[sarathi] manual-transition detect failed (non-fatal): {exc}")
 
+    def _litellm_liveness_probe(self):
+        """FIX-D: throttled (~60s) LiteLLM liveness probe on the heartbeat side.
+
+        The DJ brain talks to LiteLLM (:4000). When it dies the daemon keeps
+        ticking but every DJ decision errors. This is the heartbeat-side
+        watchdog: ~once a minute, if LiteLLM is unreachable, ask _ensure_litellm
+        to revive it. Debounced to at most one restart attempt per 120s, and
+        backs off after 3 attempts so we don't hammer a permanently-down proxy.
+        Music-never-stops is unaffected — this only nudges the brain back; the
+        deterministic P1/P2 safety nets keep audio alive regardless.
+        """
+        now = time.time()
+        if now - getattr(self, "_litellm_probe_at", 0.0) < 60:
+            return
+        self._litellm_probe_at = now
+        try:
+            from .main import _ensure_litellm, _litellm_reachable
+            if _litellm_reachable(self.config.llm.api_base, self.config.llm.api_key):
+                # Reachable → reset the restart back-off counter.
+                self._litellm_restart_attempts = 0
+                return
+            if getattr(self, "_litellm_restart_attempts", 0) >= 3:
+                log.debug("[LITELLM-WD] unreachable but back-off reached (>=3 attempts) — not restarting")
+                return
+            if now - getattr(self, "_litellm_restart_at", 0.0) < 120:
+                return  # restart debounce — one attempt per 120s
+            self._litellm_restart_at = now
+            self._litellm_restart_attempts = getattr(self, "_litellm_restart_attempts", 0) + 1
+            log.warning(
+                f"[LITELLM-WD] LiteLLM unreachable — restart attempt "
+                f"{self._litellm_restart_attempts}/3"
+            )
+            _ensure_litellm(self.config)
+        except Exception as exc:
+            log.debug(f"[LITELLM-WD] liveness probe failed (non-fatal): {exc}")
+
     def _heartbeat(self):
         """Pure Python heartbeat. Reads mix_out from DB. No flags, no timers."""
         from .main import _get_status, _active_idle_decks, _ensure_mixxx
+
+        # FIX-D: heartbeat-side LiteLLM liveness probe (throttled ~60s).
+        self._litellm_liveness_probe()
 
         # Sync co-being deck ownership (Phase 7) before any decisions.
         self._sync_deck_ownership()
@@ -401,6 +440,13 @@ class HeartbeatMixin:
                     log.error(f"Auto-transition error: {e}")
                 finally:
                     self._transition_pending = False
+                    # FIX-B: stamp completion so the P4 anti-churn cooldown
+                    # (min_play_time_seconds, ~:494/:504) can see this watchdog
+                    # crossfade. Without it the cooldown was blind to end-of-
+                    # track auto-transitions → "transitions too often". Mirrors
+                    # transitions.py:152 (scheduled-transition completion stamp).
+                    if hasattr(self, "session"):
+                        self.session.last_transition_at = time.time()
             threading.Thread(target=_auto, daemon=True).start()
             self._next_sleep = 5
             return
@@ -722,13 +768,44 @@ class HeartbeatMixin:
             def _run():
                 try:
                     result = self._invoke_agent(instruction, fresh_session=True)
-                    # Suppress blank log lines on Flash empty response
-                    # (~60% drop rate on niche prompts). The safety net at
-                    # P2 catches the miss; the empty line only pollutes TUI.
-                    if (result or "").strip():
-                        log.info(f"DJ decision: {result[:500]}")
-                        if hasattr(self, '_ws_broadcast'):
-                            self._ws_broadcast("log", {"text": f"DJ decision: {result[:200]}"})
+                    made_tool_call = bool(getattr(self, "_last_dj_made_tool_call", False))
+                    # FIX-C: result=="" is AMBIGUOUS. A tool-call-with-no-text
+                    # is a SUCCESS (DJ scheduled/loaded silently), not a drop.
+                    if (result or "").strip() or made_tool_call:
+                        # Real decision. Keep the existing (text) log; tool-only
+                        # decisions already log via _process_event([CALL:...]).
+                        if (result or "").strip():
+                            log.info(f"DJ decision: {result[:500]}")
+                            if hasattr(self, '_ws_broadcast'):
+                                self._ws_broadcast("log", {"text": f"DJ decision: {result[:200]}"})
+                        # FIX-D: a successful decision proves the brain is live.
+                        self._dj_consec_conn_errors = 0
+                        if getattr(self.session, "brain_offline", False):
+                            self.session.brain_offline = False
+                    else:
+                        # TRUE-empty (no text AND no tool call). Retry ONCE with
+                        # a shortened prompt. MUST NOT retry when a tool call
+                        # already succeeded (double-fire risk) — guarded above.
+                        retry_prompt = (
+                            instruction
+                            + "\n\nCALL the tool now, or reply 'waiting'."
+                        )
+                        result2 = self._invoke_agent(retry_prompt, fresh_session=True)
+                        made_tool_call2 = bool(getattr(self, "_last_dj_made_tool_call", False))
+                        if (result2 or "").strip() or made_tool_call2:
+                            if (result2 or "").strip():
+                                log.info(f"DJ decision (retry): {result2[:500]}")
+                                if hasattr(self, '_ws_broadcast'):
+                                    self._ws_broadcast("log", {"text": f"DJ decision: {result2[:200]}"})
+                            self._dj_consec_conn_errors = 0
+                            if getattr(self.session, "brain_offline", False):
+                                self.session.brain_offline = False
+                        else:
+                            # Still true-empty after one retry — defer the DJ
+                            # invoke for 25s (reuses dj_deferred_until, honored
+                            # at ~:466/:484-488). Log once, not every tick.
+                            self.session.dj_deferred_until = time.time() + 25
+                            log.info("DJ non-deciding — deferred 25s")
                     # Shape directives no longer cleared here — they have
                     # a TTL and auto-expire via session.expire_stale().
                     # The transition_now directive (if present) will be
@@ -741,6 +818,26 @@ class HeartbeatMixin:
                     import traceback
                     log.error(f"DJ decision error: {type(e).__name__}: {e}")
                     log.error(traceback.format_exc()[:500])
+                    # FIX-D: count consecutive connection-flavoured failures.
+                    # After >=3 in a row, mark the brain offline so the rest of
+                    # the system can degrade gracefully (LiteLLM unreachable,
+                    # timeouts). Cleared on the first successful decision above.
+                    _msg = f"{type(e).__name__}: {e}".lower()
+                    if any(s in _msg for s in (
+                        "connect", "connection", "timed out", "timeout",
+                        "refused", "unreachable", "read error", "remote",
+                    )):
+                        self._dj_consec_conn_errors = (
+                            getattr(self, "_dj_consec_conn_errors", 0) + 1
+                        )
+                        if (self._dj_consec_conn_errors >= 3
+                                and not getattr(self.session, "brain_offline", False)):
+                            self.session.brain_offline = True
+                            log.warning(
+                                f"DJ brain marked offline after "
+                                f"{self._dj_consec_conn_errors} consecutive "
+                                f"connection errors"
+                            )
                 finally:
                     self._agent_busy = False
 

@@ -24,6 +24,11 @@ class TransitionMixin:
         duration = sched.get("duration", 45)
         active_deck = sched.get("activeDeck", 1 if to_deck == 2 else 2)
         scheduled_track_path = sched.get("activeTrackPath", "") or ""
+        # FIX-B: forward the persisted tempo intent. Without this the executor
+        # dropped bpm_after/glide_duration and every do_* defaulted to "anchor",
+        # so the scheduled intent (e.g. "keep") was silently lost at fire-time.
+        bpm_after = sched.get("bpmAfter", "anchor")
+        glide_duration = sched.get("glideDuration", 60)
 
         log.info(f"Transition scheduled: {technique} to deck {to_deck} at {at_position}s (waiting...)")
 
@@ -98,19 +103,19 @@ class TransitionMixin:
                     if hasattr(self, '_ws_broadcast'):
                         self._ws_broadcast("log", {"text": f"Executing {technique} to deck {to_deck} at {current_pos:.1f}s"})
                     if technique == "bass_swap":
-                        result = do_bass_swap(to_deck, duration)
+                        result = do_bass_swap(to_deck, duration, bpm_after=bpm_after, glide_duration=glide_duration)
                     elif technique == "filter_sweep":
-                        result = do_filter_sweep(to_deck, duration)
+                        result = do_filter_sweep(to_deck, duration, bpm_after=bpm_after, glide_duration=glide_duration)
                     elif technique == "hard_cut":
-                        result = do_hard_cut(to_deck)
+                        result = do_hard_cut(to_deck, bpm_after=bpm_after, glide_duration=glide_duration)
                     elif technique == "echo_out":
-                        result = do_echo_out(to_deck, duration)
+                        result = do_echo_out(to_deck, duration, bpm_after=bpm_after, glide_duration=glide_duration)
                     elif technique == "riser":
-                        result = do_riser(to_deck, duration)
+                        result = do_riser(to_deck, duration, bpm_after=bpm_after, glide_duration=glide_duration)
                     elif technique == "dissolve":
-                        result = do_dissolve(to_deck, duration)
+                        result = do_dissolve(to_deck, duration, bpm_after=bpm_after, glide_duration=glide_duration)
                     else:
-                        result = do_transition(to_deck, duration)
+                        result = do_transition(to_deck, duration, bpm_after=bpm_after, glide_duration=glide_duration)
                     log.info(f"Transition result: {str(result)[:200]}")
                     if hasattr(self, '_ws_broadcast'):
                         self._ws_broadcast("log", {"text": f"Transition result: {str(result)[:200]}"})

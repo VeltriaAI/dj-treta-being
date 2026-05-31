@@ -129,6 +129,17 @@ class WSServerMixin:
                 from .runtime_paths import runtime_path
                 sf = runtime_path("state.json")
                 data = json.loads(sf.read_text()) if sf.exists() else {}
+                # FIX-D: guarantee brain_offline is present even if the
+                # on-disk snapshot predates the field, so the TUI/relay can
+                # always render the outage banner. Prefer the live session
+                # value; fall back to whatever the file carried (or False).
+                if isinstance(data, dict):
+                    from .session_state import get_session
+                    sess = get_session()
+                    data["brain_offline"] = bool(
+                        getattr(sess, "brain_offline", data.get("brain_offline", False))
+                        if sess else data.get("brain_offline", False)
+                    )
                 return _json_response(200, data)
 
             if route == "/http/playlist":
@@ -330,6 +341,16 @@ class WSServerMixin:
             sf = runtime_path("state.json")
             if sf.exists():
                 snapshot = json.loads(sf.read_text())
+                # FIX-D: ensure brain_offline is always present in the
+                # pushed snapshot (even if state.json predates the field)
+                # so a fresh subscriber can render the outage banner.
+                if isinstance(snapshot, dict):
+                    from .session_state import get_session
+                    sess = get_session()
+                    snapshot["brain_offline"] = bool(
+                        getattr(sess, "brain_offline", snapshot.get("brain_offline", False))
+                        if sess else snapshot.get("brain_offline", False)
+                    )
                 await websocket.send(json.dumps({
                     "type": "event", "event": "state", "data": snapshot
                 }))

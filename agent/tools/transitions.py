@@ -308,6 +308,71 @@ def _tempo_ride(deck: int, target_bpm: float = None, duration_s: float = 60.0):
     log.info(f"Tempo ride complete: deck {deck}, {current_bpm:.0f} → {goal_bpm:.0f} BPM over {duration_s:.0f}s")
 
 
+def _glide_to_native(deck: int, glide_duration: int = 60):
+    """FIX-A: ramp the surviving deck's rate_ratio back to 1.0 (native tempo)
+    over ~8 bars instead of hard-snapping it in one write.
+
+    The old "anchor" branch wrote rate_ratio=1.0 in a single POST with no
+    keylock. On a wide-BPM blend (e.g. a 149-BPM track stretched to 128) that
+    one-shot snap is a jarring, audible pitch/tempo jump that "ruins the set".
+    This glides the stretch out gradually with keylock ON during the ramp
+    (so pitch stays constant), then keylock OFF at native (cleaner + saves CPU).
+
+    Behaviour:
+      - read current rate_ratio from /api/status
+      - glide toward 1.0 over ~8 bars (clamped 3-10s)
+      - per-step rate change capped at <=0.15% so no step is audible
+      - ~0.4% / ~0.5-BPM deadband: if already near native, just no-op the snap
+      - INSTANT-snap fallback if /api/status is unreadable (music-never-stop:
+        we must NOT strand a synced stretch, so a single write to 1.0 is the
+        safe last resort).
+    """
+    import time as _time
+
+    status = _mixxx_get("/api/status")
+    if not status or _mixxx_failed(status):
+        # Can't read state — never strand a stretch. Snap to native instantly.
+        _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "rate_ratio", "value": 1.0})
+        log.warning(f"[glide-native] deck {deck}: status unreadable, INSTANT-snap to native")
+        return
+
+    d = status.get(f"deck{deck}", {})
+    try:
+        current_ratio = float(d.get("rate_ratio", 1.0) or 1.0)
+    except (TypeError, ValueError):
+        current_ratio = 1.0
+    file_bpm = float(d.get("file_bpm", 0) or 0)
+
+    # ~0.4% (≈0.5 BPM at 125) deadband — an on-tempo deck is never touched.
+    if abs(current_ratio - 1.0) <= 0.004:
+        log.info(f"[glide-native] deck {deck}: already near native ({current_ratio:.4f}), skipping")
+        return
+
+    # Keylock ON for the ramp so pitch stays put while tempo moves.
+    _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "keylock", "value": 1})
+
+    # ~8 bars at the deck's native BPM, clamped 3-10s.
+    bpm_for_bars = file_bpm if file_bpm > 0 else 120.0
+    bars_seconds = _bars_to_seconds(8, bpm_for_bars)
+    duration_s = max(3.0, min(10.0, bars_seconds, float(glide_duration)))
+
+    # Cap each step at <=0.15% rate change.
+    total_delta = abs(current_ratio - 1.0)
+    steps = max(1, int(total_delta / 0.0015) + 1)
+    base_sleep = duration_s / steps
+
+    for i in range(1, steps + 1):
+        t = i / steps
+        ratio_now = current_ratio + (1.0 - current_ratio) * t
+        _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "rate_ratio", "value": ratio_now})
+        _time.sleep(base_sleep)
+
+    # Land exactly on native, then drop keylock (cleaner + saves CPU).
+    _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "rate_ratio", "value": 1.0})
+    _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "keylock", "value": 0})
+    log.info(f"[glide-native] deck {deck}: {current_ratio:.4f} → 1.0 over {duration_s:.1f}s ({steps} steps)")
+
+
 def _anchor_target_bpm():
     """The mood profile's BPM-range center, or None if unavailable.
 
@@ -335,27 +400,31 @@ def _anchor_target_bpm():
 def _apply_bpm_after(deck: int, bpm_after: str = "anchor", glide_duration: int = 60):
     """Post-transition BPM handling.
 
-    Default is "anchor" — gently tempo-ride the incoming deck back to the mood
-    profile's BPM-range center so per-transition sync drift can't accumulate
-    across a set. _tempo_ride no-ops when the deck is already within 0.5 BPM of
-    the target, so an on-tempo deck is never touched — the ride only fires when
-    the deck has actually drifted. The ride runs after the crossfade completes
-    (deck already audible solo), so blocking here is fine.
+    Default is "anchor" — short-glide the surviving deck's rate back to its
+    native tempo (rate_ratio=1.0) over ~8 bars via _glide_to_native so the
+    sync-stretch applied during the blend can't strand the track fast/slow for
+    the rest of its play. _glide_to_native no-ops within a ~0.4% deadband, so an
+    already-native deck is never touched — the glide only fires when a stretch
+    actually survived. It runs after the crossfade completes (deck already
+    audible solo), so blocking here is fine.
 
-    bpm_after="anchor" → (default) release sync and SNAP the surviving deck back
-                         to its native tempo (rate_ratio=1.0) instantly. During a
+    bpm_after="anchor" → (default) release sync and GLIDE the surviving deck back
+                         to its native tempo (rate_ratio=1.0) over ~8 bars via
+                         _glide_to_native, with keylock ON during the ramp. During a
                          blend the incoming deck is sync-stretched to beatmatch the
                          outgoing; releasing sync alone LEAVES that stretch, so a
-                         wide-BPM-gap mix strands the deck running fast/slow for the
-                         rest of the track (observed live: a 149-BPM track left at
+                         wide-BPM-gap mix would strand the deck running fast/slow for
+                         the rest of the track (observed live: a 149-BPM track left at
                          128 = -14%, and a 128 left at 142 = +11%). The outgoing deck
                          is already paused+silent when this runs (see
-                         _finish_channel_fader), so the snap is inaudible as a
-                         beat-slip — it just returns the now-solo track to its true
-                         speed. This is an INSTANT snap, NOT a glide: the old
-                         tempo-RIDE (disabled 2026-05-23) caused audible gradual
-                         creep and fought mis-detected beatgrids. A single snap at
-                         the transition boundary reads as "new track, its own tempo".
+                         _finish_channel_fader), so the now-solo track quietly settles
+                         to its true speed. This is a SHORT GLIDE, not the old one-shot
+                         hard snap: the previous instant rate_ratio=1.0 write (with no
+                         keylock) produced an audible pitch/tempo jump — "ruining the
+                         set". The ~8-bar keylocked ramp (≤0.15%/step, ~0.4% deadband,
+                         instant-snap fallback when status is unreadable) is inaudible.
+                         It is NOT the old continuous tempo-RIDE (disabled 2026-05-23)
+                         which crept all set and fought mis-detected beatgrids.
     bpm_after="keep"   → disable sync, leave rate exactly as the blend left it
                          (explicit opt-out of the native snap — for close-BPM mixes
                          where holding the matched tempo is desired).
@@ -365,8 +434,9 @@ def _apply_bpm_after(deck: int, bpm_after: str = "anchor", glide_duration: int =
     _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "sync_enabled", "value": 0})
 
     if bpm_after == "anchor":
-        # Release sync (done above) + snap to native so no synced stretch survives.
-        _mixxx_post("/api/control", {"group": f"[Channel{deck}]", "key": "rate_ratio", "value": 1.0})
+        # Release sync (done above) + GLIDE to native so no synced stretch
+        # survives, but without the audible one-shot snap (FIX-A).
+        _glide_to_native(deck, glide_duration=glide_duration)
         return
     elif bpm_after == "keep":
         # Release sync only; caller explicitly wants the matched tempo held.
@@ -1389,7 +1459,8 @@ def do_dissolve(to_deck: int, duration: int = 16, bpm_after: str = "anchor", gli
     if duration_bars is not None and status:
         out_bpm = float(status.get(f"deck{out_deck}", {}).get("bpm", 0) or 0) or 120.0
         duration = int(round(_bars_to_seconds(duration_bars, out_bpm)))
-    duration = max(4, min(32, duration))
+    # FIX-F: floor 4→8s — a sub-8s dissolve reads as a jump, not a blend.
+    duration = max(8, min(32, duration))
 
     # Sync + start incoming at vol=0.
     _mixxx_post("/api/volume", {"deck": to_deck, "level": 0.0})
@@ -1850,6 +1921,28 @@ def schedule_transition(to_deck: int, at_position: int = 0, technique: str = "cr
         log.warning(
             f"[ECHO-OUT-FLOOR] caller passed duration={old_duration}, "
             f"coerced to 32s (echo_out floor)"
+        )
+
+    # ── FIX-F: per-technique musical-minimum floors ──
+    # Flash routinely picks durations far below the musical minimum for a given
+    # technique (mirrors the echo_out=15s bug above). Anything shorter than the
+    # phrase length the technique needs reads as a stutter/jump. Coerce up with a
+    # [FLOOR] warning, same shape as the echo_out block. echo_out already floored
+    # above; others keep the generic 10s clamp applied at the top of the fn.
+    _TECHNIQUE_FLOORS = {
+        "dissolve": 8,
+        "crossfade": 16,
+        "filter_sweep": 16,
+        "bass_swap": 16,
+        "riser": 16,
+    }
+    _floor = _TECHNIQUE_FLOORS.get(technique)
+    if _floor is not None and duration < _floor:
+        old_duration = duration
+        duration = _floor
+        log.warning(
+            f"[FLOOR] technique={technique} caller passed duration={old_duration}, "
+            f"coerced to {_floor}s (musical minimum)"
         )
 
     # Don't schedule if one is already pending

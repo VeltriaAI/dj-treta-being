@@ -172,6 +172,12 @@ _FIELD_DEFAULTS: dict[str, Any] = {
     "dj_paused": False,
     "library_paused": False,
 
+    # Brain-offline flag (FIX-D). Set True by the heartbeat when the LLM
+    # backend (LiteLLM) is unreachable, cleared when it recovers. Purely
+    # observability — surfaced in the state payload so the TUI/relay can
+    # show a LOUD outage banner. Does NOT gate audio; music never stops.
+    "brain_offline": False,
+
     # Sarathi Mode — copilot. Manish drives transitions on the FLX4;
     # Treta does everything else (load, plan, library) and SUGGESTS
     # transitions rather than executing them. Default ON — autonomous

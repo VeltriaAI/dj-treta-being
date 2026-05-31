@@ -83,11 +83,21 @@ class ADKRunnerMixin:
         message = types.Content(role="user", parts=[types.Part(text=instruction)])
         run_config = RunConfig(max_llm_calls=max_calls)
         result = ""
+        # FIX-C: track whether the DJ fired any tool call this invocation.
+        # A tool-call-with-no-text is a SUCCESS, not an empty drop — the
+        # heartbeat reads this flag to disambiguate true-empty (retry/defer)
+        # from a silent-but-acting decision (keep). Reset per invoke.
+        self._last_dj_made_tool_call = False
         async for event in self._dj_runner.run_async(
             session_id=self._dj_session.id, user_id="dj",
             new_message=message, run_config=run_config,
         ):
             self._process_event(event)
+            try:
+                if event.get_function_calls():
+                    self._last_dj_made_tool_call = True
+            except Exception:
+                pass
             if event.content and event.content.parts:
                 for part in event.content.parts:
                     if part.text:
