@@ -113,6 +113,8 @@ Now return JSON for the input above."""
             api_base=cfg.llm.api_base, api_key=cfg.llm.api_key,
             temperature=0.1, timeout=15,
         )
+        from .billing_rates import bill_from_response
+        bill_from_response(resp, "library")
         raw = resp.choices[0].message.content.strip()
         if "```" in raw:
             raw = raw.split("```", 2)[1]
@@ -211,6 +213,8 @@ def genre_matches(artist: str, title: str, genre: str,
             api_base=cfg.llm.api_base, api_key=cfg.llm.api_key,
             temperature=0.0, timeout=12,
         )
+        from .billing_rates import bill_from_response
+        bill_from_response(resp, "library")
         raw = resp.choices[0].message.content.strip()
         if "```" in raw:
             raw = raw.split("```", 2)[1]

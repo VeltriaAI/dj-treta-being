@@ -214,6 +214,8 @@ Return JSON for the input above."""
             api_base=cfg.llm.api_base, api_key=cfg.llm.api_key,
             temperature=0.1, timeout=15,
         )
+        from .billing_rates import bill_from_response
+        bill_from_response(resp, "dj_treta")
         text = resp.choices[0].message.content.strip()
         if "```" in text:
             text = text.split("```", 2)[1]

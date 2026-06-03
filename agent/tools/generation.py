@@ -156,6 +156,8 @@ def generate_track(prompt: str, bpm: int = 128, key: str = "C minor",
                 api_base=cfg.llm.api_base, api_key=cfg.llm.api_key,
                 temperature=0.9, timeout=10,
             )
+            from ..billing_rates import bill_from_response
+            bill_from_response(_name_resp, "producer")
             track_name = _name_resp.choices[0].message.content.strip().strip('"\'')[:50]
             track_name = re.sub(r'[<>:"/\\|?*]', '', track_name).strip()
         except Exception:
@@ -180,6 +182,8 @@ def generate_track(prompt: str, bpm: int = 128, key: str = "C minor",
             api_base=cfg.llm.api_base, api_key=cfg.llm.api_key,
             temperature=0.5, timeout=10,
         )
+        from ..billing_rates import bill_from_response
+        bill_from_response(_mood_resp, "producer")
         _raw = _mood_resp.choices[0].message.content.strip()
         if "```" in _raw:
             _raw = _raw.split("```")[1].split("```")[0].strip()
