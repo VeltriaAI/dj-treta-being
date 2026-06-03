@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import threading
 import time
 from pathlib import Path
 from .runtime_paths import runtime_path
@@ -11,6 +12,14 @@ log = logging.getLogger("dj-treta")
 
 THINKING_FILE = runtime_path("thinking.log")
 BILLING_FILE = runtime_path("billing.json")
+
+# Serialize the billing read-modify-write. The daemon bills from several threads
+# (being, planner, heartbeat, DJ + direct-call sites), so without this two
+# concurrent updates can lose-update or, across processes, corrupt the JSON
+# (observed: a stale second daemon racing this file produced garbage totals).
+# This guards intra-process races; the cross-process case is handled by not
+# running two daemons (see the restart/zombie note).
+_billing_lock = threading.Lock()
 
 
 def _apply_billing(agent_name: str, inp: int, out: int, cost: float,
@@ -24,25 +33,26 @@ def _apply_billing(agent_name: str, inp: int, out: int, cost: float,
       by_agent{name: {input, output, cost, calls}}, session_start,
       key_spend (optional: gateway's cumulative spend on the key).
     """
-    billing = json.loads(BILLING_FILE.read_text()) if BILLING_FILE.exists() else {
-        "total_input_tokens": 0, "total_output_tokens": 0, "total_cost_usd": 0.0,
-        "calls": 0, "by_agent": {}, "session_start": time.time()
-    }
-    billing["total_input_tokens"] += inp
-    billing["total_output_tokens"] += out
-    billing["calls"] += 1
-    billing["total_cost_usd"] += cost
-    a = billing["by_agent"].setdefault(agent_name, {"input": 0, "output": 0, "cost": 0.0, "calls": 0})
-    a["input"] += inp
-    a["output"] += out
-    a["cost"] += cost
-    a["calls"] += 1
-    if key_spend is not None:
-        # Gateway's authoritative cumulative spend on this key — a cross-check
-        # anchor for the session total (see billing verification).
-        billing["key_spend"] = key_spend
-    BILLING_FILE.write_text(json.dumps(billing, indent=2))
-    return billing
+    with _billing_lock:
+        billing = json.loads(BILLING_FILE.read_text()) if BILLING_FILE.exists() else {
+            "total_input_tokens": 0, "total_output_tokens": 0, "total_cost_usd": 0.0,
+            "calls": 0, "by_agent": {}, "session_start": time.time()
+        }
+        billing["total_input_tokens"] += inp
+        billing["total_output_tokens"] += out
+        billing["calls"] += 1
+        billing["total_cost_usd"] += cost
+        a = billing["by_agent"].setdefault(agent_name, {"input": 0, "output": 0, "cost": 0.0, "calls": 0})
+        a["input"] += inp
+        a["output"] += out
+        a["cost"] += cost
+        a["calls"] += 1
+        if key_spend is not None:
+            # Gateway's authoritative cumulative spend on this key — a cross-check
+            # anchor for the session total (see billing verification).
+            billing["key_spend"] = key_spend
+        BILLING_FILE.write_text(json.dumps(billing, indent=2))
+        return billing
 
 
 def bill_external(agent_name: str, inp: int, out: int, cost: float | None = None) -> None:
