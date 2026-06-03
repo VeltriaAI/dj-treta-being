@@ -44,6 +44,8 @@ class SetsMixin:
                     api_base=cfg.llm.api_base, api_key=cfg.llm.api_key,
                     temperature=0.9, timeout=10,
                 )
+                from .billing_rates import bill_from_response
+                bill_from_response(resp, "dj_treta")
                 title = resp.choices[0].message.content.strip()[:50]
             except Exception:
                 title = f"Set #{set_number}"

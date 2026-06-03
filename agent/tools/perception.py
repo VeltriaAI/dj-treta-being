@@ -100,6 +100,8 @@ def hear_music(deck: int = 0, duration: int = 10) -> str:
             temperature=0.5,
             timeout=30,
         )
+        from ..billing_rates import bill_from_response
+        bill_from_response(resp, "dj_treta")
         return resp.choices[0].message.content.strip()
     except Exception as e:
         return f"Gemini audio error: {e}"
@@ -224,6 +226,8 @@ def analyze_track(track_path: str) -> str:
             temperature=0.3,
             timeout=60,
         )
+        from ..billing_rates import bill_from_response
+        bill_from_response(resp, "dj_treta")
 
         raw = resp.choices[0].message.content.strip()
 
@@ -388,6 +392,8 @@ def preview_track(track_path: str, position: int = 30, duration: int = 10) -> st
             temperature=0.5,
             timeout=30,
         )
+        from ..billing_rates import bill_from_response
+        bill_from_response(resp, "dj_treta")
         return resp.choices[0].message.content.strip()
     except Exception as e:
         return f"Preview error: {e}"

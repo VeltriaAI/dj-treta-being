@@ -222,6 +222,8 @@ def _enrich_track(filepath: Path, genre: str, yt_meta: dict = None):
                 api_base=cfg.llm.api_base, api_key=cfg.llm.api_key,
                 temperature=0.5, timeout=15,
             )
+            from ..billing_rates import bill_from_response
+            bill_from_response(resp, "library")
             raw = resp.choices[0].message.content.strip()
             if "```" in raw:
                 raw = raw.split("```")[1].split("```")[0].strip()

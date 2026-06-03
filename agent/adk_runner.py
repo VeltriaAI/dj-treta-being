@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import threading
 import time
 from pathlib import Path
 from .runtime_paths import runtime_path
@@ -11,6 +12,66 @@ log = logging.getLogger("dj-treta")
 
 THINKING_FILE = runtime_path("thinking.log")
 BILLING_FILE = runtime_path("billing.json")
+
+# Serialize the billing read-modify-write. The daemon bills from several threads
+# (being, planner, heartbeat, DJ + direct-call sites), so without this two
+# concurrent updates can lose-update or, across processes, corrupt the JSON
+# (observed: a stale second daemon racing this file produced garbage totals).
+# This guards intra-process races; the cross-process case is handled by not
+# running two daemons (see the restart/zombie note).
+_billing_lock = threading.Lock()
+
+
+def _apply_billing(agent_name: str, inp: int, out: int, cost: float,
+                   key_spend: float | None = None) -> dict:
+    """Read-modify-write the shared billing.json accumulator. The single place
+    the schema is defined, so ADK-path billing (_update_billing) and direct-call
+    billing (bill_external) stay consistent. Returns the updated dict.
+
+    Schema (consumed by TUI + ws_server + session — do not drop fields):
+      total_input_tokens, total_output_tokens, total_cost_usd, calls,
+      by_agent{name: {input, output, cost, calls}}, session_start,
+      key_spend (optional: gateway's cumulative spend on the key).
+    """
+    with _billing_lock:
+        billing = json.loads(BILLING_FILE.read_text()) if BILLING_FILE.exists() else {
+            "total_input_tokens": 0, "total_output_tokens": 0, "total_cost_usd": 0.0,
+            "calls": 0, "by_agent": {}, "session_start": time.time()
+        }
+        billing["total_input_tokens"] += inp
+        billing["total_output_tokens"] += out
+        billing["calls"] += 1
+        billing["total_cost_usd"] += cost
+        a = billing["by_agent"].setdefault(agent_name, {"input": 0, "output": 0, "cost": 0.0, "calls": 0})
+        a["input"] += inp
+        a["output"] += out
+        a["cost"] += cost
+        a["calls"] += 1
+        if key_spend is not None:
+            # Gateway's authoritative cumulative spend on this key — a cross-check
+            # anchor for the session total (see billing verification).
+            billing["key_spend"] = key_spend
+        BILLING_FILE.write_text(json.dumps(billing, indent=2))
+        return billing
+
+
+def bill_external(agent_name: str, inp: int, out: int, cost: float | None = None) -> None:
+    """Bill an LLM call made OUTSIDE the ADK event loop (direct
+    ``litellm.completion`` sites — canonicalize, mood_resolver, sets, tools/*).
+    Uses the gateway's authoritative ``cost`` when the caller has it, else the
+    per-model rate map. Mirrors into the observability llm_calls row."""
+    try:
+        if cost is None:
+            from . import billing_rates
+            cost = billing_rates.cost_for(billing_rates.alias_for_agent(agent_name), inp, out)
+        _apply_billing(agent_name, inp, out, cost)
+        try:
+            from .observability import record_llm_call
+            record_llm_call(agent=agent_name, input_tokens=inp, output_tokens=out, model_cost=cost)
+        except Exception:
+            pass
+    except Exception:
+        pass
 
 
 class _CorruptionDetector(logging.Handler):
@@ -302,14 +363,21 @@ class ADKRunnerMixin:
                     except Exception:
                         pass
 
-            # Billing — usage_metadata
+            # Billing — usage_metadata. The gateway's authoritative per-call
+            # USD rides on event.custom_metadata['response_cost'] (set by the
+            # conversion wrap in agents.py); use it when present, else a
+            # per-model rate map. candidates_token_count already includes
+            # reasoning tokens — do NOT add thoughts_token_count.
             if event.usage_metadata:
                 um = event.usage_metadata
                 inp = um.prompt_token_count or 0
                 out = um.candidates_token_count or 0
                 if inp > 0 or out > 0:
-                    self._update_billing(agent_name, inp, out)
-                    # v8 Phase 8: record structured llm_calls row
+                    cm = getattr(event, "custom_metadata", None) or {}
+                    auth_cost = cm.get("response_cost")
+                    key_spend = cm.get("key_spend")
+                    cost = self._update_billing(agent_name, inp, out, auth_cost, key_spend)
+                    # v8 Phase 8: record structured llm_calls row (same cost)
                     try:
                         from .observability import record_llm_call
                         tool_calls = []
@@ -321,38 +389,32 @@ class ADKRunnerMixin:
                             input_tokens=inp,
                             output_tokens=out,
                             tool_calls=tool_calls,
+                            model_cost=cost,
                         )
                     except Exception:
                         pass
         except Exception:
             pass
 
-    def _update_billing(self, agent_name: str, inp: int, out: int):
-        """Update billing JSON file with token counts.
+    def _update_billing(self, agent_name: str, inp: int, out: int,
+                        auth_cost: float | None = None, key_spend: float | None = None) -> float:
+        """Accumulate a billed LLM call and broadcast the snapshot to the TUI.
 
-        Also broadcasts a ``billing`` WS event so the TUI can render the cost
-        line without polling the file. The file is still written for offline
-        debugging + future observability tools.
+        Cost priority: the gateway's authoritative ``auth_cost`` (response_cost)
+        when present, else the per-model rate map keyed by the agent's model
+        alias. Returns the cost charged so the caller can share it with the
+        observability row (keeping both totals identical).
         """
         try:
-            billing = json.loads(BILLING_FILE.read_text()) if BILLING_FILE.exists() else {
-                "total_input_tokens": 0, "total_output_tokens": 0, "total_cost_usd": 0.0,
-                "calls": 0, "by_agent": {}, "session_start": time.time()
-            }
-            billing["total_input_tokens"] += inp
-            billing["total_output_tokens"] += out
-            billing["calls"] += 1
-            cost = (inp / 1_000_000 * 0.10) + (out / 1_000_000 * 0.40)
-            billing["total_cost_usd"] += cost
-            if agent_name not in billing["by_agent"]:
-                billing["by_agent"][agent_name] = {"input": 0, "output": 0, "cost": 0.0, "calls": 0}
-            billing["by_agent"][agent_name]["input"] += inp
-            billing["by_agent"][agent_name]["output"] += out
-            billing["by_agent"][agent_name]["cost"] += cost
-            billing["by_agent"][agent_name]["calls"] += 1
-            BILLING_FILE.write_text(json.dumps(billing, indent=2))
+            if auth_cost is not None:
+                cost = float(auth_cost)
+            else:
+                from . import billing_rates
+                cost = billing_rates.cost_for(billing_rates.alias_for_agent(agent_name), inp, out)
+            billing = _apply_billing(agent_name, inp, out, cost, key_spend)
             # Broadcast updated billing snapshot to TUI clients.
             if hasattr(self, '_ws_broadcast'):
                 self._ws_broadcast("billing", billing)
+            return cost
         except Exception:
-            pass
+            return 0.0

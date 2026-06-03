@@ -530,6 +530,14 @@ class DJTretaBeing(
         _ensure_litellm(self.config)
         _ensure_mixxx(self.config)
 
+        # Load per-model cost rates from the gateway so billing reflects the
+        # ACTUAL price of each model used (pro vs flash), not a flat rate.
+        try:
+            from . import billing_rates
+            billing_rates.init(self.config)
+        except Exception as _e:
+            log.warning(f"billing rates init failed: {_e}")
+
         # Reset rate on both decks — clears any leftover offsets from previous session
         try:
             url = self.config.mixxx.url

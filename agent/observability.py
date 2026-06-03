@@ -17,12 +17,6 @@ from typing import Optional
 
 log = logging.getLogger("dj-treta")
 
-# Approx cost per token (Gemini Flash 3). v8 uses these for the billing
-# counter; v9 will swap for a per-model table.
-_COST_PER_INPUT_TOKEN = 0.00000025  # $0.25 per 1M
-_COST_PER_OUTPUT_TOKEN = 0.00000100  # $1.00 per 1M
-
-
 def record_llm_call(
     agent: str,
     instruction: str = "",
@@ -31,10 +25,23 @@ def record_llm_call(
     latency_ms: int = 0,
     tool_calls: Optional[list] = None,
     error: str = "",
+    model_cost: Optional[float] = None,
 ) -> float:
-    """Insert an llm_calls row. Returns the computed cost_usd."""
-    cost = (input_tokens * _COST_PER_INPUT_TOKEN
-            + output_tokens * _COST_PER_OUTPUT_TOKEN)
+    """Insert an llm_calls row. Returns the cost_usd recorded.
+
+    Cost source: the caller's authoritative ``model_cost`` (the gateway's
+    per-call USD) when provided, else the per-model rate map keyed by the
+    agent's model alias. Never the old flat per-token constants — those
+    diverged from billing.json and under-reported the real gateway bill.
+    """
+    if model_cost is not None:
+        cost = float(model_cost)
+    else:
+        try:
+            from .billing_rates import cost_for, alias_for_agent
+            cost = cost_for(alias_for_agent(agent), input_tokens, output_tokens)
+        except Exception:
+            cost = 0.0
     try:
         from .db import get_db
         db = get_db()

@@ -16,6 +16,49 @@ from google.adk.models.lite_llm import LiteLlm
 from google.adk.tools import FunctionTool, LongRunningFunctionTool
 
 from .config import Config
+
+# ── Cost capture ────────────────────────────────────────────────────────────
+# The gateway (LiteLLM) computes the exact per-call USD and returns it on the
+# litellm response as `_hidden_params['response_cost']`. ADK's own event carries
+# only token counts (its usage_metadata has no cost field), so without this the
+# billing layer can never see the real price and falls back to a flat rate.
+#
+# We wrap the ONE module-level seam ADK uses to convert a litellm response into
+# an ADK LlmResponse — `_model_response_to_generate_content_response` — and stash
+# the authoritative cost (plus the model alias and cumulative key spend) onto
+# `LlmResponse.custom_metadata`. adk_runner._process_event then reads
+# `event.custom_metadata['response_cost']` and bills it verbatim, with automatic
+# per-agent attribution (the event already knows its author). Non-streaming only,
+# which is all DJ Treta uses. No fork, no monkey-patching of the public API.
+import google.adk.models.lite_llm as _adk_litellm
+
+_orig_convert = _adk_litellm._model_response_to_generate_content_response
+
+
+def _convert_with_cost(response, *args, **kwargs):
+    llm_resp = _orig_convert(response, *args, **kwargs)
+    try:
+        hp = getattr(response, "_hidden_params", None) or {}
+        rc = hp.get("response_cost")
+        if rc is not None:
+            md = dict(llm_resp.custom_metadata or {})
+            md["response_cost"] = float(rc)
+            hdrs = hp.get("additional_headers") or {}
+            md["model_group"] = hdrs.get("llm_provider-x-litellm-model-group")
+            ks = hdrs.get("llm_provider-x-litellm-key-spend")
+            if ks is not None:
+                try:
+                    md["key_spend"] = float(ks)
+                except (TypeError, ValueError):
+                    pass
+            llm_resp.custom_metadata = md
+    except Exception:
+        pass
+    return llm_resp
+
+
+_adk_litellm._model_response_to_generate_content_response = _convert_with_cost
+# ────────────────────────────────────────────────────────────────────────────
 from .tools import (
     # Mixer tools (19)
     get_dj_status, get_deck_info, load_track, play_deck, pause_deck,

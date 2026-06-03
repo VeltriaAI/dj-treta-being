@@ -14,7 +14,19 @@ from agent.observability import (
 
 class TestRecordLLMCall:
 
+    @pytest.fixture(autouse=True)
+    def _billing_rates(self):
+        """Configure per-model rates so the fallback path (no model_cost) resolves
+        to gateway flash/pro rates instead of $0/unknown-alias."""
+        from types import SimpleNamespace
+        from agent import billing_rates as br
+        br._rates = dict(br._STATIC_RATES)
+        br._config = SimpleNamespace(
+            llm=SimpleNamespace(model="openai/gemini-flash", being_model="openai/gemini-pro"))
+        yield
+
     def test_insert_creates_row(self, test_db):
+        # Authoritative gateway cost is passed through verbatim.
         cost = record_llm_call(
             agent="planner",
             instruction="plan something deep",
@@ -22,8 +34,9 @@ class TestRecordLLMCall:
             output_tokens=200,
             latency_ms=1500,
             tool_calls=[{"name": "list_library_tracks", "args": "{}"}],
+            model_cost=0.30409,
         )
-        assert cost > 0.0
+        assert cost == 0.30409
 
         from agent.db import get_db
         db = get_db()
@@ -33,21 +46,28 @@ class TestRecordLLMCall:
             assert row["input_tokens"] == 1000
             assert row["output_tokens"] == 200
             assert row["latency_ms"] == 1500
-            assert row["cost_usd"] > 0
+            assert abs(row["cost_usd"] - 0.30409) < 1e-9
         finally:
             db.close()
 
-    def test_cost_computation(self, test_db):
-        # 1M input + 1M output tokens → roughly $1.25
+    def test_cost_computation_uses_per_model_rate(self, test_db):
+        # No model_cost → falls back to the per-model rate map. dj_treta is a
+        # subagent → flash ($1.5/M in, $9/M out): 1M+1M = $10.50 (NOT the old
+        # flat ~$1.25 — that flat rate was the bug).
         cost = record_llm_call(
             agent="dj_treta",
             input_tokens=1_000_000,
             output_tokens=1_000_000,
         )
-        assert 1.0 <= cost <= 2.0
+        assert abs(cost - 10.5) < 1e-6
+
+    def test_authoritative_cost_overrides_ratemap(self, test_db):
+        cost = record_llm_call(agent="dj_treta", input_tokens=1_000_000,
+                               output_tokens=1_000_000, model_cost=0.42)
+        assert cost == 0.42
 
     def test_zero_tokens_still_records(self, test_db):
-        cost = record_llm_call(agent="being", input_tokens=0, output_tokens=0)
+        cost = record_llm_call(agent="dj_treta", input_tokens=0, output_tokens=0)
         assert cost == 0.0
 
 
