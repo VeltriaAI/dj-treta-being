@@ -519,6 +519,7 @@ def build_planner_v8_message(
     feedback_line: str = "",
     external_decks: list[int] | None = None,
     workspace_line: str = "",
+    current_key_camelot: str = "",
 ) -> str:
     """Build the v8 planner prompt — asks for STRICT JSON output.
 
@@ -534,6 +535,7 @@ def build_planner_v8_message(
     """
     import time as _time
     import json as _json
+    from .camelot import relationship as _relationship
 
     mood_slug = (mood_profile or {}).get("canonical_slug") or mood or "melodic-techno"
 
@@ -569,6 +571,21 @@ def build_planner_v8_message(
             f"Prioritize this above BPM/key matching."
         )
 
+    # Harmonic rubric — only surfaced when we actually know the current key, so
+    # the model ranks on a COMPUTED relationship label per candidate rather than
+    # eyeballing raw Camelot codes (and stays silent when key is unknown).
+    harmonic_line = ""
+    if current_key_camelot:
+        harmonic_line = (
+            f"\nCurrent track key: {current_key_camelot} (Camelot). Each library "
+            f"entry carries `key_vs_now`: COMPATIBLE (same / ±1 / relative / +7 "
+            f"energy-boost — seamless blend), BRIDGEABLE (±2 whole-step — only over "
+            f"a breakdown), DISSONANT (clashes — avoid for rank 1, or mask with "
+            f"echo_out), UNKNOWN (key missing — judge on BPM/energy). Prefer "
+            f"COMPATIBLE for rank 1; never put a DISSONANT track at rank 1 unless a "
+            f"directive/request overrides."
+        )
+
     # Phase 7 co-being mode: one or more decks claimed by external Beings.
     # Planner stays advisory for treta-owned decks only.
     ownership_line = ""
@@ -590,6 +607,7 @@ def build_planner_v8_message(
                 ).strip(" -"),
                 "bpm": t.get("bpm"),
                 "key_camelot": t.get("key_camelot"),
+                "key_vs_now": _relationship(current_key_camelot, t.get("key_camelot") or ""),
                 "energy": t.get("energy_peak"),
                 "genre": t.get("genre"),
                 "mood": t.get("mood"),
@@ -635,6 +653,7 @@ def build_planner_v8_message(
         "<now_playing>" + current_info + "</now_playing>\n"
         f"<mood>{mood_slug}{profile_line}</mood>\n"
         f"<already_played>DO NOT repeat any of these: {played_list}</already_played>"
+        + harmonic_line
         + directive_line
         + intent_line
         + ownership_line
@@ -649,7 +668,9 @@ def build_planner_v8_message(
         "<rules>\n"
         "- Return exactly 5 candidates ranked 1 (best) to 5.\n"
         "- Use `path` values EXACTLY as they appear in <library>.\n"
-        "- Rank 1 should fit the current track BPM / key / energy best.\n"
+        "- Rank 1 should fit the current track BPM / key / energy best — "
+        "use each entry's `key_vs_now` label for harmonic fit (prefer "
+        "COMPATIBLE; avoid DISSONANT at rank 1).\n"
         "- Lower ranks offer valid alternates if rank 1 is unavailable.\n"
         "- Never repeat a title from <already_played>.\n"
         "- reasoning_summary: one paragraph on your overall arc strategy.\n"
@@ -673,6 +694,7 @@ def build_planner_v9_message(
     feedback_line: str = "",
     external_decks: list[int] | None = None,
     workspace_line: str = "",
+    current_key_camelot: str = "",
 ) -> str:
     """v9 planner prompt: dataset-driven candidates, current track full timeline.
 
@@ -685,6 +707,7 @@ def build_planner_v9_message(
     """
     import json as _json
     import time as _time
+    from .camelot import relationship as _relationship
 
     mood_slug = (mood_profile or {}).get("canonical_slug") or mood or "melodic-techno"
 
@@ -704,6 +727,15 @@ def build_planner_v9_message(
         profile_line = (
             f"\nResolved mood profile: {' | '.join(bits)} "
             f"(confidence {conf:.2f})."
+        )
+
+    harmonic_line = ""
+    if current_key_camelot:
+        harmonic_line = (
+            f"\nCurrent track key: {current_key_camelot} (Camelot). Each candidate "
+            f"line ends with key_vs_now=COMPATIBLE (same / ±1 / relative / +7 boost), "
+            f"BRIDGEABLE (±2, only over a breakdown), DISSONANT (clashes), or UNKNOWN "
+            f"(key missing). Prefer COMPATIBLE for rank 1; avoid DISSONANT at rank 1."
         )
 
     directive_line = ""
@@ -760,9 +792,11 @@ def build_planner_v9_message(
         sim = c.get("similarity_score")
         sim_str = f" sim={sim:.2f}" if sim is not None else ""
         ident = c.get("path") or f"mbid:{c.get('mbid','')[:8]}|vid:{c.get('video_id','')}"
+        rel = _relationship(current_key_camelot, key) if current_key_camelot else ""
+        rel_str = f" key_vs_now={rel}" if rel else ""
         candidate_lines.append(
             f"#{rank} [{dl}]{sim_str} {artist} - {title} "
-            f"| {bpm}bpm {key} e{energy} {year} {sub}"
+            f"| {bpm}bpm {key} e{energy} {year} {sub}{rel_str}"
         )
         candidate_lines.append(f"    ref: {ident}")
 
@@ -790,6 +824,7 @@ def build_planner_v9_message(
         + f"\nAlready played (DO NOT repeat): {played_list}\n"
         f"Current mood: {mood_slug}."
         + profile_line
+        + harmonic_line
         + directive_line
         + intent_line
         + ownership_line

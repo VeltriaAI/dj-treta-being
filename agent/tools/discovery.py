@@ -178,14 +178,14 @@ def _enrich_track(filepath: Path, genre: str, yt_meta: dict = None):
     try:
         from ..audio_analysis import analyze_audio
         from ..db import upsert_track
-        from ..camelot import KEY_TO_CAMELOT
+        from ..camelot import to_camelot
 
         # Librosa analysis — BPM, key, energy, sections
         analysis = analyze_audio(str(filepath))
 
         bpm = analysis.get("bpm", 0)
         key = analysis.get("key", "")
-        key_camelot = KEY_TO_CAMELOT.get(key, "")
+        key_camelot = to_camelot(key)
         energy_peak = analysis.get("energy_peak", 5)
         duration = analysis.get("duration_seconds", 0)
         timeline = analysis.get("timeline", [])

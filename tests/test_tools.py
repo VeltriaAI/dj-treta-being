@@ -115,6 +115,51 @@ class TestCamelotCompatibleKeys:
         assert mixxx_key_to_camelot(0) is None     # INVALID
 
 
+class TestEnharmonicAndRelationship:
+    """Regression coverage for the 2026-06-03 harmonic-mixing fixes."""
+
+    def test_enharmonic_spellings_resolve(self):
+        """FIX #1: librosa emits sharp spellings (C#, Abm) the canonical table
+        lacked, which silently produced "" and dropped the key. to_camelot must
+        resolve them to their flat equivalents."""
+        from agent.camelot import to_camelot
+        assert to_camelot("C#") == "3B"    # == Db
+        assert to_camelot("Abm") == "1A"   # == G#m
+        assert to_camelot("D#") == "5B"    # == Eb
+        assert to_camelot("Gbm") == "11A"  # == F#m
+        # Canonical spellings still work, unknown still empty.
+        assert to_camelot("Db") == "3B"
+        assert to_camelot("Am") == "8A"
+        assert to_camelot("nonsense") == ""
+        assert to_camelot("") == ""
+
+    def test_score_accepts_camelot_codes(self):
+        """FIX #2: the live planner passes Camelot CODES ("8A"), not musical
+        names. The scorer must differentiate them instead of returning neutral 5
+        for every pair."""
+        assert key_compatibility_score("8A", "8A") == 10  # identical
+        assert key_compatibility_score("8A", "8B") == 8   # relative
+        assert key_compatibility_score("8A", "9A") == 8   # +1 on wheel
+        assert key_compatibility_score("8A", "2B") == 2   # far apart
+        # Musical names still work (back-compat with existing callers/tests).
+        assert key_compatibility_score("Am", "Am") == 10
+        assert key_compatibility_score("Am", "C") == 8
+
+    def test_relationship_classifier(self):
+        """FIX #3: relationship() must classify per the DJ Camelot rubric."""
+        from agent.camelot import relationship
+        assert relationship("8A", "8A") == "COMPATIBLE"   # same
+        assert relationship("8A", "9A") == "COMPATIBLE"   # +1 fifth
+        assert relationship("8A", "7A") == "COMPATIBLE"   # -1 fifth
+        assert relationship("8A", "8B") == "COMPATIBLE"   # relative major/minor
+        assert relationship("8A", "3A") == "COMPATIBLE"   # +7 energy boost
+        assert relationship("8A", "10A") == "BRIDGEABLE"  # +2 whole step
+        assert relationship("8A", "2B") == "DISSONANT"    # clash
+        assert relationship("8A", "") == "UNKNOWN"        # missing key
+        # Accepts musical names too.
+        assert relationship("Am", "Am") == "COMPATIBLE"
+
+
 class TestScheduleTransition:
 
     def test_schedule_transition_writes_file(self, mock_mixxx):

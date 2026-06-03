@@ -397,10 +397,12 @@ class PlannerMixin:
         )
 
         current_info = "NOTHING — silence!"
+        current_key_camelot = ""
         if current_meta:
             bpm = current_meta.get('bpm') or 0
             key = current_meta.get('key_musical') or '?'
             energy = current_meta.get('energy_peak') or '?'
+            current_key_camelot = current_meta.get('key_camelot') or ""
             current_info = f"{current_track} | BPM:{bpm:.0f} Key:{key} Energy:{energy}"
 
         # Read shape directive (free-text) for prompt injection. We no
@@ -498,6 +500,7 @@ class PlannerMixin:
                 feedback_line=feedback_line,
                 external_decks=external_decks,
                 workspace_line=workspace_line,
+                current_key_camelot=current_key_camelot,
             )
         else:
             log.info(
@@ -515,6 +518,7 @@ class PlannerMixin:
                 feedback_line=feedback_line,
                 external_decks=external_decks,
                 workspace_line=workspace_line,
+                current_key_camelot=current_key_camelot,
             )
         result = self._invoke_planner(planner_msg)
 
