@@ -21,6 +21,8 @@ dependencies = [
     "librosa",
     "websockets",
     "anyio",
+    "numpy",
+    "pandas",
 ]
 
 [project.scripts]

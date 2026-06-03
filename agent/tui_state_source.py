@@ -392,6 +392,15 @@ class WebSocketRemoteStateSource(StateSource):
                 "(or DJTRETA_RELAY_TOKEN) env var."
             )
 
+        # 'talk' runs the Being agent server-side (up to 20 tool calls on a
+        # reasoning model) and can legitimately take well over a minute. The
+        # default 10s wait abandons the response future before her reply
+        # arrives — the user sees a TimeoutError and "her response never came
+        # through" even though the server finished. Floor the wait above the
+        # agent's own ceiling for these slow LLM-backed commands.
+        if name == "talk":
+            timeout = max(timeout, 150.0)
+
         cmd_id = uuid.uuid4().hex
         payload = {"type": "command", "id": cmd_id, "command": name, "args": args or {}}
 

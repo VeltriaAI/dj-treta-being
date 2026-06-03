@@ -440,6 +440,41 @@ def get_subagent_activity(window_minutes: int = 5) -> dict:
         }
 
 
+def read_workspace(n: int = 20) -> dict:
+    """Read Treta's shared workspace notebook — the cross-organ event bus.
+
+    The notebook (agent.notebook) is the append-only JSONL log where every
+    organ (DJ, planner, library, Treta herself) writes percepts, decisions,
+    transitions, claims, directives, generated tracks, and reflections. This
+    tool surfaces a live snapshot so Treta can read what her own organs are
+    saying without parsing the raw thinking log.
+
+    Read-only. Never mutates the notebook.
+
+    Args:
+        n: how many recent events to return in `events`. Default 20.
+
+    Returns:
+        dict with keys:
+          ok      bool — True when a notebook singleton is registered.
+          now     dict — Notebook.now_view() (now_playing/up_next/room_sense/
+                  mood/recent) when available, else {}.
+          events  list — Notebook.tail(n) most-recent events, else [].
+        On any fault: {"ok": False, "error": "<message>"}.
+    """
+    try:
+        from ..notebook import get_notebook
+        nb = get_notebook()
+        return {
+            "ok": bool(nb),
+            "now": nb.now_view() if nb else {},
+            "events": nb.tail(n) if nb else [],
+        }
+    except Exception as exc:
+        log.debug(f"visibility: read_workspace failed: {exc}")
+        return {"ok": False, "error": str(exc)}
+
+
 def tail_thinking_log(n: int = 30, agent_filter: str = "") -> list[str]:
     """Read the last N lines of the thinking log, optionally filtered.
 

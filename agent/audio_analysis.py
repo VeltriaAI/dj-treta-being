@@ -9,6 +9,64 @@ import numpy as np
 import librosa
 
 
+# --- E3/E5 ---  Section-block vocabulary + colors.
+#
+# deadmau5's Autopilot presents sections as colored blocks: START / BREAK /
+# LOOP / DROP. Our librosa analyzer already emits a finer-grained timeline
+# (intro/buildup/drop/breakdown/outro); this maps that to his DJ-native
+# vocabulary and attaches a stable color per block so a color-coded waveform
+# can be rendered later (Agent D's visuals). Colors echo Rekordbox cue hues.
+SECTION_BLOCK_MAP = {
+    "intro":     "START",
+    "buildup":   "DROP",   # rising energy → leads into the drop
+    "drop":      "DROP",
+    "main":      "DROP",
+    "breakdown": "BREAK",
+    "outro":     "BREAK",  # the mix-out tail behaves like a break for cueing
+}
+
+# Hex colors per block (Rekordbox-ish palette). LOOP is assigned when a
+# section carries a loop cue; otherwise sections never become LOOP from
+# energy alone.
+BLOCK_COLORS = {
+    "START": "#22A0E6",   # blue
+    "BREAK": "#E6A422",   # amber
+    "LOOP":  "#9B22E6",   # purple
+    "DROP":  "#E62D2D",   # red
+}
+
+
+def map_section_to_block(section_name: str, is_loop: bool = False) -> str:
+    """Map a fine-grained section name to the START/BREAK/LOOP/DROP block
+    vocabulary. A section flagged as carrying a loop cue becomes LOOP."""
+    if is_loop:
+        return "LOOP"
+    return SECTION_BLOCK_MAP.get((section_name or "").lower(), "DROP")
+
+
+def block_color(block: str) -> str:
+    """Hex color for a block (for the color-coded waveform)."""
+    return BLOCK_COLORS.get((block or "").upper(), "#888888")
+
+
+def annotate_blocks(sections: list, loop_section_indices: set | None = None) -> list:
+    """Return a NEW list of section dicts with `block` + `color` added.
+
+    Additive: original keys (start/end/section/energy) are preserved. Pass
+    `loop_section_indices` (indices into `sections`) to mark those as LOOP —
+    importers do this when a loop cue falls inside a section.
+    """
+    loop_section_indices = loop_section_indices or set()
+    out = []
+    for i, s in enumerate(sections or []):
+        block = map_section_to_block(s.get("section", ""), is_loop=(i in loop_section_indices))
+        ns = dict(s)
+        ns["block"] = block
+        ns["color"] = block_color(block)
+        out.append(ns)
+    return out
+
+
 # Key detection — chroma to musical key mapping
 KEY_NAMES = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B']
 KEY_PROFILES = {
@@ -62,6 +120,10 @@ def analyze_audio(file_path: str) -> dict:
 
     # Compute sections from energy curve
     sections = _detect_sections(rms_norm, rms_times, duration, bpm)
+    # --- E3/E5 ---  attach START/BREAK/LOOP/DROP block + color to each section
+    # so a color-coded waveform can be rendered downstream. Additive: keeps the
+    # original section/energy keys. (librosa path has no loop cues → no LOOP.)
+    sections = annotate_blocks(sections)
 
     # Energy peak (overall)
     energy_peak = int(np.ceil(np.percentile(rms_norm, 90) * 10))
@@ -84,6 +146,8 @@ def analyze_audio(file_path: str) -> dict:
         "mix_in_seconds": round(mix_in, 1),
         "mix_out_seconds": round(mix_out, 1),
         "beat_count": len(beat_times),
+        # --- E3/E5 ---  provenance: this analysis came from librosa, not an import.
+        "analysis_source": "librosa",
     }
 
 

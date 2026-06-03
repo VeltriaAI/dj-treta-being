@@ -155,8 +155,8 @@ def analyze_track(track_path: str) -> str:
         from ..audio_analysis import analyze_audio
         import time as _time
         analysis = analyze_audio(str(path))
-        from ..camelot import KEY_TO_CAMELOT
-        key_camelot = KEY_TO_CAMELOT.get(analysis["key"], "")
+        from ..camelot import to_camelot
+        key_camelot = to_camelot(analysis["key"])
         timeline_json = json.dumps(analysis["timeline"])
         upsert_track(
             path=str(path), title=title,
@@ -253,9 +253,9 @@ def analyze_track(track_path: str) -> str:
             return raw
 
         # Parse key to Camelot
-        from ..camelot import KEY_TO_CAMELOT
+        from ..camelot import to_camelot
         key_musical = data.get("key", "")
-        key_camelot = KEY_TO_CAMELOT.get(key_musical, "")
+        key_camelot = to_camelot(key_musical)
 
         # Get real duration from ffprobe -- Gemini hallucinates timelines beyond track length
         real_duration = None

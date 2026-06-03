@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>VDJ Treta — clip preview</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; cursor: none; }
+  video { position: fixed; inset: 0; width: 100vw; height: 100vh; object-fit: cover; background: #000; }
+  #label {
+    position: fixed; left: 0; right: 0; bottom: 40px; text-align: center; z-index: 5;
+    font: 600 22px/1.4 ui-sans-serif, system-ui, -apple-system, sans-serif;
+    color: rgba(255,255,255,.92); letter-spacing: .06em;
+    text-shadow: 0 2px 16px rgba(0,0,0,.9); pointer-events: none;
+  }
+  #label small { display: block; font-weight: 400; font-size: 14px; opacity: .6; letter-spacing: .2em; }
+  #hint {
+    position: fixed; left: 0; right: 0; top: 24px; text-align: center; z-index: 5;
+    font: 12px/1.4 ui-monospace, monospace; color: rgba(255,255,255,.4);
+  }
+</style>
+</head>
+<body>
+  <video id="v" muted playsinline></video>
+  <div id="label"></div>
+  <div id="hint">→ / Space : next   ·   ← : prev   ·   F : fullscreen</div>
+<script>
+const CLIPS = [
+  { file: 'explore/1-liquid-chrome.mp4', name: 'Liquid Chrome', note: 'molten metal · oil-slick iridescence' },
+  { file: 'explore/2-neon-tunnel.mp4',   name: 'Neon Grid Tunnel', note: 'synthwave flight · high energy' },
+  { file: 'explore/3-ink-bloom.mp4',     name: 'Ink Bloom', note: 'ink in black water · calm' },
+  { file: 'explore/4-crystal-prism.mp4', name: 'Crystal Prism', note: 'refracted light · sharp' },
+];
+const v = document.getElementById('v');
+const label = document.getElementById('label');
+let i = 0;
+function show(n) {
+  i = (n + CLIPS.length) % CLIPS.length;
+  const c = CLIPS[i];
+  v.src = c.file + '?t=' + Date.now();
+  v.load(); v.play().catch(() => {});
+  label.innerHTML = `${i + 1} / ${CLIPS.length} &nbsp; ${c.name}<small>${c.note}</small>`;
+}
+v.addEventListener('ended', () => show(i + 1));   // play through, then advance
+addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); show(i + 1); }
+  else if (e.key === 'ArrowLeft') show(i - 1);
+  else if (e.key === 'f' || e.key === 'F') {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+    else document.exitFullscreen();
+  }
+});
+addEventListener('click', () => show(i + 1));     // tap anywhere → next
+document.addEventListener('visibilitychange', () => { if (!document.hidden) v.play().catch(() => {}); });
+show(0);
+</script>
+</body>
+</html>

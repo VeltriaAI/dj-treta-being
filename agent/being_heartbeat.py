@@ -103,6 +103,7 @@ class BeingHeartbeatMixin:
             save_learning, recall_learnings,
             read_file, write_file,
             propose_change, get_directives,
+            read_workspace,
         )
 
         def _wrap(func):
@@ -124,6 +125,7 @@ class BeingHeartbeatMixin:
                 _wrap(save_learning), _wrap(recall_learnings),
                 _wrap(read_file), _wrap(write_file),
                 _wrap(propose_change), _wrap(get_directives),
+                _wrap(read_workspace),
             ],
             description="Treta's inner consciousness — thinks, reflects, grows",
         )

@@ -215,9 +215,48 @@ class HeartbeatMixin:
         except Exception as exc:
             log.debug(f"[sarathi] manual-transition detect failed (non-fatal): {exc}")
 
+    def _litellm_liveness_probe(self):
+        """FIX-D: throttled (~60s) LiteLLM liveness probe on the heartbeat side.
+
+        The DJ brain talks to LiteLLM (:4000). When it dies the daemon keeps
+        ticking but every DJ decision errors. This is the heartbeat-side
+        watchdog: ~once a minute, if LiteLLM is unreachable, ask _ensure_litellm
+        to revive it. Debounced to at most one restart attempt per 120s, and
+        backs off after 3 attempts so we don't hammer a permanently-down proxy.
+        Music-never-stops is unaffected — this only nudges the brain back; the
+        deterministic P1/P2 safety nets keep audio alive regardless.
+        """
+        now = time.time()
+        if now - getattr(self, "_litellm_probe_at", 0.0) < 60:
+            return
+        self._litellm_probe_at = now
+        try:
+            from .main import _ensure_litellm, _litellm_reachable
+            if _litellm_reachable(self.config.llm.api_base, self.config.llm.api_key):
+                # Reachable → reset the restart back-off counter.
+                self._litellm_restart_attempts = 0
+                return
+            if getattr(self, "_litellm_restart_attempts", 0) >= 3:
+                log.debug("[LITELLM-WD] unreachable but back-off reached (>=3 attempts) — not restarting")
+                return
+            if now - getattr(self, "_litellm_restart_at", 0.0) < 120:
+                return  # restart debounce — one attempt per 120s
+            self._litellm_restart_at = now
+            self._litellm_restart_attempts = getattr(self, "_litellm_restart_attempts", 0) + 1
+            log.warning(
+                f"[LITELLM-WD] LiteLLM unreachable — restart attempt "
+                f"{self._litellm_restart_attempts}/3"
+            )
+            _ensure_litellm(self.config)
+        except Exception as exc:
+            log.debug(f"[LITELLM-WD] liveness probe failed (non-fatal): {exc}")
+
     def _heartbeat(self):
         """Pure Python heartbeat. Reads mix_out from DB. No flags, no timers."""
         from .main import _get_status, _active_idle_decks, _ensure_mixxx
+
+        # FIX-D: heartbeat-side LiteLLM liveness probe (throttled ~60s).
+        self._litellm_liveness_probe()
 
         # Sync co-being deck ownership (Phase 7) before any decisions.
         self._sync_deck_ownership()
@@ -230,6 +269,24 @@ class HeartbeatMixin:
             self.session.expire_stale()
         except Exception as exc:
             log.debug(f"directive expire_stale failed: {exc}")
+
+        # v11 Phase 1 — throttled hourly Notebook compaction. compact() is the
+        # only whole-file rewrite; it's off the hot path and caller-gated, so
+        # we fire it at most once an hour from the heartbeat (it no-ops unless
+        # the JSONL exceeds max_disk_lines). Throttle ts lives on the instance
+        # (getattr default 0.0). Fully guarded — never breaks the heartbeat.
+        try:
+            from .notebook import get_notebook
+            _nb_c = get_notebook()
+            if _nb_c is not None:
+                _now = time.time()
+                if _now - getattr(self, "_nb_compact_last", 0.0) >= 3600:
+                    self._nb_compact_last = _now
+                    dropped = _nb_c.compact()
+                    if dropped:
+                        log.debug(f"Notebook compacted: {dropped} lines dropped")
+        except Exception as exc:
+            log.debug(f"notebook compact tick failed: {exc}")
 
         # ── Self-schedule fire ─────────────────────────────────────
         # Treta can wake herself via schedule_self(). Fire any entries
@@ -332,6 +389,26 @@ class HeartbeatMixin:
         self._silence_since = None
         self._music_has_played = True
 
+        # Crossfader centered-invariant (autonomous only — in Sarathi, Manish
+        # owns the crossfader). The whole set is mixed on the channel (volume)
+        # faders with the crossfader parked at center; ANY off-center value
+        # attenuates or mutes a deck and breaks the next channel-fader blend
+        # (an incoming track raised on its volume fader stays quiet if the
+        # crossfader is shoved to the other side). Re-center whenever it has
+        # drifted and we're not mid-transition. Covers: the boot default,
+        # an interrupted blend that stranded the fader, or a stray API set.
+        # (Mixxx crossfader is -1=full deck1 .. +1=full deck2, center 0;
+        # the /api/crossfade pos 0.5 maps to center.)
+        if not _sarathi and not self._transition_pending:
+            xf = float(status.get("crossfader", 0) or 0)
+            if abs(xf) > 0.1:
+                try:
+                    httpx.post(f"{self.config.mixxx.url}/api/crossfade",
+                               json={"position": 0.5}, timeout=3)
+                    log.warning(f"[XF-GUARD] crossfader off-center at {xf:.2f} — re-centered")
+                except Exception as exc:
+                    log.debug(f"XF-GUARD recenter failed: {exc}")
+
         idle_ready = idle_loaded and idle_remaining > 60
         duration = float(d_active.get("duration", 0) or 0)
 
@@ -381,6 +458,35 @@ class HeartbeatMixin:
                     log.error(f"Auto-transition error: {e}")
                 finally:
                     self._transition_pending = False
+                    # FIX-B: stamp completion so the P4 anti-churn cooldown
+                    # (min_play_time_seconds, ~:494/:504) can see this watchdog
+                    # crossfade. Without it the cooldown was blind to end-of-
+                    # track auto-transitions → "transitions too often". Mirrors
+                    # transitions.py:152 (scheduled-transition completion stamp).
+                    if hasattr(self, "session"):
+                        self.session.last_transition_at = time.time()
+                    # v11 Phase 1 — log the completed transition to the durable
+                    # Notebook so the workspace slice (and Phase 2 wake) can see
+                    # what just happened on the decks. Salience 0.9 = high (a
+                    # deck change is the most consequential live event). Fully
+                    # guarded — a notebook fault must never break audio/billing.
+                    try:
+                        from .notebook import get_notebook
+                        _nb = get_notebook()
+                        if _nb is not None:
+                            _nb.append(
+                                author="dj",
+                                kind="transition",
+                                payload={
+                                    "technique": "auto_crossfade",
+                                    "to_deck": idle_deck,
+                                    "duration": 15,
+                                    "trigger": "track_ending_watchdog",
+                                },
+                                salience=0.9,
+                            )
+                    except Exception as _nb_exc:
+                        log.debug(f"notebook transition append failed: {_nb_exc}")
             threading.Thread(target=_auto, daemon=True).start()
             self._next_sleep = 5
             return
@@ -454,26 +560,73 @@ class HeartbeatMixin:
                 _live_sugg = bool(list_pending_suggestions())
             except Exception:
                 _live_sugg = False
-        if getattr(self.session, "dj_paused", False):
-            log.debug("P4 DJ invoke skipped — dj_paused (Treta has the wheel)")
-        elif _sarathi and _live_sugg:
-            log.debug("P4 DJ invoke skipped — live suggestion already pending (sarathi, no re-suggest)")
-        elif (getattr(self.session, "manish_in_motion", False)
-                and time.time() < getattr(self.session, "manish_motion_until", 0.0)):
-            log.debug("P4 DJ invoke skipped — manish_in_motion (he's working a transition on the FLX4)")
-        elif time.time() < deferred_until:
-            log.debug(
-                f"P4 DJ invoke skipped — deferred until {deferred_until:.0f} "
-                f"({deferred_until - time.time():.0f}s left)"
-            )
-        elif self._deck_owned_by_external(idle_deck):
-            owner = self.session.deck_ownership.get(int(idle_deck))
-            log.debug(
-                f"P4 DJ invoke skipped — idle deck {idle_deck} owned by {owner}"
-            )
-        elif (transition_window
-                and not self._agent_busy and not self._transition_pending
-                and not sched_file_exists):
+        # v11 Phase 2 refactor: the P4 priority ladder is now a single call to
+        # the frozen, unit-tested suppressor.p4_decision(). This is a PURE,
+        # behaviour-preserving extraction — the exact same inputs the inline
+        # if/elif chain read (via getattr fall-backs) are passed in, in the same
+        # order, and the returned decision is acted on EXACTLY as before:
+        #   - decision["skip"]   → log the same intent + fall through (no invoke)
+        #   - decision["invoke"] → run the unchanged DJ-invoke body below.
+        # Only the P4 branch is folded here; P1 silence / P2 emergency / P3
+        # scheduled-exec are untouched. A single `now` snapshot replaces the
+        # inline's microsecond-apart time.time() calls (same wall clock → same
+        # decision). _deck_owned_by_external is a pure guarded read, so eager
+        # evaluation for ladder_inputs is observably identical to the inline's
+        # lazy short-circuit. Guarded: if p4_decision can't be imported/used,
+        # fall back to invoking the inline action-guard directly so P4 still
+        # works (defensive only — the module is a sibling and always present).
+        from . import suppressor as _suppressor
+
+        _now_p4 = time.time()
+        _p4 = _suppressor.p4_decision(ladder_inputs={
+            "now": _now_p4,
+            "dj_paused": getattr(self.session, "dj_paused", False),
+            "sarathi": _sarathi,
+            "live_sugg": _live_sugg,
+            "manish_in_motion": getattr(self.session, "manish_in_motion", False),
+            "manish_motion_until": getattr(self.session, "manish_motion_until", 0.0),
+            "deferred_until": deferred_until,
+            "idle_deck_external": self._deck_owned_by_external(idle_deck),
+            "last_transition_at": getattr(self.session, "last_transition_at", 0.0),
+            "min_play_time_seconds": self.config.planner.min_play_time_seconds,
+            "transition_window": transition_window,
+            "agent_busy": self._agent_busy,
+            "transition_pending": self._transition_pending,
+            "sched_file_exists": sched_file_exists,
+        })
+
+        if _p4.get("skip"):
+            # Mirror the inline ladder's per-branch debug log (debug-level only,
+            # no behavioural effect). Reason strings come 1:1 from p4_decision.
+            _r = _p4.get("reason")
+            if _r == "dj_paused":
+                log.debug("P4 DJ invoke skipped — dj_paused (Treta has the wheel)")
+            elif _r == "sarathi_live_suggestion_pending":
+                log.debug("P4 DJ invoke skipped — live suggestion already pending (sarathi, no re-suggest)")
+            elif _r == "manish_in_motion":
+                log.debug("P4 DJ invoke skipped — manish_in_motion (he's working a transition on the FLX4)")
+            elif _r == "deferred":
+                log.debug(
+                    f"P4 DJ invoke skipped — deferred until {deferred_until:.0f} "
+                    f"({deferred_until - _now_p4:.0f}s left)"
+                )
+            elif _r == "idle_deck_external":
+                owner = self.session.deck_ownership.get(int(idle_deck))
+                log.debug(
+                    f"P4 DJ invoke skipped — idle deck {idle_deck} owned by {owner}"
+                )
+            elif _r == "post_transition_cooldown":
+                # v10 anti-churn: just transitioned — let the fresh track BREATHE
+                # for min_play_time_seconds before proactively mixing again.
+                # End-of-track rescue (P2) is higher priority and NOT gated, so
+                # a short track still mixes out safely.
+                _cd_left = self.config.planner.min_play_time_seconds - (
+                    _now_p4 - getattr(self.session, "last_transition_at", 0.0))
+                log.debug(f"P4 DJ invoke skipped — post-transition cooldown "
+                          f"({_cd_left:.0f}s left, letting the groove ride)")
+            # "no_window" → action guard failed (or window closed); the inline
+            # ladder simply fell through with no log. Preserve that silence.
+        elif _p4.get("invoke"):
             from .db import get_track_by_path
 
             # Get metadata for both tracks
@@ -631,6 +784,23 @@ class HeartbeatMixin:
             except Exception as exc:
                 log.debug(f"pinned-idle resolve failed: {exc}")
 
+            # v11 Phase 1 — workspace slice from the durable Notebook. A
+            # ≤3-line DERIVED digest (decision / last mix / crowd) injected
+            # into the DJ prompt like room_sense. Fully guarded: a None
+            # notebook or any fault yields "" and the slot collapses.
+            workspace_line = ""
+            try:
+                from .notebook import get_notebook
+                from .prompts import render_notebook_slice
+                _nb = get_notebook()
+                if _nb is not None:
+                    workspace_line = render_notebook_slice(
+                        _nb.now_view(),
+                        _nb.tail(8, kinds=("decision", "transition", "percept")),
+                    )
+            except Exception as exc:
+                log.debug(f"workspace_line build failed: {exc}")
+
             instruction = build_dj_user_message(
                 active_track=active_track,
                 position=position,
@@ -666,6 +836,8 @@ class HeartbeatMixin:
                 pinned_idle_path=pinned_idle_path,
                 pinned_idle_loaded=pinned_idle_loaded,
                 transition_now_pending=transition_now_pending,
+                room_sense=getattr(self.session, "room_sense", None),
+                workspace_line=workspace_line,
             )
 
             # Sarathi Mode: prepend a MODE line so the DJ agent suggests
@@ -689,13 +861,44 @@ class HeartbeatMixin:
             def _run():
                 try:
                     result = self._invoke_agent(instruction, fresh_session=True)
-                    # Suppress blank log lines on Flash empty response
-                    # (~60% drop rate on niche prompts). The safety net at
-                    # P2 catches the miss; the empty line only pollutes TUI.
-                    if (result or "").strip():
-                        log.info(f"DJ decision: {result[:500]}")
-                        if hasattr(self, '_ws_broadcast'):
-                            self._ws_broadcast("log", {"text": f"DJ decision: {result[:200]}"})
+                    made_tool_call = bool(getattr(self, "_last_dj_made_tool_call", False))
+                    # FIX-C: result=="" is AMBIGUOUS. A tool-call-with-no-text
+                    # is a SUCCESS (DJ scheduled/loaded silently), not a drop.
+                    if (result or "").strip() or made_tool_call:
+                        # Real decision. Keep the existing (text) log; tool-only
+                        # decisions already log via _process_event([CALL:...]).
+                        if (result or "").strip():
+                            log.info(f"DJ decision: {result[:500]}")
+                            if hasattr(self, '_ws_broadcast'):
+                                self._ws_broadcast("log", {"text": f"DJ decision: {result[:200]}"})
+                        # FIX-D: a successful decision proves the brain is live.
+                        self._dj_consec_conn_errors = 0
+                        if getattr(self.session, "brain_offline", False):
+                            self.session.brain_offline = False
+                    else:
+                        # TRUE-empty (no text AND no tool call). Retry ONCE with
+                        # a shortened prompt. MUST NOT retry when a tool call
+                        # already succeeded (double-fire risk) — guarded above.
+                        retry_prompt = (
+                            instruction
+                            + "\n\nCALL the tool now, or reply 'waiting'."
+                        )
+                        result2 = self._invoke_agent(retry_prompt, fresh_session=True)
+                        made_tool_call2 = bool(getattr(self, "_last_dj_made_tool_call", False))
+                        if (result2 or "").strip() or made_tool_call2:
+                            if (result2 or "").strip():
+                                log.info(f"DJ decision (retry): {result2[:500]}")
+                                if hasattr(self, '_ws_broadcast'):
+                                    self._ws_broadcast("log", {"text": f"DJ decision: {result2[:200]}"})
+                            self._dj_consec_conn_errors = 0
+                            if getattr(self.session, "brain_offline", False):
+                                self.session.brain_offline = False
+                        else:
+                            # Still true-empty after one retry — defer the DJ
+                            # invoke for 25s (reuses dj_deferred_until, honored
+                            # at ~:466/:484-488). Log once, not every tick.
+                            self.session.dj_deferred_until = time.time() + 25
+                            log.info("DJ non-deciding — deferred 25s")
                     # Shape directives no longer cleared here — they have
                     # a TTL and auto-expire via session.expire_stale().
                     # The transition_now directive (if present) will be
@@ -708,6 +911,26 @@ class HeartbeatMixin:
                     import traceback
                     log.error(f"DJ decision error: {type(e).__name__}: {e}")
                     log.error(traceback.format_exc()[:500])
+                    # FIX-D: count consecutive connection-flavoured failures.
+                    # After >=3 in a row, mark the brain offline so the rest of
+                    # the system can degrade gracefully (LiteLLM unreachable,
+                    # timeouts). Cleared on the first successful decision above.
+                    _msg = f"{type(e).__name__}: {e}".lower()
+                    if any(s in _msg for s in (
+                        "connect", "connection", "timed out", "timeout",
+                        "refused", "unreachable", "read error", "remote",
+                    )):
+                        self._dj_consec_conn_errors = (
+                            getattr(self, "_dj_consec_conn_errors", 0) + 1
+                        )
+                        if (self._dj_consec_conn_errors >= 3
+                                and not getattr(self.session, "brain_offline", False)):
+                            self.session.brain_offline = True
+                            log.warning(
+                                f"DJ brain marked offline after "
+                                f"{self._dj_consec_conn_errors} consecutive "
+                                f"connection errors"
+                            )
                 finally:
                     self._agent_busy = False
 
@@ -1035,6 +1258,53 @@ class HeartbeatMixin:
         except Exception:
             return False
 
+    def _emergency_band_paths(self) -> set:
+        """Absolute paths of analyzed library tracks inside the current mood's
+        genre folder AND BPM band. Keeps emergency_play in-energy so a
+        mislabelled off-tempo file can't be grabbed during silence.
+
+        Returns an empty set when no band info is available (caller then
+        keeps the full pool — music-never-stops still wins).
+        """
+        mp = getattr(self.session, "mood_profile", None)
+        mp = mp if isinstance(mp, dict) else {}
+        _br = mp.get("bpm_range")
+        bpm_range = _br if (isinstance(_br, (list, tuple)) and len(_br) == 2) else None
+        from .db import get_library_with_metadata as _glib
+        lib = _glib(include_unanalyzed=False) or []
+        if not lib:
+            return set()
+        genre_slugs = {
+            p.split("/", 1)[0].lower()
+            for p in (t.get("path", "") or "" for t in lib) if "/" in p
+        }
+        canonical = (mp.get("canonical_slug") or "").strip().lower()
+        raw_slug = (self.mood or "").strip().lower().replace(" ", "-")
+        slug = ""
+        for src in (canonical, raw_slug):
+            matches = [g for g in genre_slugs if g and g in src] if src else []
+            if matches:
+                slug = max(matches, key=len)
+                break
+        base = self.config.library.music_path
+        out = set()
+        for t in lib:
+            p = t.get("path", "") or ""
+            if not p:
+                continue
+            if slug and f"{slug}/" not in p:
+                continue
+            try:
+                bpm = float(t.get("bpm") or 0)
+            except Exception:
+                bpm = 0.0
+            if bpm and bpm_range and not (
+                float(bpm_range[0]) - 4.0 <= bpm <= float(bpm_range[1]) + 4.0
+            ):
+                continue
+            out.add(str(base / p))
+        return out
+
     def _emergency_play(self):
         """Silence! Direct API play first (fast + reliable), agent fallback for empty library."""
         from .main import _get_status
@@ -1053,6 +1323,21 @@ class HeartbeatMixin:
                     tracks = all_tracks  # fallback — music never stops
             else:
                 tracks = all_tracks
+            # v10: prefer in-band tracks (current genre folder + the mood's
+            # BPM range) so an emergency can never grab an off-energy or
+            # mislabelled file (e.g. a 152-BPM or Bollywood track sitting in
+            # the melodic-techno folder). Music-never-stops: if the in-band
+            # pool is empty we keep the full pool.
+            try:
+                band_paths = self._emergency_band_paths()
+                if band_paths:
+                    in_band = [t for t in tracks if t in band_paths]
+                    if in_band:
+                        tracks = in_band
+                    else:
+                        log.debug("emergency: no in-band track on disk — using full pool")
+            except Exception as exc:
+                log.debug(f"emergency band-filter skipped: {exc}")
             # BUG-11 fix (Phase A2 dry run #2 2026-04-19): prefer tracks
             # NOT already played this set. Previously emergency_play picked
             # uniformly at random, so once the library was exhausted and
@@ -1130,7 +1415,11 @@ class HeartbeatMixin:
                 # emergency play would be silent without this (music-never-stop).
                 httpx.post(f"{url}/api/volume", json={"deck": 1, "level": 1.0}, timeout=3)
                 httpx.post(f"{url}/api/play", json={"deck": 1}, timeout=3)
-                httpx.post(f"{url}/api/crossfade", json={"position": 0.0}, timeout=3)
+                # Channel-fader model: keep the crossfader CENTERED and silence
+                # the other deck via its volume fader (not by shoving the
+                # crossfader full-left, which would break the next blend).
+                httpx.post(f"{url}/api/volume", json={"deck": 2, "level": 0.0}, timeout=3)
+                httpx.post(f"{url}/api/crossfade", json={"position": 0.5}, timeout=3)
                 time.sleep(2)
                 log.info(f"Emergency play: {Path(track).stem[:50]} (rate reset)")
                 self._record_playing_tracks()
@@ -1153,7 +1442,8 @@ class HeartbeatMixin:
                     time.sleep(2)
                     httpx.post(f"{url}/api/volume", json={"deck": 1, "level": 1.0}, timeout=3)
                     httpx.post(f"{url}/api/play", json={"deck": 1}, timeout=3)
-                    httpx.post(f"{url}/api/crossfade", json={"position": 0.0}, timeout=3)
+                    httpx.post(f"{url}/api/volume", json={"deck": 2, "level": 0.0}, timeout=3)
+                    httpx.post(f"{url}/api/crossfade", json={"position": 0.5}, timeout=3)
                     log.info(f"Emergency play: {Path(filepath).stem[:50]}")
                     self._record_playing_tracks()
             elif self.config.sources.youtube:

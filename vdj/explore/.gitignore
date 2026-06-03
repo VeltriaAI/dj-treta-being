@@ -1,0 +1,4 @@
+# scratch/evaluation clips — regenerable, don't bloat git
+*.mp4
+*.png
+!.gitignore

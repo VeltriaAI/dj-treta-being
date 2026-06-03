@@ -332,3 +332,31 @@ def defer_decision(seconds: int = 30) -> dict:
         "deferred_seconds": seconds,
         "deferred_until": sess.dj_deferred_until,
     }
+
+
+# --- E3/E5 ---  Arrangement plan visibility (the leapfrog).
+def get_arrangement_plan() -> dict:
+    """Read the planner's current rolling ARRANGEMENT PLAN.
+
+    The arrangement plan is a short sequence of musical *intents* (track +
+    transition technique + energy target + bar duration) toward a high-level
+    goal (e.g. "build energy 16 bars → drop into a breakdown → loop roll →
+    next track"). The planner re-derives it every cycle so it adapts live.
+
+    Use this to see the shape Treta is currently authoring before deciding
+    how to realize the next transition, or to narrate her intent. Each intent
+    maps onto the mixer-State sequence at execution; the `technique` is a hint
+    to schedule_transition / do_transition.
+
+    Returns the plan dict ({goal, horizon_bars, intents:[...]}) or an empty
+    plan when none has been built yet.
+    """
+    sess = _session()
+    if sess is None:
+        return {"goal": "", "intents": [], "horizon_bars": 0,
+                "message": "session not registered"}
+    plan = getattr(sess, "arrangement_plan", None)
+    if not plan:
+        return {"goal": "", "intents": [], "horizon_bars": 0,
+                "message": "no arrangement plan yet"}
+    return plan

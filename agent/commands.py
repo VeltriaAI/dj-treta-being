@@ -97,6 +97,10 @@ class CommandsMixin:
 
         elif cmd == "change_mood":
             new_mood = args.get("mood", self.mood)
+            # Setting session.mood fires the registered "mood" callback
+            # (main.py _on_mood_change), which spawns the async mood resolver
+            # → session.mood_profile. (Reverted a synchronous resolve here that
+            # blocked the command server ~8s and raced the callback.)
             self.mood = new_mood
             # Update current set's mood + genre
             if self.current_set:

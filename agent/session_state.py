@@ -172,6 +172,12 @@ _FIELD_DEFAULTS: dict[str, Any] = {
     "dj_paused": False,
     "library_paused": False,
 
+    # Brain-offline flag (FIX-D). Set True by the heartbeat when the LLM
+    # backend (LiteLLM) is unreachable, cleared when it recovers. Purely
+    # observability — surfaced in the state payload so the TUI/relay can
+    # show a LOUD outage banner. Does NOT gate audio; music never stops.
+    "brain_offline": False,
+
     # Sarathi Mode — copilot. Manish drives transitions on the FLX4;
     # Treta does everything else (load, plan, library) and SUGGESTS
     # transitions rather than executing them. Default ON — autonomous
@@ -181,7 +187,7 @@ _FIELD_DEFAULTS: dict[str, Any] = {
     #     directive) instead of schedule_transition
     #   - heartbeat P2 emergency safety net tightens to remaining<12s
     #   - heartbeat P4 skips while manish_in_motion
-    "sarathi_mode": True,
+    "sarathi_mode": False,  # default AUTONOMOUS — she DJs herself on boot
     # True while Manish is physically working a transition on the FLX4
     # (detected via crossfader/deck deltas). Suppresses P4 + new
     # suggestions so Treta stays quiet during his mix. Auto-clears at
@@ -224,6 +230,14 @@ _FIELD_DEFAULTS: dict[str, Any] = {
     "playlist_updated_at": 0.0,
     "last_planner_error": "",
 
+    # --- E3/E5 ---  Rolling arrangement plan (the leapfrog). A short sequence
+    # of musical intents toward a goal, re-derived every planner cycle.
+    # Transient (not persisted) — it's regenerated within ~15s of any restart.
+    # Plain dict (ArrangementPlan.to_dict()); Agent C maps intents onto its
+    # mixer-State model at integration. See agent/arrangement.py.
+    "arrangement_plan": None,
+    "arrangement_plan_updated_at": 0.0,
+
     # Subsystem health (Phase 3.5)
     "knowledge_health": None,
 
@@ -231,11 +245,53 @@ _FIELD_DEFAULTS: dict[str, Any] = {
     # now < this. Set by the defer_decision tool; naturally ages out.
     "dj_deferred_until": 0.0,
 
+    # v11 Phase 0: room-sense — Treta hears her OWN mixer output. The
+    # _room_sense_loop publishes a PerceptionEngine.analyze() snapshot
+    # (energy/direction/density/tension/breakdown/buildup/drop + sampled_at)
+    # here every ~2s. Read by the DJ prompt as one staleness-gated advisory
+    # line. NOT in CRITICAL_FIELDS — it's a ~3Hz transient, so the 500ms
+    # debounce flush is correct; sync-flush would hammer disk.
+    "room_sense": None,
+
+    # v11 Phase 2: last_event — a mirror of the latest Notebook row, set by
+    # the autonomous-wake observer (_on_event in main.py) so the existing
+    # session callback/observer bus can carry a wake signal to consumers
+    # (TUI/relay observability). Transient: NOT in CRITICAL_FIELDS — it is a
+    # high-frequency mirror of an append-only log that already persists in
+    # events.jsonl, so the 500ms debounce flush is correct; sync-flush would
+    # hammer disk. When config.evolution.enabled == false NOTHING writes this
+    # field, so behaviour stays byte-identical to the current P0/P1 build.
+    "last_event": None,
+
+    # v10: timestamp of the last completed transition. The P4 (proactive)
+    # DJ invoke is gated for `planner.min_play_time_seconds` after this so a
+    # fresh track gets to BREATHE instead of being mixed out instantly —
+    # kills the back-to-back churn. End-of-track rescue (P2) is NOT gated.
+    "last_transition_at": 0.0,
+
     # Housekeeping
     "chat_history": list,
     "emergency_count": 0,
     "last_reflect_count": 0,
     "saved_at": 0.0,
+
+    # --- E4: State Sequencing & Set Archive ---
+    # current_state_sequence: the live StateSequence being recorded during
+    #   this set. Stored as a raw list (StateSequence.to_dict() format) so it
+    #   serializes cleanly to session.json without importing state_sequence.py
+    #   here. Heartbeat / sets mixin converts to/from StateSequence on the fly.
+    #   None when no set is active; [] when a set is active but nothing has been
+    #   recorded yet.
+    "current_state_sequence": None,
+    # set_archive_path: absolute path of the rolling JSONL archive file, set
+    #   once at first archive_set() call so the TUI / relay can surface it.
+    #   Empty string = not yet written.
+    "set_archive_path": "",
+    # last_archived_set_id: the ID of the most recently completed archived set.
+    #   Useful for the TUI status bar and for the get_set_archive / replay_set
+    #   agent tools to surface the default set without needing to parse the JSONL.
+    "last_archived_set_id": "",
+    # --- end E4 ---
 }
 
 

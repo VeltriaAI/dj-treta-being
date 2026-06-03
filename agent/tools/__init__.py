@@ -55,6 +55,12 @@ from .transitions import (
     do_echo_out,
     do_riser,
     do_dissolve,
+    # E2 FX techniques
+    do_delay_throw,
+    do_reverb_tail,
+    do_sidechain_duck,
+    # E1 timing self-test
+    transition_timing_selftest,
     schedule_transition,
 )
 
@@ -102,6 +108,7 @@ from .directives import (
     get_directives,
     clear_directives,
     defer_decision,
+    get_arrangement_plan,  # --- E3/E5 ---
 )
 
 # Evolution tools (self-modification + subagent spawning)
@@ -120,6 +127,7 @@ from .spawn import (
 from .visibility import (
     get_subagent_activity,
     tail_thinking_log,
+    read_workspace,
 )
 from .listener import (
     get_listener_pulse,
@@ -167,6 +175,9 @@ from ..memory import (
 # the semantic-recall tools above.
 from ..chat_persistence import recall_recent_chat
 
+# --- E4: State Sequencing & Set Archive ---
+from .state_set import get_set_archive, replay_set as replay_set_archive
+
 __all__ = [
     # helpers
     "_SELF_DIR", "_music_dir", "_roots", "_is_under_allowed_roots",
@@ -179,7 +190,9 @@ __all__ = [
     "align_beats", "nudge_track",
     # transitions
     "do_transition", "do_bass_swap", "do_filter_sweep", "do_hard_cut",
-    "do_echo_out", "do_riser", "do_dissolve", "schedule_transition",
+    "do_echo_out", "do_riser", "do_dissolve",
+    "do_delay_throw", "do_reverb_tail", "do_sidechain_duck",
+    "transition_timing_selftest", "schedule_transition",
     # perception
     "hear_music", "analyze_track", "preview_track",
     # discovery
@@ -195,11 +208,12 @@ __all__ = [
     "set_dj_directive", "set_planner_directive", "set_mood",
     "replace_deck", "play_specific_track",
     "get_directives", "clear_directives", "defer_decision",
+    "get_arrangement_plan",  # --- E3/E5 ---
     # evolution
     "evolve", "propose_change", "review_evolution",
     "spawn_agent", "get_spawn_result",
     # evolution — visibility / memory / agency / meta-control
-    "get_subagent_activity", "tail_thinking_log",
+    "get_subagent_activity", "tail_thinking_log", "read_workspace",
     "get_listener_pulse", "get_listener_profile",
     "schedule_self", "cancel_self_schedule", "list_self_schedule",
     "plan_set_arc", "progress_set_arc", "clear_set_arc",
@@ -213,4 +227,6 @@ __all__ = [
     "recall_similar_interaction", "recall_similar_set",
     "recall_journal", "recall_thoughts",
     "recall_recent_chat",
+    # E4 — State Sequencing & Set Archive
+    "get_set_archive", "replay_set_archive",
 ]

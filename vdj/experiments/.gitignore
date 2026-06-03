@@ -1,0 +1,5 @@
+# experiment outputs — regenerable from the recorded prompts
+*.mp4
+*-frame.png
+*-compare.png
+!.gitignore

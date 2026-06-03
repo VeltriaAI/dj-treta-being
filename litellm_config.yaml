@@ -10,6 +10,12 @@
 # value is read when the proxy boots, never persisted.
 
 model_list:
+  - model_name: gemini-3.5-flash
+    litellm_params:
+      model: vertex_ai/gemini-3.5-flash
+      vertex_project: os.environ/DJTRETA_VERTEX_PROJECT
+      vertex_location: global
+
   - model_name: gemini-3-flash
     litellm_params:
       model: vertex_ai/gemini-2.0-flash

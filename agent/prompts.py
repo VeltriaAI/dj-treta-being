@@ -11,6 +11,105 @@ and pass it in.
 import json
 
 
+# ── Notebook slice (v11 Phase 1) ────────────────────────────────────────
+# The Notebook (agent/notebook.py) is the durable append-only event log. This
+# renders a *derived*, ≤3-line digest of the live workspace for prompt
+# injection — NOT a raw event dump. Pure: takes plain dicts/lists (a now_view
+# and a tail), no Notebook/Session/Mixxx access. Returns "" when nothing
+# salient, so the caller can thread it like room_sense_line/feedback_line and
+# the slot collapses to nothing on a quiet workspace.
+
+
+def render_notebook_slice(
+    now_view: dict, tail: list, max_lines: int = 3
+) -> str:
+    """Render ≤`max_lines` DERIVED workspace lines from a notebook now_view + tail.
+
+    Args:
+        now_view: shape from Notebook.now_view() —
+            {now_playing, up_next, room_sense, mood, recent}.
+        tail: recent events (e.g. Notebook.tail(8, kinds=(...))) — each a
+            dict with at least {kind, author, payload}.
+        max_lines: hard ceiling on rendered lines (default 3).
+
+    Returns a string like
+        "WORKSPACE: planner held energy; DJ cued X; crowd steady"
+    or "" when nothing salient — never raises (defensive on every access).
+    """
+    try:
+        nv = now_view if isinstance(now_view, dict) else {}
+        events = tail if isinstance(tail, list) else []
+
+        bits: list[str] = []
+
+        # 1) Most-recent DECISION (planner/dj intent) — the "why".
+        decision = None
+        for e in reversed(events):
+            if isinstance(e, dict) and e.get("kind") == "decision":
+                decision = e
+                break
+        if decision:
+            p = decision.get("payload")
+            author = decision.get("author") or "agent"
+            summary = ""
+            if isinstance(p, dict):
+                summary = (
+                    p.get("summary")
+                    or p.get("action")
+                    or p.get("reason")
+                    or ""
+                )
+            elif isinstance(p, str):
+                summary = p
+            summary = str(summary).strip()
+            if summary:
+                bits.append(f"{author} {summary[:60]}")
+
+        # 2) Most-recent TRANSITION — the "what just happened on the decks".
+        transition = None
+        for e in reversed(events):
+            if isinstance(e, dict) and e.get("kind") == "transition":
+                transition = e
+                break
+        if transition:
+            p = transition.get("payload") or {}
+            if isinstance(p, dict):
+                tech = p.get("technique") or "transition"
+                to_deck = p.get("to_deck")
+                deck_str = f"→ deck {to_deck}" if to_deck is not None else ""
+                bits.append(f"last mix: {tech} {deck_str}".strip())
+
+        # 3) Crowd/room state — prefer a percept, else now_view.room_sense.
+        room_bit = ""
+        room_sense = nv.get("room_sense")
+        if isinstance(room_sense, dict):
+            energy = room_sense.get("energy")
+            direction = room_sense.get("energyDirection") or "steady"
+            if energy is not None:
+                try:
+                    room_bit = f"crowd {float(energy):.0f}/10 {direction}"
+                except (TypeError, ValueError):
+                    room_bit = f"crowd {direction}"
+        if not room_bit:
+            for e in reversed(events):
+                if isinstance(e, dict) and e.get("kind") == "percept":
+                    pp = e.get("payload")
+                    if isinstance(pp, dict):
+                        d = pp.get("energyDirection") or pp.get("direction")
+                        if d:
+                            room_bit = f"crowd {d}"
+                    break
+        if room_bit:
+            bits.append(room_bit)
+
+        if not bits:
+            return ""
+        return "WORKSPACE: " + "; ".join(bits[:max_lines])
+    except Exception:
+        # A notebook-slice fault must never break prompt building.
+        return ""
+
+
 # ── Mood-class → technique-whitelist mapping (Patch A, fix/mood-aware-technique)
 # Keyed by canonical_slug emitted by mood_resolver. Slugs are matched
 # case-insensitively. Anything not listed falls into the "flowing" default.
@@ -99,6 +198,16 @@ def build_dj_user_message(
     # should schedule a transition into idle this cycle (no "let it
     # breathe" deferral) — Treta has explicitly asked for the swap.
     transition_now_pending: bool = False,
+    # v11 Phase 0 — room-sense: Treta's own mixer output, sampled ~3Hz by
+    # _room_sense_loop. Rendered as ONE staleness-gated advisory line
+    # (>15s old → dropped). Schema: {energy, energyDirection, ...,
+    # masterLoudness, sampled_at}. None = no read yet (drop the line).
+    room_sense: dict | None = None,
+    # v11 Phase 1 — Notebook slice: ≤3 DERIVED lines from the durable event
+    # log (rendered by render_notebook_slice). Threaded exactly like
+    # room_sense_line/ownership_line — "" collapses the slot on a quiet
+    # workspace. Caller (heartbeat) builds it from get_notebook().
+    workspace_line: str = "",
 ) -> str:
     """Build the user message for DJ agent heartbeat decisions.
 
@@ -153,6 +262,32 @@ def build_dj_user_message(
             f"co-being(s); do NOT schedule transitions targeting these decks "
             f"and do NOT load tracks onto them.\n"
         )
+
+    # ── ROOM-SENSE (v11 Phase 0) ────────────────────────────────────
+    # Treta hears her OWN mixer output. ONE terse advisory line, kept to
+    # a single line for Flash prompt-budget discipline. STALENESS-GATED:
+    # if the snapshot is older than 15s (room-sense loop stalled), drop it
+    # entirely rather than feed the DJ a frozen reading. The single
+    # most-actionable section tag is picked in priority order
+    # drop → breakdown → buildup (else none).
+    room_sense_line = ""
+    if room_sense and isinstance(room_sense, dict):
+        import time as _t
+        sampled_at = room_sense.get("sampled_at") or 0
+        if _t.time() - sampled_at <= 15:
+            energy = room_sense.get("energy", 0)
+            direction = room_sense.get("energyDirection", "steady")
+            if room_sense.get("dropDetected"):
+                tag = " [DROP]"
+            elif room_sense.get("breakdownDetected"):
+                tag = " [BREAKDOWN]"
+            elif room_sense.get("buildupDetected"):
+                tag = " [BUILDUP]"
+            else:
+                tag = ""
+            room_sense_line = (
+                f"ROOM (my output): energy {energy:.0f}/10 {direction}{tag}\n"
+            )
 
     # Compact playlist render — top 5 ranks, one-liner each.  Path is
     # included explicitly so DJ can pass it verbatim to load_track.
@@ -313,10 +448,17 @@ def build_dj_user_message(
             f"context demands earlier (e.g. breakdown alignment).\n"
         )
 
+    # ── WORKSPACE (v11 Phase 1) ─────────────────────────────────────
+    # ≤3 derived lines from the durable Notebook (caller-built). One
+    # newline-terminated block, dropped entirely when empty.
+    workspace_block = f"{workspace_line}\n" if workspace_line else ""
+
     return (
         f"{directive_info}"
         f"{profile_line}"
         f"{ownership_line}"
+        f"{room_sense_line}"
+        f"{workspace_block}"
         f"ACTIVE: '{active_track[:40]}' at {position:.0f}s/{duration:.0f}s "
         f"({remaining:.0f}s left, BPM:{active_bpm:.0f} file:{active_file_bpm:.0f}, "
         f"Camelot:{active_camelot_str} {active_energy_str})\n"
@@ -376,6 +518,8 @@ def build_planner_v8_message(
     user_intent: str = "",
     feedback_line: str = "",
     external_decks: list[int] | None = None,
+    workspace_line: str = "",
+    current_key_camelot: str = "",
 ) -> str:
     """Build the v8 planner prompt — asks for STRICT JSON output.
 
@@ -391,6 +535,7 @@ def build_planner_v8_message(
     """
     import time as _time
     import json as _json
+    from .camelot import relationship as _relationship
 
     mood_slug = (mood_profile or {}).get("canonical_slug") or mood or "melodic-techno"
 
@@ -426,6 +571,21 @@ def build_planner_v8_message(
             f"Prioritize this above BPM/key matching."
         )
 
+    # Harmonic rubric — only surfaced when we actually know the current key, so
+    # the model ranks on a COMPUTED relationship label per candidate rather than
+    # eyeballing raw Camelot codes (and stays silent when key is unknown).
+    harmonic_line = ""
+    if current_key_camelot:
+        harmonic_line = (
+            f"\nCurrent track key: {current_key_camelot} (Camelot). Each library "
+            f"entry carries `key_vs_now`: COMPATIBLE (same / ±1 / relative / +7 "
+            f"energy-boost — seamless blend), BRIDGEABLE (±2 whole-step — only over "
+            f"a breakdown), DISSONANT (clashes — avoid for rank 1, or mask with "
+            f"echo_out), UNKNOWN (key missing — judge on BPM/energy). Prefer "
+            f"COMPATIBLE for rank 1; never put a DISSONANT track at rank 1 unless a "
+            f"directive/request overrides."
+        )
+
     # Phase 7 co-being mode: one or more decks claimed by external Beings.
     # Planner stays advisory for treta-owned decks only.
     ownership_line = ""
@@ -447,6 +607,7 @@ def build_planner_v8_message(
                 ).strip(" -"),
                 "bpm": t.get("bpm"),
                 "key_camelot": t.get("key_camelot"),
+                "key_vs_now": _relationship(current_key_camelot, t.get("key_camelot") or ""),
                 "energy": t.get("energy_peak"),
                 "genre": t.get("genre"),
                 "mood": t.get("mood"),
@@ -492,10 +653,12 @@ def build_planner_v8_message(
         "<now_playing>" + current_info + "</now_playing>\n"
         f"<mood>{mood_slug}{profile_line}</mood>\n"
         f"<already_played>DO NOT repeat any of these: {played_list}</already_played>"
+        + harmonic_line
         + directive_line
         + intent_line
         + ownership_line
         + feedback_line
+        + (("\n" + workspace_line) if workspace_line else "")
         + "\n\n<library>\n"
         "Pick `path` values ONLY from this list — never invent a path.\n"
         + library_json
@@ -505,7 +668,9 @@ def build_planner_v8_message(
         "<rules>\n"
         "- Return exactly 5 candidates ranked 1 (best) to 5.\n"
         "- Use `path` values EXACTLY as they appear in <library>.\n"
-        "- Rank 1 should fit the current track BPM / key / energy best.\n"
+        "- Rank 1 should fit the current track BPM / key / energy best — "
+        "use each entry's `key_vs_now` label for harmonic fit (prefer "
+        "COMPATIBLE; avoid DISSONANT at rank 1).\n"
         "- Lower ranks offer valid alternates if rank 1 is unavailable.\n"
         "- Never repeat a title from <already_played>.\n"
         "- reasoning_summary: one paragraph on your overall arc strategy.\n"
@@ -528,6 +693,8 @@ def build_planner_v9_message(
     user_intent: str = "",
     feedback_line: str = "",
     external_decks: list[int] | None = None,
+    workspace_line: str = "",
+    current_key_camelot: str = "",
 ) -> str:
     """v9 planner prompt: dataset-driven candidates, current track full timeline.
 
@@ -540,6 +707,7 @@ def build_planner_v9_message(
     """
     import json as _json
     import time as _time
+    from .camelot import relationship as _relationship
 
     mood_slug = (mood_profile or {}).get("canonical_slug") or mood or "melodic-techno"
 
@@ -559,6 +727,15 @@ def build_planner_v9_message(
         profile_line = (
             f"\nResolved mood profile: {' | '.join(bits)} "
             f"(confidence {conf:.2f})."
+        )
+
+    harmonic_line = ""
+    if current_key_camelot:
+        harmonic_line = (
+            f"\nCurrent track key: {current_key_camelot} (Camelot). Each candidate "
+            f"line ends with key_vs_now=COMPATIBLE (same / ±1 / relative / +7 boost), "
+            f"BRIDGEABLE (±2, only over a breakdown), DISSONANT (clashes), or UNKNOWN "
+            f"(key missing). Prefer COMPATIBLE for rank 1; avoid DISSONANT at rank 1."
         )
 
     directive_line = ""
@@ -615,9 +792,11 @@ def build_planner_v9_message(
         sim = c.get("similarity_score")
         sim_str = f" sim={sim:.2f}" if sim is not None else ""
         ident = c.get("path") or f"mbid:{c.get('mbid','')[:8]}|vid:{c.get('video_id','')}"
+        rel = _relationship(current_key_camelot, key) if current_key_camelot else ""
+        rel_str = f" key_vs_now={rel}" if rel else ""
         candidate_lines.append(
             f"#{rank} [{dl}]{sim_str} {artist} - {title} "
-            f"| {bpm}bpm {key} e{energy} {year} {sub}"
+            f"| {bpm}bpm {key} e{energy} {year} {sub}{rel_str}"
         )
         candidate_lines.append(f"    ref: {ident}")
 
@@ -645,10 +824,12 @@ def build_planner_v9_message(
         + f"\nAlready played (DO NOT repeat): {played_list}\n"
         f"Current mood: {mood_slug}."
         + profile_line
+        + harmonic_line
         + directive_line
         + intent_line
         + ownership_line
         + feedback_line
+        + (("\n" + workspace_line) if workspace_line else "")
         + "\n\nCandidate universe (pick by #rank; use path for LOCAL, "
         "mbid+video_id for DATASET):\n"
         + candidates_block
@@ -907,6 +1088,93 @@ def build_consciousness_user_message(context: str) -> str:
     return (
         f"HEARTBEAT TICK — {context}\n\n"
         f"What matters most right now? Think briefly, act if needed, or say HEARTBEAT_OK."
+    )
+
+
+# ── Autonomous wake (v11 Phase 2) ─────────────────────────────────────
+
+
+def build_wake_user_message(event: dict, now_view: dict = None) -> str:
+    """Build the user message for an OFF-CADENCE autonomous wake (v11 Phase 2).
+
+    Unlike the periodic HEARTBEAT TICK, this fires because a single
+    high-salience Notebook event pulled the Being awake (crowd-collapse,
+    drop-landed, skip-burst, human directive, contradiction — see
+    agent/salience.py). The message tells her WHAT woke her (the event kind),
+    a one-line WHY (a terse digest of the event), and the current now_view
+    summary if one is supplied, then asks for a brief think-or-act.
+
+    Pure: takes plain dicts, never raises, returns "" inputs degrade gracefully.
+    The caller (main.py _on_event) is responsible for tagging the resulting
+    invocation author='being:wake' — this builder tags nothing.
+    """
+    ev = event if isinstance(event, dict) else {}
+
+    kind = str(ev.get("kind", "event")).strip() or "event"
+    author = str(ev.get("author", "")).strip()
+
+    # One-line WHY: prefer a human-readable summary off the payload, else a
+    # compact rendering of the payload, else just the kind.
+    why = ""
+    payload = ev.get("payload")
+    if isinstance(payload, dict):
+        why = str(
+            payload.get("summary")
+            or payload.get("text")
+            or payload.get("action")
+            or payload.get("reason")
+            or ""
+        ).strip()
+        if not why:
+            # Compact key:val of the most useful scalar fields, capped.
+            scalars = [
+                f"{k}={v}"
+                for k, v in payload.items()
+                if isinstance(v, (str, int, float, bool))
+            ]
+            why = ", ".join(scalars[:4])
+    elif isinstance(payload, str):
+        why = payload.strip()
+    why = (why or kind)[:160]
+
+    src = f" from {author}" if author else ""
+
+    # now_view summary — same shape as Notebook.now_view():
+    # {now_playing, up_next, room_sense, mood, recent}. Compact one-liner.
+    now_line = ""
+    if isinstance(now_view, dict):
+        nv_bits: list[str] = []
+        np = now_view.get("now_playing")
+        if isinstance(np, dict):
+            title = str(np.get("title") or np.get("path") or "").strip()
+            if title:
+                nv_bits.append(f"playing {title[:50]}")
+        elif isinstance(np, str) and np.strip():
+            nv_bits.append(f"playing {np.strip()[:50]}")
+        mood = now_view.get("mood")
+        if mood:
+            nv_bits.append(f"mood: {str(mood).strip()[:30]}")
+        rs = now_view.get("room_sense")
+        if isinstance(rs, dict):
+            energy = rs.get("energy")
+            direction = rs.get("direction")
+            rs_str = " ".join(
+                str(x) for x in (
+                    f"energy {energy}" if energy is not None else "",
+                    str(direction) if direction else "",
+                ) if x
+            ).strip()
+            if rs_str:
+                nv_bits.append(f"room: {rs_str[:40]}")
+        if nv_bits:
+            now_line = "Now: " + " | ".join(nv_bits) + "\n"
+
+    return (
+        f"WAKE — a high-salience {kind} event{src} pulled you off-cadence.\n"
+        f"Why: {why}\n"
+        f"{now_line}"
+        f"\nThis is not the periodic tick — something changed. "
+        f"Think briefly, act if it warrants it, or say HEARTBEAT_OK."
     )
 
 

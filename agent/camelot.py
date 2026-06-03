@@ -26,6 +26,61 @@ KEY_TO_CAMELOT = {
 
 CAMELOT_TO_KEY = {v: k for k, v in KEY_TO_CAMELOT.items()}
 
+# Enharmonic spellings that differ from KEY_TO_CAMELOT's canonical keys. The
+# librosa analyzer (audio_analysis.KEY_NAMES) emits sharps like "C#" and "Abm"
+# that the table — keyed by flats ("Db", "G#m") — lacks, so a raw
+# KEY_TO_CAMELOT.get() returned "" and the key was SILENTLY dropped (~27% of a
+# real library: every C#-major and Ab-minor track). Map each alias to its
+# canonical equivalent. Covers all 12 sharp/flat pairs in both modes so any
+# upstream source (Mixxx import, dataset, generation) resolves too.
+ENHARMONIC_ALIASES = {
+    # Major
+    "C#": "Db", "D#": "Eb", "G#": "Ab", "A#": "Bb",
+    "Gb": "F#", "Cb": "B", "Fb": "E", "E#": "F", "B#": "C",
+    # Minor
+    "Dbm": "C#m", "Abm": "G#m", "D#m": "Ebm", "A#m": "Bbm", "Gbm": "F#m",
+}
+
+import re as _re
+
+# A Camelot code: 1-12 followed by A or B (e.g. "8A", "12B").
+_CAMELOT_CODE_RE = _re.compile(r"^(1[0-2]|[1-9])[AB]$")
+
+
+def to_camelot(key: str) -> str:
+    """Musical key name -> Camelot code, tolerant of enharmonic spellings.
+
+    Returns "" when the key is unknown. Use this everywhere instead of a raw
+    ``KEY_TO_CAMELOT.get(key, "")`` so sharp/flat spelling never drops a key.
+    """
+    if not key:
+        return ""
+    key = key.strip()
+    code = KEY_TO_CAMELOT.get(key)
+    if code:
+        return code
+    canon = ENHARMONIC_ALIASES.get(key)
+    if canon:
+        return KEY_TO_CAMELOT.get(canon, "")
+    return ""
+
+
+def as_camelot(key: str) -> str:
+    """Normalize EITHER a Camelot code ("8A") OR a musical key name ("Am") to a
+    Camelot code. Returns "" if unresolvable.
+
+    The live callers (planner topup, prompt builders) pass Camelot codes; the
+    test suite passes musical names. Accepting both is what makes
+    ``key_compatibility_score`` actually work on real input instead of silently
+    returning the neutral score for every pair.
+    """
+    if not key:
+        return ""
+    key = key.strip()
+    if _CAMELOT_CODE_RE.match(key.upper()):
+        return key.upper()
+    return to_camelot(key)
+
 
 def mixxx_key_to_camelot(key_code: int) -> str | None:
     musical = MIXXX_KEY_MAP.get(key_code)
@@ -70,15 +125,16 @@ def get_compatible_keys(camelot_code: str) -> list[str]:
 def key_compatibility_score(key1: str, key2: str) -> int:
     """Score key compatibility 0-10.
 
-    10 = same key, 8 = adjacent/relative, 5 = 2 steps, 0 = incompatible.
+    10 = same key, 8 = adjacent/relative, 5 = 2 steps, 2 = far apart.
+    Accepts either Camelot codes ("8A") or musical names ("Am") — the live
+    planner passes codes, the tests pass names. (Previously this used
+    ``KEY_TO_CAMELOT.get`` directly, which only matched musical names, so every
+    real call from the planner — which passes codes — silently returned 5.)
     """
-    if not key1 or not key2:
-        return 5  # unknown keys, neutral score
-
-    cam1 = KEY_TO_CAMELOT.get(key1)
-    cam2 = KEY_TO_CAMELOT.get(key2)
+    cam1 = as_camelot(key1)
+    cam2 = as_camelot(key2)
     if not cam1 or not cam2:
-        return 5
+        return 5  # unknown keys, neutral score
 
     if cam1 == cam2:
         return 10
@@ -93,6 +149,41 @@ def key_compatibility_score(key1: str, key2: str) -> int:
             return 5
 
     return 2  # far apart
+
+
+def relationship(key1: str, key2: str) -> str:
+    """Classify the harmonic relationship between two keys, matching the DJ
+    agent's Camelot rubric (agents.py): COMPATIBLE (same / ±1 fifth / relative
+    major-minor / +7 energy-boost like 8A->3A), BRIDGEABLE (±2 whole-step,
+    mask over a breakdown), DISSONANT (everything else). Returns "UNKNOWN" when
+    either key is missing/unresolvable so the consumer can degrade gracefully.
+
+    Accepts Camelot codes or musical names.
+    """
+    cam1 = as_camelot(key1)
+    cam2 = as_camelot(key2)
+    if not cam1 or not cam2:
+        return "UNKNOWN"
+    if cam1 == cam2:
+        return "COMPATIBLE"
+
+    n1, l1 = int(cam1[:-1]), cam1[-1]
+    n2, l2 = int(cam2[:-1]), cam2[-1]
+    diff = abs(n1 - n2)
+    ring = min(diff, 12 - diff)  # steps around the wheel on one ring
+
+    if l1 == l2:
+        if ring <= 1:
+            return "COMPATIBLE"            # same number or ±1 (perfect fifth)
+        if (n2 - n1) % 12 == 7:
+            return "COMPATIBLE"            # +7 energy boost (e.g. 8A -> 3A)
+        if ring == 2:
+            return "BRIDGEABLE"            # whole step — bridge over a breakdown
+        return "DISSONANT"
+    # opposite letter: only the relative major/minor (same number) is compatible
+    if n1 == n2:
+        return "COMPATIBLE"                # letter swap, e.g. 8A <-> 8B
+    return "DISSONANT"
 
 
 def format_key(key_code: int) -> str:

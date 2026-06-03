@@ -228,18 +228,57 @@ class PlannerMixin:
                 except Exception:
                     cur_bpm = 0.0
 
-        # Restrict to the current genre folder so we don't pull off-mood tracks.
-        slug = (self.mood or "").strip().lower().replace(" ", "-")
+        # Resolve the mood band: canonical genre + BPM/energy ranges. These
+        # are what selection should target, not the raw free-text mood.
+        mp = getattr(self.session, "mood_profile", None)
+        mp = mp if isinstance(mp, dict) else {}
+        canonical = (mp.get("canonical_slug") or "").strip().lower()
+        _br = mp.get("bpm_range")
+        bpm_range = _br if (isinstance(_br, (list, tuple)) and len(_br) == 2) else None
+        _er = mp.get("energy_range")
+        energy_range = _er if (isinstance(_er, (list, tuple)) and len(_er) == 2) else None
+        energy_target = ((float(energy_range[0]) + float(energy_range[1])) / 2.0
+                         if energy_range else None)
+        cur_key = (current_meta or {}).get("key_camelot", "") or "" if current_meta else ""
+        from .camelot import key_compatibility_score
 
         # Pull the FULL library incl. unanalyzed tracks — most freshly
         # downloaded tracks have no BPM/key yet, but they're real files that
         # resolve + display fine, and we want them in the Up Next list. (The
         # analyzed-only `library` arg the planner uses is too small here.)
+        # When the treta_originals source is off, drop DJ Treta-generated
+        # originals from the Up-Next floor too (GH #68).
+        _sources = getattr(self.config, "sources", None)
+        _excl_orig = not getattr(_sources, "treta_originals", True)
         try:
             from .db import get_library_with_metadata as _glib
-            full_library = _glib(include_unanalyzed=True) or library
+            full_library = _glib(
+                include_unanalyzed=True, exclude_originals=_excl_orig
+            ) or library
         except Exception:
             full_library = library
+
+        # Restrict to the current genre folder. The resolver emits fine-grained
+        # slugs ("peak-time-melodic-techno") but tracks live in coarse genre
+        # folders ("melodic-techno/"). Map canonical → actual folder by finding
+        # the library folder whose slug is contained in the canonical slug
+        # (longest wins); fall back to the raw-mood slug, then to no gate.
+        # (Gating by the raw canonical slug directly would match no folder →
+        # zero candidates → emergency-load garbage — the bug we're fixing.)
+        genre_slugs = set()
+        for tk in full_library:
+            pp = tk.get("path", "") or ""
+            if "/" in pp:
+                genre_slugs.add(pp.split("/", 1)[0].lower())
+        raw_slug = (self.mood or "").strip().lower().replace(" ", "-")
+        slug = ""
+        for src in (canonical, raw_slug):
+            if not src:
+                continue
+            matches = [g for g in genre_slugs if g and g in src]
+            if matches:
+                slug = max(matches, key=len)
+                break
 
         candidates = []
         for tk in full_library:
@@ -256,7 +295,49 @@ class PlannerMixin:
                 bpm = float(tk.get("bpm") or 0)
             except Exception:
                 bpm = 0.0
-            score = abs(bpm - cur_bpm) if (bpm and cur_bpm) else 999.0
+            # Hard BPM-band gate: an analyzed track outside the mood's BPM
+            # range (± small tolerance) is off-energy — exclude it as a
+            # playable pick. A 152-BPM track can never land under a 122-128
+            # melodic-techno band. Unanalyzed (bpm=0) tracks bypass this and
+            # sort last so the Up-Next list still fills when the pool is thin.
+            if bpm and bpm_range:
+                lo = float(bpm_range[0]) - 4.0
+                hi = float(bpm_range[1]) + 4.0
+                if not (lo <= bpm <= hi):
+                    continue
+            # Composite score (lower = better): BPM gap + harmonic distance
+            # + energy gap. Replaces pure BPM-proximity so harmonic clashes
+            # and energy jumps are penalised, not just tempo.
+            if bpm and cur_bpm:
+                bpm_gap = abs(bpm - cur_bpm)
+            elif bpm and bpm_range:
+                bpm_gap = abs(bpm - ((float(bpm_range[0]) + float(bpm_range[1])) / 2.0))
+            else:
+                bpm_gap = 999.0  # unanalyzed → sort last
+            cand_key = tk.get("key_camelot", "") or ""
+            key_penalty = ((10 - key_compatibility_score(cur_key, cand_key)) * 1.5
+                           if (cur_key and cand_key) else 0.0)
+            cand_energy = tk.get("energy_peak", tk.get("energy"))
+            energy_gap = 0.0
+            jump_penalty = 0.0
+            if energy_target is not None and cand_energy is not None:
+                try:
+                    _ce = float(cand_energy)
+                    energy_gap = abs(_ce - energy_target) * 2.0
+                    # FIX-G "build don't jump": penalise candidates whose
+                    # energy distance from the target band exceeds the allowed
+                    # per-step jump, so the Up-Next floor prefers picks that
+                    # keep the arc smooth rather than leaping. Quadratic in the
+                    # overshoot beyond the jump budget — small overshoots are
+                    # cheap, big leaps are heavily down-ranked. Conservative
+                    # weight (3.0); tune here after an A/B listen.
+                    overshoot = abs(_ce - energy_target) - self._energy_max_jump()
+                    if overshoot > 0:
+                        jump_penalty = (overshoot ** 2) * 3.0
+                except Exception:
+                    energy_gap = 0.0
+                    jump_penalty = 0.0
+            score = bpm_gap + key_penalty + energy_gap + jump_penalty
             candidates.append((score, tk))
 
         candidates.sort(key=lambda x: x[0])
@@ -306,14 +387,22 @@ class PlannerMixin:
                 except Exception:
                     pass
 
-        # LLM sees the whole analyzed library — no SQL pre-filter.
-        library = get_library_with_metadata(include_unanalyzed=False)
+        # LLM sees the whole analyzed library — no SQL pre-filter. When the
+        # treta_originals source is off, drop DJ Treta-generated originals so
+        # they never enter the planner candidate list (GH #68).
+        _sources = getattr(self.config, "sources", None)
+        _excl_orig = not getattr(_sources, "treta_originals", True)
+        library = get_library_with_metadata(
+            include_unanalyzed=False, exclude_originals=_excl_orig
+        )
 
         current_info = "NOTHING — silence!"
+        current_key_camelot = ""
         if current_meta:
             bpm = current_meta.get('bpm') or 0
             key = current_meta.get('key_musical') or '?'
             energy = current_meta.get('energy_peak') or '?'
+            current_key_camelot = current_meta.get('key_camelot') or ""
             current_info = f"{current_track} | BPM:{bpm:.0f} Key:{key} Energy:{energy}"
 
         # Read shape directive (free-text) for prompt injection. We no
@@ -382,6 +471,15 @@ class PlannerMixin:
             if o != "treta"
         ]
 
+        # Inject a terse workspace slice into the planner prompt: a <=2-line
+        # render of the shared Notebook's now_view (recent decisions /
+        # transitions + mood). Keeps the planner aware of what the rest of the
+        # crew just decided/did without a heavy state dump (Flash budget).
+        # Fully defensive: a notebook fault NEVER blocks planning, and we fall
+        # back to a minimal inline render if the shared renderer isn't wired
+        # into `.prompts` yet.
+        workspace_line = self._build_workspace_line()
+
         if v9_merged and len(v9_merged) >= 5:
             v9_mode = True
             current_timeline = _format_current_timeline(current_meta)
@@ -401,6 +499,8 @@ class PlannerMixin:
                 user_intent=intent,
                 feedback_line=feedback_line,
                 external_decks=external_decks,
+                workspace_line=workspace_line,
+                current_key_camelot=current_key_camelot,
             )
         else:
             log.info(
@@ -417,6 +517,8 @@ class PlannerMixin:
                 user_intent=intent,
                 feedback_line=feedback_line,
                 external_decks=external_decks,
+                workspace_line=workspace_line,
+                current_key_camelot=current_key_camelot,
             )
         result = self._invoke_planner(planner_msg)
 
@@ -606,6 +708,24 @@ class PlannerMixin:
             self.session.playlist = validated
             self.session.playlist_updated_at = validated["planned_at"]
             self.session.last_planner_error = ""
+
+            # --- E3/E5 ---  Emit a rolling arrangement plan alongside the
+            # playlist. This is the leapfrog: a short sequence of musical
+            # intents (track + technique + energy target + bars) toward a
+            # goal, re-derived every cycle. Stored on the session as plain
+            # dicts so Agent C can map them onto its State model and the DJ
+            # agent can realize the techniques via Agent A's transitions.
+            # Additive + defensive — a failure here never blocks the playlist.
+            try:
+                arr_plan = self._build_arrangement_plan(validated, current_meta)
+                self.session.arrangement_plan = arr_plan.to_dict()
+                self.session.arrangement_plan_updated_at = time.time()
+                log.info(
+                    f"Arrangement plan: goal={arr_plan.goal} "
+                    f"{len(arr_plan.intents)} intents, {arr_plan.horizon_bars} bars"
+                )
+            except Exception as exc:
+                log.warning(f"arrangement plan build failed (non-fatal): {exc}")
             log.info(
                 f"Planner wrote playlist: {len(validated['tracks'])} candidates, "
                 f"mood_snapshot={validated.get('mood_snapshot', '')}"
@@ -727,6 +847,108 @@ class PlannerMixin:
             msg = f"{type(exc).__name__}: {exc}"
             log.warning(f"Planner output invalid — keeping last good playlist. {msg}")
             self.session.last_planner_error = msg
+
+    def _build_workspace_line(self) -> str:
+        """Render a terse (<=2-line) workspace slice for the planner prompt.
+
+        Pulls the shared crew Notebook's `now_view()` (recent decisions /
+        transitions + mood) and renders it via the SHARED renderer
+        `render_notebook_slice` (owned by the integrator in `.prompts`). This
+        keeps every prompt-consuming agent rendering the slice identically.
+
+        Defensive contract (matches the Notebook's "never break audio/billing"
+        rule):
+          * `get_notebook()` may return None (P1 boot, singleton not
+            registered) — return "" so the prompt builder simply omits the
+            slice.
+          * If `render_notebook_slice` isn't importable yet (integrator still
+            wiring `.prompts`), fall back to a minimal inline 1-liner built
+            from `nb.tail(5)`.
+          * Any exception is swallowed — a notebook fault NEVER blocks the
+            planner; the prompt just goes without the slice.
+        """
+        try:
+            from .notebook import get_notebook
+        except Exception:
+            return ""
+        try:
+            nb = get_notebook()
+        except Exception:
+            return ""
+        if nb is None:
+            return ""
+
+        # Preferred path: feed the SHARED renderer the now_view dict + a tail
+        # of recent decisions/transitions. Cap at 2 lines (terse — Flash
+        # budget). Signature: render_notebook_slice(now_view, tail, max_lines).
+        try:
+            from .prompts import render_notebook_slice
+        except Exception:
+            render_notebook_slice = None
+
+        if render_notebook_slice is not None:
+            try:
+                view = nb.now_view() if hasattr(nb, "now_view") else {}
+                try:
+                    tail = nb.tail(8, kinds=("decision", "transition"))
+                except Exception:
+                    tail = nb.tail(8) if hasattr(nb, "tail") else []
+                line = render_notebook_slice(view or {}, tail or [], max_lines=2)
+                return (line or "").strip()
+            except Exception as exc:
+                log.warning(f"render_notebook_slice failed (non-fatal): {exc}")
+                # fall through to inline fallback
+
+        # Fallback: minimal inline 1-liner from the last few events + mood.
+        try:
+            view = nb.now_view() if hasattr(nb, "now_view") else {}
+        except Exception:
+            view = {}
+        mood = ""
+        try:
+            mood = (view.get("mood") or "") if isinstance(view, dict) else ""
+        except Exception:
+            mood = ""
+        if not mood:
+            mp = getattr(self.session, "mood_profile", None) or {}
+            mood = (mp.get("canonical_slug") if isinstance(mp, dict) else "") or self.mood or ""
+
+        try:
+            recent = nb.tail(5, kinds=("decision", "transition"))
+        except Exception:
+            try:
+                recent = nb.tail(5)
+            except Exception:
+                recent = []
+
+        bits = []
+        for ev in (recent or [])[-3:]:
+            if not isinstance(ev, dict):
+                continue
+            kind = ev.get("kind") or "?"
+            payload = ev.get("payload")
+            if isinstance(payload, dict):
+                summary = (
+                    payload.get("summary")
+                    or payload.get("note")
+                    or payload.get("title")
+                    or payload.get("technique")
+                    or ""
+                )
+            else:
+                summary = str(payload) if payload is not None else ""
+            summary = (summary or "").replace("\n", " ").strip()
+            if len(summary) > 60:
+                summary = summary[:57] + "..."
+            bits.append(f"{kind}: {summary}" if summary else kind)
+
+        if not bits and not mood:
+            return ""
+        head = f"mood={mood}" if mood else ""
+        body = "; ".join(bits)
+        if head and body:
+            return f"WORKSPACE — {head} | recent: {body}"
+        return f"WORKSPACE — {head or 'recent: ' + body}"
 
     def _surface_v9_candidates(self, current_meta, played_list) -> list[dict]:
         """Build merged candidate list for v9 planner prompt.
@@ -865,6 +1087,238 @@ class PlannerMixin:
             d["artist"] = m.canonical.artist
             result.append(d)
         return result
+
+    # --- FIX-G ---  "Build don't jump" energy-arc guardrails.
+    #
+    # `energy_max_jump` (max allowed per-step energy delta) and
+    # `peak_max_consecutive` (how many peak-energy steps before we force a
+    # dip) were defined in config but never enforced — the leapfrog applied
+    # uncapped cumulative +2/+4/+6/+8 ramps with no ceiling. These helpers
+    # surface the values defensively. Behaviour-changing → kept conservative
+    # and easy to tune; needs an A/B listen before full trust.
+    #
+    # The YAML value actually lands on `config.set.*` (SetConfig). We read
+    # `config.set` first, fall back to `config.planner` (per the FIX-G brief)
+    # in case the keys are ever moved, then to a hardcoded default. All reads
+    # are getattr-guarded so a missing namespace never throws.
+    # "Peak" = an energy step at or above this absolute level (1–10 scale).
+    _PEAK_ENERGY_FLOOR = 8
+
+    def _energy_max_jump(self) -> int:
+        """Max allowed per-step target-energy delta (>=1). Default 2."""
+        for ns in ("set", "planner"):
+            cfg_ns = getattr(self.config, ns, None)
+            val = getattr(cfg_ns, "energy_max_jump", None) if cfg_ns else None
+            if val is not None:
+                try:
+                    return max(1, int(val))
+                except Exception:
+                    pass
+        return 2
+
+    def _peak_max_consecutive(self) -> int:
+        """Max consecutive peak-energy steps before a forced dip (>=1). Default 3."""
+        for ns in ("set", "planner"):
+            cfg_ns = getattr(self.config, ns, None)
+            val = getattr(cfg_ns, "peak_max_consecutive", None) if cfg_ns else None
+            if val is not None:
+                try:
+                    return max(1, int(val))
+                except Exception:
+                    pass
+        return 3
+
+    # --- E3/E5 ---  Dynamic real-time arrangement authoring (the leapfrog).
+    def _build_arrangement_plan(self, validated_playlist, current_meta,
+                                goal: str = "", max_steps: int = 4):
+        """Emit a short ROLLING sequence of ArrangementIntents toward a goal.
+
+        This is E5's headline: instead of only "what track next", the planner
+        constructs a sequence of future *intents* — (track, technique, energy
+        target, bar duration) — shaping the next few phrases. It is re-derived
+        every planner cycle (rolling horizon), so it adapts live as the room
+        and the listener profile change.
+
+        Inputs are PLANNER-LEVEL only:
+          * `validated_playlist`: the ranked PlaylistV1 we just built — supplies
+            the candidate tracks for upcoming steps.
+          * `current_meta`: the playing track's DB row — supplies its energy,
+            BPM, beatgrid + cue_points (for loop reasoning + the phantom cue).
+
+        Output: an `ArrangementPlan`. It is NOT a mixer-State snapshot — Agent C
+        maps each intent onto its State model at integration; Agent A realizes
+        the `technique` via schedule_transition/do_transition. We never touch
+        those modules from here.
+
+        The goal is chosen from the set-arc directive if present, else inferred
+        from the current energy + listener pulse, so Treta authors a deliberate
+        shape rather than a flat chain of blends.
+        """
+        from .arrangement import (
+            ArrangementIntent, ArrangementPlan,
+            loop_cues_from_track, phantom_grid_cue,
+        )
+
+        tracks = sorted(
+            (validated_playlist or {}).get("tracks", []) or [],
+            key=lambda t: t.get("rank", 99),
+        )
+
+        # Resolve current energy + BPM (anchor the arc).
+        cur_energy = 5
+        cur_bpm = 0.0
+        if current_meta:
+            try:
+                cur_energy = int(current_meta.get("energy_peak") or 5)
+            except Exception:
+                cur_energy = 5
+            try:
+                cur_bpm = float(current_meta.get("bpm") or 0)
+            except Exception:
+                cur_bpm = 0.0
+
+        # Goal resolution: explicit arg > set-arc directive > inferred.
+        if not goal:
+            goal = self._infer_arrangement_goal(cur_energy)
+
+        # Energy trajectory per goal — a target delta applied step over step.
+        step_delta = {
+            "build": +2, "peak": +1, "breakdown": -3,
+            "coast": 0, "reset": -2, "loop_roll": 0,
+        }.get(goal, 0)
+
+        intents: list[ArrangementIntent] = []
+
+        # Step 0 (optional): exploit a loop cue on the CURRENT track as creative
+        # material before moving on — "16-bar vocal loop" reasoning. Only when
+        # the goal benefits (build/loop_roll) and the current track has a loop.
+        cur_loops = loop_cues_from_track(current_meta or {})
+        if cur_loops and goal in ("build", "loop_roll", "peak"):
+            best_loop = max(
+                cur_loops, key=lambda l: (l.get("length_beats") or 0)
+            )
+            intents.append(ArrangementIntent(
+                step=len(intents),
+                goal="loop_roll",
+                track_path=None,  # operates on the current track
+                track_title=(current_meta or {}).get("title", "") or "current",
+                technique="loop_roll",
+                energy_target=min(10, cur_energy + 1),
+                bars=int(best_loop.get("length_beats") or 16) // 4 or 8,
+                loop_cue=best_loop,
+                reason=(
+                    f"extend current phrase on a "
+                    f"{best_loop.get('length_beats') or '?'}-beat loop before "
+                    f"the next track"
+                ),
+            ))
+
+        # Subsequent steps: walk the ranked candidates, ramping energy toward
+        # the goal. Each step picks a transition technique fit for the move.
+        #
+        # FIX-G "build don't jump": clamp the per-step energy delta to
+        # ±energy_max_jump so the arc ramps in musical increments instead of
+        # leaping, and force a dip once we've sat at peak energy for more than
+        # peak_max_consecutive steps (give the room a breather). Both read
+        # defensively from config with safe defaults; conservative on purpose.
+        energy_max_jump = self._energy_max_jump()
+        peak_max_consec = self._peak_max_consecutive()
+        peak_run = 0  # consecutive steps at/above the peak-energy floor
+        target_energy = cur_energy
+        for t in tracks:
+            if len([i for i in intents if i.track_path]) >= max_steps:
+                break
+            # Cap the requested step move to ±energy_max_jump before applying.
+            capped_delta = max(-energy_max_jump,
+                               min(energy_max_jump, step_delta))
+            target_energy = max(1, min(10, target_energy + capped_delta))
+            # Forced dip: if we've held peak for too long, pull energy down by
+            # one jump-unit regardless of the goal's ramp direction so the set
+            # breathes rather than flat-lining at the ceiling.
+            if target_energy >= self._PEAK_ENERGY_FLOOR:
+                peak_run += 1
+                if peak_run > peak_max_consec:
+                    target_energy = max(1, target_energy - energy_max_jump)
+                    peak_run = 0  # reset the run after the dip
+            else:
+                peak_run = 0
+            tmeta = self._candidate_meta(t)
+            technique = self._technique_for_move(cur_energy, target_energy, tmeta)
+            # Phantom grid-start when the candidate has a beatgrid anchor — lets
+            # Treta enter cleanly on the one even with no numbered cue there.
+            use_grid = bool((tmeta or {}).get("beatgrid_anchor_seconds") is not None)
+            intents.append(ArrangementIntent(
+                step=len(intents),
+                goal=goal,
+                track_path=t.get("path"),
+                track_title=t.get("title", "") or "",
+                technique=technique,
+                energy_target=target_energy,
+                bars=16,
+                use_grid_start=use_grid,
+                reason=(
+                    f"{goal}: take energy {cur_energy}→{target_energy} via "
+                    f"{technique}"
+                ),
+            ))
+            cur_energy = target_energy
+
+        horizon = sum(i.bars for i in intents)
+        plan = ArrangementPlan(
+            goal=goal, intents=intents, created_at=time.time(),
+            horizon_bars=horizon,
+        )
+        return plan
+
+    def _infer_arrangement_goal(self, cur_energy: int) -> str:
+        """Pick a musical goal when none is given. Honors an active set-arc
+        directive if Treta planned one; else infers from current energy."""
+        # Set-arc directive (Treta's plan_set_arc) takes precedence.
+        try:
+            arc = getattr(self.session, "set_arc", None)
+            if isinstance(arc, dict) and arc.get("phase"):
+                phase = str(arc["phase"]).lower()
+                if phase in ("warmup", "warm-up", "build"):
+                    return "build"
+                if phase in ("peak", "climax"):
+                    return "peak"
+                if phase in ("cooldown", "cool-down", "outro", "wind-down"):
+                    return "reset"
+        except Exception:
+            pass
+        # Inference from current energy: low → build, high → coast/peak.
+        if cur_energy <= 4:
+            return "build"
+        if cur_energy >= 8:
+            return "coast"
+        return "build"
+
+    def _candidate_meta(self, candidate: dict) -> dict:
+        """Best-effort DB lookup of a playlist candidate's full metadata
+        (for beatgrid anchor + cues). Falls back to the candidate dict."""
+        try:
+            from .db import get_track_by_path
+            p = candidate.get("path")
+            if p:
+                m = get_track_by_path(p)
+                if m:
+                    return m
+        except Exception:
+            pass
+        return candidate
+
+    def _technique_for_move(self, from_energy: int, to_energy: int,
+                            cand_meta: dict) -> str:
+        """Choose a transition technique that fits the energy move. Pure
+        planner-level hint — Agent A's executor has final say."""
+        delta = to_energy - from_energy
+        if delta >= 2:
+            return "riser"        # building hard → riser into the next
+        if delta <= -2:
+            return "echo_out"     # dropping → delay-throw the outgoing tail
+        if abs(delta) <= 1 and from_energy >= 7:
+            return "bass_swap"    # peak-time → tight bass swap on the one
+        return "filter_sweep"     # default smooth move
 
     def _playlist_contains_played(self, playlist) -> bool:
         """BUG-9 fix: True if the current playlist contains any track that
@@ -1104,9 +1558,14 @@ class PlannerMixin:
         # Primary path: trust the planner's session.playlist.
         # Pass played_paths so basename-match catches replays where DB
         # title ≠ Mixxx-reported title (BUG-17 pattern).
+        # exclude_originals: defensive belt-and-braces for GH #68 — never pick
+        # a DJ Treta original when the treta_originals source is off.
+        _sources = getattr(self.config, "sources", None)
+        _excl_orig = not getattr(_sources, "treta_originals", True)
         playlist = getattr(self.session, "playlist", None)
         pick = pick_next_candidate(
-            playlist, exclude_paths, played_titles, played_paths
+            playlist, exclude_paths, played_titles, played_paths,
+            exclude_originals=_excl_orig,
         )
 
         # Replay-guard post-filter: even after pick_next_candidate, defend

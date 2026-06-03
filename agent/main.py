@@ -45,12 +45,24 @@ from .ws_server import WSServerMixin
 from .being_heartbeat import BeingHeartbeatMixin
 from .runtime_paths import runtime_path
 
+from logging.handlers import RotatingFileHandler
+# force=True: imported libs (litellm / google-adk) configure the root logger
+# on import, which made our basicConfig a silent no-op — so INFO execution
+# logs never reached stderr and were invisible. Force our config + add a
+# rotating file handler so the FULL log is always tailable at agent.log.
+_AGENT_LOG = runtime_path("agent.log")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%H:%M:%S",
+    force=True,
+    handlers=[
+        logging.StreamHandler(),
+        RotatingFileHandler(str(_AGENT_LOG), maxBytes=5_000_000, backupCount=2),
+    ],
 )
 log = logging.getLogger("dj-treta")
+log.setLevel(logging.INFO)
 
 STATE_FILE = runtime_path("state.json")
 COMMAND_FILE = runtime_path("command.json")
@@ -315,6 +327,32 @@ class DJTretaBeing(
         session_path = Path(__file__).parent.parent / ".beings" / "session.json"
         self.session = Session.load(session_path)
         register_session(self.session)
+
+        # ── Durable Notebook (v11 Phase 1) ───────────────────────────
+        # Append-only event log that SURVIVES restart (unlike thinking.log,
+        # which start() truncates). Replay seeds the gap-free seq + refills
+        # the ring; register the module singleton so tools/heartbeat reach it
+        # via get_notebook(). A daemon_boot marker is the restart signal —
+        # events.jsonl is intentionally NOT truncated in start(). Guarded so
+        # a notebook fault never blocks Being startup.
+        try:
+            from .notebook import Notebook, register_notebook
+            nb = Notebook(runtime_path("events.jsonl"))
+            nb.replay()
+            register_notebook(nb)
+            try:
+                nb.append(
+                    author="being:boot",
+                    kind="decision",
+                    payload={"event": "daemon_boot", "ts": time.time()},
+                    salience=0.4,
+                )
+            except Exception:
+                pass
+            self._notebook = nb
+        except Exception as _nb_exc:
+            log.warning(f"Notebook init failed (non-fatal): {_nb_exc}")
+            self._notebook = None
         # Back-reference so session-scoped tools (e.g. Sarathi suggest/confirm)
         # can reach _ws_broadcast. Underscore-prefixed → bypasses the session
         # observer and is never serialized to session.json.
@@ -385,6 +423,14 @@ class DJTretaBeing(
     @mood.setter
     def mood(self, value: str):
         self.session.mood = value or ""
+
+    @property
+    def mood_profile(self):
+        return self.session.mood_profile
+
+    @mood_profile.setter
+    def mood_profile(self, value):
+        self.session.mood_profile = value
 
     @property
     def tracks_played(self) -> list:
@@ -626,7 +672,7 @@ class DJTretaBeing(
             self.session.mood = self.config.set.default_mood
         # If mood is set but profile hasn't resolved (e.g., mood was applied
         # before callback was registered on a prior run), kick resolver now.
-        elif self.session.mood and not (self.session.mood_profile or {}).get("canonical_slug"):
+        elif self.session.mood and not (self.session.mood_profile if isinstance(self.session.mood_profile, dict) else {}).get("canonical_slug"):
             _on_mood_change("mood", "", self.session.mood)
 
         # Phase A2: track when idle_needs_load flips True so the watchdog
@@ -636,6 +682,142 @@ class DJTretaBeing(
                 self._idle_needs_load_set_at = time.time()
 
         self.session.register_callback("idle_needs_load", _on_idle_needs_load)
+
+        # ── v11 Phase 2: autonomous Being-wake (FLAG-GATED, default OFF) ──
+        # When config.evolution.enabled is TRUE, register _on_event on the
+        # Notebook's purpose-built salience-callback bus. High-salience
+        # appends (crowd-collapse, drop-landed, skip-burst, human directive,
+        # contradiction — scored by agent/salience.py) pull the Being awake
+        # off-cadence, subject to the suppressor's vetoes (agent/suppressor.py:
+        # in-flight / 60s cooldown / anti-echo / Sarathi / manish_in_motion).
+        #
+        # SHIP FLAG-FALSE: when the flag is FALSE (the default), NOTHING below
+        # runs — no callback is registered, no wake thread is ever spawned,
+        # _on_event is never defined into the bus. Overhead is exactly zero and
+        # P0/P1 behaviour is byte-identical to the current build. The whole
+        # block is wrapped in try/except so a wiring fault can never block boot.
+        #
+        # SAFETY: this is the OPTIONAL autonomous wake only. P1 silence
+        # recovery and P2 emergency-load sit ABOVE this and are NEVER routed
+        # through the scorer or any veto — music never stops regardless.
+        self._wake_in_flight = False
+        self._last_wake_at = 0.0
+        try:
+            _evo = getattr(self.config, "evolution", None)
+            if _evo is not None and getattr(_evo, "enabled", False):
+                from . import salience as _salience
+                from . import suppressor as _suppressor
+
+                def _on_event(event):
+                    # Fired from Notebook.append() when salience >= threshold.
+                    # MUST be fast + non-blocking: score, veto, then offload the
+                    # actual LLM invoke to a thread (mirrors _on_mood_change).
+                    # Fully guarded — a wake fault must never break the appender
+                    # (which is on the audio/billing hot path).
+                    try:
+                        # Mirror the latest row onto the session bus for
+                        # observability (TUI/relay). Transient field.
+                        try:
+                            self.session.last_event = event
+                        except Exception:
+                            pass
+
+                        if _salience.score_event(event) < _salience.WAKE_THRESHOLD:
+                            return
+
+                        now = time.time()
+                        vetoed, reason = _suppressor.wake_veto(
+                            event=event,
+                            sarathi_mode=bool(getattr(self.session, "sarathi_mode", False)),
+                            manish_in_motion=bool(getattr(self.session, "manish_in_motion", False)),
+                            last_wake_age_s=(now - self._last_wake_at),
+                            wake_in_flight=bool(self._wake_in_flight),
+                            cooldown_s=_suppressor.WAKE_COOLDOWN_S,
+                        )
+                        if vetoed:
+                            log.debug(f"autonomous wake vetoed — {reason}")
+                            return
+
+                        # Claim the in-flight slot BEFORE spawning so a second
+                        # high-salience append in the same instant can't stack
+                        # a concurrent wake (wake_veto rule 1 reads this).
+                        self._wake_in_flight = True
+
+                        def _wake():
+                            try:
+                                from .prompts import build_wake_user_message
+                                now_view = None
+                                _nb = None
+                                try:
+                                    from .notebook import get_notebook
+                                    _nb = get_notebook()
+                                    if _nb is not None:
+                                        now_view = _nb.now_view()
+                                except Exception:
+                                    _nb = None
+                                    now_view = None
+
+                                # Anti-echo handshake: stamp a being:wake marker
+                                # into the notebook so the suppressor's anti-echo
+                                # veto (author == "being:wake") recognises this
+                                # wake's footprint and never loops a wake on its
+                                # own activity. Low salience so the marker itself
+                                # can't pull a fresh wake. Guarded — a notebook
+                                # fault must never break the wake.
+                                if _nb is not None:
+                                    try:
+                                        _nb.append(
+                                            author="being:wake",
+                                            kind="decision",
+                                            payload={
+                                                "event": "autonomous_wake",
+                                                "trigger_kind": event.get("kind"),
+                                                "trigger_author": event.get("author"),
+                                            },
+                                            salience=0.1,
+                                        )
+                                    except Exception:
+                                        pass
+
+                                msg = build_wake_user_message(event, now_view)
+                                # Tag the invocation author='being:wake' where the
+                                # invoker accepts it; the marker append above is
+                                # the durable anti-echo carrier regardless.
+                                try:
+                                    self._invoke_being(msg, author="being:wake")
+                                except TypeError:
+                                    self._invoke_being(msg)
+                            except Exception as exc:
+                                log.warning(f"autonomous wake invoke failed: {exc}")
+                            finally:
+                                # Always release the slot + stamp the cooldown,
+                                # even on failure, so one bad wake can't wedge
+                                # the bus shut forever.
+                                self._wake_in_flight = False
+                                self._last_wake_at = time.time()
+
+                        threading.Thread(
+                            target=_wake, daemon=True, name="being-wake",
+                        ).start()
+                    except Exception as exc:
+                        # Never let a wake fault propagate into the appender.
+                        try:
+                            self._wake_in_flight = False
+                        except Exception:
+                            pass
+                        log.warning(f"_on_event wake handler error: {exc}")
+
+                if self._notebook is not None:
+                    self._notebook.register_salience_callback(
+                        _on_event, threshold=_salience.WAKE_THRESHOLD,
+                    )
+                    log.info(
+                        "v11 Phase 2: autonomous Being-wake ARMED "
+                        f"(threshold {_salience.WAKE_THRESHOLD}, "
+                        f"cooldown {_suppressor.WAKE_COOLDOWN_S}s)"
+                    )
+        except Exception as exc:
+            log.warning(f"autonomous wake wiring failed (non-fatal): {exc}")
 
         # Read startup mood if provided via CLI
         mood_file = runtime_path("mood.txt")
@@ -653,6 +835,11 @@ class DJTretaBeing(
         # Start broadcast + recording + set
         self._start_broadcast()
         self._start_set(mood=self.mood if self.mood else None)
+
+        # Room-sense (v11 Phase 0) — Treta hears her OWN mixer output.
+        # Started UNCONDITIONALLY, independent of relay.enabled. Pure
+        # GET-only read-path; owns its own PerceptionEngine.
+        threading.Thread(target=self._room_sense_loop, daemon=True).start()
 
         # Start relay (pushes state to dj.treta.life)
         if self.config.relay.enabled:
@@ -729,6 +916,54 @@ class DJTretaBeing(
             asyncio.run(self.relay.run())
         except Exception as e:
             log.error(f"Relay loop crashed: {e}")
+
+    # ── Room-sense (v11 Phase 0) ───────────────────────────────────────
+
+    def _room_sense_loop(self):
+        """Treta hears her OWN mixer output (v11 Phase 0).
+
+        PURE READ-PATH. Owns its OWN PerceptionEngine (never shares the
+        relay's), GETs Mixxx /api/live every ~0.5s into a perception
+        history, and publishes a PerceptionEngine.analyze(active_deck)
+        snapshot to session.room_sense every ~2s. Decoupled from
+        relay.enabled — runs unconditionally.
+
+        GET-ONLY: this loop NEVER calls /api/load, /api/play,
+        /api/crossfade, /api/volume or /api/control. It cannot move audio.
+        The whole body is wrapped in try/except so a transient Mixxx error
+        (HTTP timeout, bad JSON) never kills the thread.
+        """
+        from .relay import PerceptionEngine
+
+        perception = PerceptionEngine()
+        mixxx = self.config.mixxx.url
+        last_publish = 0.0
+        PUBLISH_INTERVAL = 2.0   # publish analyze() snapshot every ~2s
+        SAMPLE_INTERVAL = 0.5    # poll /api/live every ~0.5s
+
+        while self._running:
+            try:
+                # GET-only live read into the perception history.
+                live = httpx.get(f"{mixxx}/api/live", timeout=1).json()
+                perception.add_reading(live)
+
+                now = time.time()
+                if now - last_publish >= PUBLISH_INTERVAL:
+                    last_publish = now
+                    # Determine active deck the same way the rest of the
+                    # code does — from /api/status via _active_idle_decks.
+                    active_deck = 1
+                    status = _get_status(mixxx)
+                    if status:
+                        active_deck, _ = _active_idle_decks(status)
+                    snapshot = perception.analyze(active_deck)
+                    snapshot["sampled_at"] = now
+                    self.session.room_sense = snapshot
+            except Exception as e:
+                # Transient Mixxx error — log at debug, never kill the thread.
+                log.debug(f"room-sense poll skipped: {e}")
+
+            time.sleep(SAMPLE_INTERVAL)
 
 
 # ── Entry point ───────────────────────────────────────────────────────

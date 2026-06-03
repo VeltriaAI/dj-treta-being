@@ -217,8 +217,8 @@ def generate_track(prompt: str, bpm: int = 128, key: str = "C minor",
 
     # Step 6: Insert full metadata into DB
     from ..db import upsert_track
-    from ..camelot import KEY_TO_CAMELOT
-    key_camelot = KEY_TO_CAMELOT.get(real_key, "")
+    from ..camelot import to_camelot
+    key_camelot = to_camelot(real_key)
     timeline_json = json.dumps(timeline)
 
     upsert_track(

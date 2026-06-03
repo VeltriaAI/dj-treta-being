@@ -455,10 +455,28 @@ class LibraryMixin:
         if bpm_range and len(bpm_range) == 2:
             bpm_hint = f" (typical BPM {bpm_range[0]}-{bpm_range[1]})"
 
+        # ≤2-line workspace slice from the shared notebook so the library agent
+        # stays aligned with the latest mood/decision (guard None; never raise).
+        workspace_slice = ""
+        try:
+            from .notebook import get_notebook
+            _nb = get_notebook()
+            if _nb is not None:
+                _nv = _nb.now_view() or {}
+                _md = _nv.get("mood") or mood
+                _dec = _nb.find_last("decision")
+                _dtxt = str((_dec or {}).get("payload"))[:120] if _dec else "none"
+                workspace_slice = (
+                    f"Workspace now: mood={_md}; latest decision={_dtxt}.\n"
+                )
+        except Exception:
+            workspace_slice = ""
+
         instruction = (
             f"The planner signalled that the library needs more tracks for mood "
             f"'{mood}'{bpm_hint}.\n"
             f"Vibe keywords: {vibe or 'none specified'}.\n"
+            f"{workspace_slice}"
             f"Reason: {reason or 'library thin for this mood'}.\n\n"
             f"Please:\n"
             f"1. Call list_library_tracks to see what's already in the "

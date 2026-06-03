@@ -22,6 +22,8 @@ from .tools import (
     set_volume, set_crossfader, set_eq, set_filter, set_sync,
     get_live_data, get_track_info, do_transition, do_bass_swap,
     set_rate, reset_bpm, align_beats, nudge_track,
+    # --- E2 FX techniques + E1 timing self-test (integrator: merge with above) ---
+    do_delay_throw, do_reverb_tail, do_sidechain_duck, transition_timing_selftest,
     # Library tools
     list_library_tracks, search_music, download_track, get_set_history,
     # Perception tools
@@ -36,11 +38,13 @@ from .tools import (
     set_dj_directive, set_planner_directive, set_mood, replace_deck,
     play_specific_track,
     get_directives, clear_directives, defer_decision,
+    get_arrangement_plan,  # --- E3/E5 ---
     # Evolution tools
     evolve, propose_change, review_evolution,
     spawn_agent, get_spawn_result,
     # Evolution — Tier 1+2 (visibility, memory, agency, meta-control)
     get_subagent_activity, tail_thinking_log,
+    read_workspace,  # Being-only: live snapshot of the shared notebook event bus
     get_listener_pulse, get_listener_profile,
     schedule_self, cancel_self_schedule, list_self_schedule,
     plan_set_arc, progress_set_arc, clear_set_arc,
@@ -51,6 +55,8 @@ from .tools import (
     recall_recent_chat,
     list_self_suggestions, honor_self_suggestion, discard_self_suggestion,
     suggest_transition, confirm_suggestion, reject_suggestion, list_pending_suggestions,
+    # --- E4 State/Set ---
+    get_set_archive, replay_set_archive,
 )
 
 
@@ -913,6 +919,12 @@ say so in reasoning_summary so the Being can signal the library manager."""
         # do_filter_sweep, do_hard_cut, do_echo_out, do_riser, do_dissolve
         # are reachable via do_transition(technique=...) — no need to
         # surface every variant as its own tool (prompt bloat).
+        # --- E2 FX techniques (integrator: keep additive) ---
+        # New native-FX transitions + the E1 timing self-test. These ARE
+        # surfaced directly: they take extra FX params (throw_beats, pump_beats)
+        # and the self-test is an explicit diagnostic the agent can run.
+        _wrap(do_delay_throw), _wrap(do_reverb_tail), _wrap(do_sidechain_duck),
+        _wrap(transition_timing_selftest),
 
         # Library + perception
         _wrap(list_library_tracks), _wrap(get_set_history),
@@ -921,6 +933,7 @@ say so in reasoning_summary so the Being can signal the library manager."""
 
         # Visibility / housekeeping
         _wrap(get_directives), _wrap(clear_directives),
+        _wrap(get_arrangement_plan),  # --- E3/E5 --- see the rolling arrangement
         _wrap(get_dj_status), _wrap(get_live_data),
         _wrap(defer_decision),
         _wrap(save_learning), _wrap(recall_learnings),
@@ -928,6 +941,10 @@ say so in reasoning_summary so the Being can signal the library manager."""
 
         # ── Evolution: visibility into her own apparatus ─────────────
         _wrap(get_subagent_activity), _wrap(tail_thinking_log),
+        # Being-only: live snapshot of the shared notebook event bus
+        # (agent.notebook). Deliberately NOT on DJ/planner/library lists —
+        # they get the cheaper prompt render.
+        _wrap(read_workspace),
         _wrap(get_listener_pulse), _wrap(get_listener_profile),
         _wrap(get_subagent_pause_state),
 
@@ -957,6 +974,10 @@ say so in reasoning_summary so the Being can signal the library manager."""
         # "i've got this" → leave it; he's driving on the FLX4.
         _wrap(confirm_suggestion), _wrap(reject_suggestion),
         _wrap(list_pending_suggestions),
+
+        # --- E4 State/Set ---
+        # Review past sets and replay their mixer state sequences.
+        _wrap(get_set_archive), _wrap(replay_set_archive),
     ]
     # Being can search + download when listener asks for a specific track
     if config.sources.youtube:
@@ -972,9 +993,21 @@ say so in reasoning_summary so the Being can signal the library manager."""
             _wrap(spawn_agent), _wrap(get_spawn_result),
         ])
 
+    # --- E6 Visuals ---
+    # Add visual status + palette-override tools when the visual layer is enabled.
+    # NOTE: the daemon does NOT auto-register a VisualEngine today. A running
+    # visual host must call agent.visuals.engine.register_engine(engine); until
+    # then these tools return {"enabled": False}. (E6 is gated off in prod.)
+    if getattr(getattr(config, "visuals", None), "enabled", False):
+        from .visuals.engine import get_visual_status, set_visual_palette
+        being_tools.extend([
+            _wrap(get_visual_status),
+            _wrap(set_visual_palette),
+        ])
+
     being_agent = LlmAgent(
         name="treta",
-        model=being_model,   # Pro — root Being uses the stronger model
+        model=being_model,   # config.llm.being_model (currently gemini-3.5-flash, same as subagents)
         before_tool_callback=_loop_guard,
         instruction=_load_being_prompt(config),
         tools=being_tools,

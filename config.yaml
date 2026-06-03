@@ -13,7 +13,7 @@ llm:
   model: "openai/gemini-3-flash"
   # Being (Treta's own reasoning) on pro — flash didn't follow instructions
   # reliably and skipped tool calls (reverted 2026-05-23). Subagents stay flash.
-  being_model: "openai/gemini-3.1-pro"
+  being_model: "openai/gemini-3-flash"
   api_base: "http://localhost:4000"
   # Prefer env: DJTRETA_LLM_API_KEY or LLM_API_KEY (overrides this field)
   api_key: ""
@@ -29,6 +29,17 @@ transitions:
   lookahead_seconds: 120
   default_duration: 60
   fps: 20
+  # --- E1/E2 (integrator: merge into transitions config; not yet read by code,
+  # documents the intended knobs so the executor/loader can wire them) ---
+  # E1 master clock / bar-quantize:
+  beats_per_bar: 4          # 4/4 assumed; bar = downbeat every 4 beats
+  bar_quantize: true        # start blends on the outgoing deck's next downbeat
+  quantize_on_load: true    # assert Mixxx [ChannelN] quantize=1 (cue/loop snap)
+  bar_wait_timeout_s: 4.0   # max wait for a bar boundary before firing anyway
+  # E2 native-FX effect-unit assignments (EffectRack1):
+  fx_unit_echo: 1           # do_echo_out  (pre-loaded Echo expected in Unit1)
+  fx_unit_delay: 2          # do_delay_throw (Delay/Echo in Unit2)
+  fx_unit_reverb: 3         # do_reverb_tail (Reverb in Unit3)
 
 daemon:
   heartbeat_interval_seconds: 30.0
@@ -79,6 +90,21 @@ knowledge:
   embedding_model: "text-embedding-005"  # used for online query embedding (similar_to_text)
   embedding_dim: 384                     # Matryoshka-truncated from 768
 
+# --- E3/E5 ---  Library ingestion (Rekordbox/Serato import + arrangement).
+ingestion:
+  # When a DJ-library import covers a track (cues + grid), skip the slow
+  # librosa pass for it. Only un-covered tracks fall back to librosa.
+  prefer_import_over_librosa: true
+  # Run the librosa fallback automatically after an import to reach 100%
+  # analysis coverage. Set false for import-only (fast) runs.
+  librosa_backfill_after_import: true
+arrangement:
+  # E5 leapfrog: the planner emits a rolling sequence of musical intents
+  # toward a goal each cycle. max_steps caps the horizon length.
+  enabled: true
+  max_steps: 4
+  default_bars_per_step: 16
+
 set:
   default_mood: "melodic techno"
   energy_max_jump: 2
@@ -89,5 +115,26 @@ evolution:
   reflect_every_n_tracks: 5
   auto_evolve: false
   max_evolve_per_day: 2
+
+# --- E6 Visuals ---
+# Generative Visual Layer — drives live reactive visuals from Treta's audio.
+# Everything here is disabled by default; flip enabled: true ONLY on a local
+# dev machine (never on the live VM until v10 integration is stable).
+#
+# OSC parity: same /treta/* address schema as deadmau5's TouchDesigner hook,
+# so any OSC visual app (TD, Max/MSP, resolume, p5.js bridge) can react.
+#
+# Omni: prototype Gemini Omni reactive video generation.  Requires the model
+# to be reachable via your LiteLLM gateway.  Set omni.enabled: true only
+# after confirming model access (see agent/visuals/omni.py for setup steps).
+visuals:
+  enabled: false                   # master guard — never let this affect the live set
+  omni_interval_seconds: 30.0      # minimum gap between Omni generation calls (s)
+  osc:
+    host: "127.0.0.1"             # OSC target host (change to TD machine IP for networked setup)
+    port: 7000                    # OSC target port (match your TouchDesigner / visual app)
+  omni:
+    enabled: false                 # flip true once you've confirmed Gemini Omni model access
+    model: ""                      # leave empty to try candidates: gemini-omni-flash → flash → 1.5-flash
   max_budget_per_evolve_usd: 0.50
   require_tests: true

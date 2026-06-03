@@ -150,6 +150,26 @@ def load_on_deck(mixxx_url: str, deck: int, track_path: str, timeout: float = 5.
                     httpx.post(f"{mixxx_url}/api/volume",
                                json={"deck": deck, "level": 0.0}, timeout=2)
                     log.info(f"  deck {deck} cued silent (vol 0 — other deck playing)")
+                # Cue the incoming deck to its mix_in (groove start), not bar 1 —
+                # ALWAYS, on every load (not only when the other deck is playing).
+                # On a COLD-PREP load (deck loaded while the other deck is paused)
+                # the track would otherwise sit at bar 1, and a later blend would
+                # land on 20-60s of no-beat intro silence → energy drop. A track's
+                # intro is often dead air; DJs cue at the drop/groove, so do we.
+                # Skips if the track isn't analyzed (no mix_in) or the intro is trivial.
+                try:
+                    from .db import get_track_by_path
+                    meta = get_track_by_path(track_path) or get_track_by_path(resolved) or {}
+                    mix_in = meta.get("mix_in_seconds")
+                    dur = float(meta.get("duration_seconds") or 0) or float(
+                        st.get(f"deck{deck}", {}).get("duration", 0) or 0)
+                    if mix_in and dur and 2.0 < float(mix_in) < dur:
+                        httpx.post(f"{mixxx_url}/api/control",
+                                   json={"group": f"[Channel{deck}]", "key": "playposition",
+                                         "value": float(mix_in) / dur}, timeout=2)
+                        log.info(f"  deck {deck} cued to mix_in {float(mix_in):.0f}s (groove start)")
+                except Exception:
+                    pass
             except Exception:
                 pass
             return True
