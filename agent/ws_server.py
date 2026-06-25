@@ -151,13 +151,26 @@ class WSServerMixin:
                 tracks = []
                 for t in (pl or {}).get("tracks", []):
                     p = t.get("path", "")
-                    if not p:
+                    vid = t.get("video_id", "")
+                    # Include undownloaded picks too (Suggested section shows the
+                    # FULL planned playlist) — they carry a video_id but no path.
+                    downloaded = bool(p)
+                    url = ""
+                    if not downloaded and vid:
+                        url = f"https://music.youtube.com/watch?v={vid}"
+                    if not (downloaded or vid):
                         continue
                     tracks.append({
-                        "path": _abs_music_path(p),
+                        "path": _abs_music_path(p) if p else "",
                         "title": t.get("title", ""),
                         "bpm": t.get("bpm"),
                         "key_camelot": t.get("key_camelot", ""),
+                        "rank": t.get("rank"),
+                        "reason": t.get("reason", ""),
+                        "energy": t.get("energy"),
+                        "downloaded": downloaded,
+                        "video_id": vid,
+                        "url": url,
                     })
                 return _json_response(200, {
                     "mood": (pl or {}).get("mood_snapshot", ""),
@@ -286,6 +299,61 @@ class WSServerMixin:
                 except Exception as exc:
                     return _json_response(500, {"ok": False, "message": str(exc)})
                 return _json_response(200, {"ok": True, "result": str(result)})
+
+            if route == "/http/search":
+                # YouTube Music search for the Mixxx cockpit search panel.
+                # GET /http/search?q=&artist=&title=&limit=
+                qs = parse_qs(parts.query)
+                q = (qs.get("q", [""])[0] or "").strip()
+                artist = (qs.get("artist", [""])[0] or "").strip()
+                title = (qs.get("title", [""])[0] or "").strip()
+                try:
+                    limit = int(qs.get("limit", ["15"])[0] or 15)
+                except Exception:
+                    limit = 15
+                if not (q or artist or title):
+                    return _json_response(400, {"error": "missing q/artist/title"})
+                try:
+                    from .tools.discovery import search_music
+                    results = search_music(query=q, artist=artist, title=title,
+                                           limit=max(1, min(limit, 30)))
+                except Exception as exc:
+                    return _json_response(500, {"error": str(exc)})
+                return _json_response(200, {"results": results or []})
+
+            if route == "/http/download":
+                # Download a track into the DJ Treta library, then return its
+                # absolute path so Mixxx can load it on a deck.
+                # GET/POST /http/download?url=&genre=
+                qs = parse_qs(parts.query)
+                url = (qs.get("url", [""])[0] or "").strip()
+                if not url:
+                    return _json_response(400, {"ok": False, "path": None,
+                                                "message": "missing url"})
+                genre = (qs.get("genre", [""])[0] or "").strip()
+                if not genre:
+                    # Default to the current set's mood slug so manual pulls land
+                    # in the same crate the autonomous planner is feeding.
+                    try:
+                        from .session_state import get_session
+                        sess = get_session()
+                        mp = getattr(sess, "mood_profile", None) or {} if sess else {}
+                        genre = (mp.get("canonical_slug")
+                                 or (getattr(sess, "mood", "") if sess else "")
+                                 or "deep")
+                    except Exception:
+                        genre = "deep"
+                try:
+                    from .tools.discovery import download_track
+                    result = download_track(url, genre=(genre or "deep").lower())
+                except Exception as exc:
+                    return _json_response(500, {"ok": False, "path": None,
+                                                "message": str(exc)})
+                # download_track returns relative-ish path under music_path; make
+                # it absolute for Mixxx's loader.
+                if isinstance(result, dict) and result.get("path"):
+                    result["path"] = _abs_music_path(result["path"])
+                return _json_response(200, result)
 
             # Not an HTTP route we handle → proceed to WebSocket handshake.
             return None
