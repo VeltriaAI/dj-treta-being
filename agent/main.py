@@ -129,7 +129,20 @@ def _resolve_litellm_binary() -> Path | None:
 
 
 def _ensure_litellm(config):
-    """Start local LiteLLM if not running."""
+    """Start local LiteLLM if not running.
+
+    Only ever auto-starts a *local* proxy. When ``api_base`` points at a
+    remote gateway (e.g. gateway.infrax.ai), there's nothing to start
+    locally — and the /health reachability probe can false-negative with a
+    virtual key (admin endpoint), so we'd otherwise spawn a stray local
+    proxy on :4000 that just sits unused. Skip entirely in that case.
+    """
+    base = (config.llm.api_base or "").lower()
+    is_local = ("localhost" in base) or ("127.0.0.1" in base) or ("0.0.0.0" in base)
+    if not is_local:
+        log.info(f"LLM via remote gateway ({config.llm.api_base}) — skipping local LiteLLM auto-start")
+        return
+
     if _litellm_reachable(config.llm.api_base, config.llm.api_key):
         return  # already running
 

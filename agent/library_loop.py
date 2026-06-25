@@ -290,7 +290,15 @@ class LibraryMixin:
             results = search_music(query=query, limit=15) or []
 
             from .canonicalize import genre_matches
-            picked = None
+            # Walk the results and download the first GENUINELY-NEW track.
+            # Critical: the filename dedup (title[:18]) misses remix/version
+            # suffixes — e.g. "Tum Mile (Afro House Mix)" vs on-disk
+            # "Tum Mile.mp3" — so download_track's URL/canonical check returns
+            # "ALREADY EXISTS". Treat that as a dedup hit and advance to the
+            # next result; never `break` on it, or every tick re-picks the same
+            # already-on-disk track and nothing new ever downloads.
+            downloaded = False
+            skipped_exist = 0
             for r in results:
                 if not isinstance(r, dict) or not r.get("url"):
                     continue
@@ -308,28 +316,42 @@ class LibraryMixin:
                                      mp.get("alternates") or []):
                     log.info(f"[sarathi] deep-queue: skip off-genre '{artist} - {title}'")
                     continue
-                picked = r
-                break
 
-            if not picked:
-                log.debug(f"[sarathi] deep-queue: no on-genre result for '{query}'")
-                return
+                log.info(
+                    f"[sarathi] deep-queue download ({len(existing)+1}/{TARGET}): "
+                    f"{artist} - {title}"
+                )
+                try:
+                    result = download_track(r["url"], genre=slug)
+                    ok = bool(result.get("ok")) if isinstance(result, dict) else False
+                    msg = (result.get("message", "") if isinstance(result, dict)
+                           else str(result))[:120]
+                except Exception as exc:
+                    log.warning(f"[sarathi] deep-queue download failed: {exc}")
+                    continue
 
-            log.info(
-                f"[sarathi] deep-queue download ({len(existing)+1}/{TARGET}): "
-                f"{picked.get('artist','')} - {picked.get('title','')}"
-            )
-            try:
-                result = download_track(picked["url"], genre=slug)
-                ok = bool(result.get("ok")) if isinstance(result, dict) else False
-                msg = (result.get("message", "") if isinstance(result, dict)
-                       else str(result))[:120]
+                if ok and "ALREADY EXISTS" in msg.upper():
+                    # On disk but the filename dedup missed it — record so we
+                    # don't re-pick it this tick, and try the next result.
+                    log.info(f"[sarathi] deep-queue: already on disk, next — {artist} - {title}")
+                    if stem:
+                        existing.append(f"{title.lower()}.mp3")
+                    skipped_exist += 1
+                    continue
+
                 log.info(f"[sarathi] deep-queue result: ok={ok} {msg}")
                 if ok:
-                    # surface as LOCAL on next plan
-                    self.session.replan_requested = True
-            except Exception as exc:
-                log.warning(f"[sarathi] deep-queue download failed: {exc}")
+                    self.session.replan_requested = True  # surface as LOCAL next plan
+                    downloaded = True
+                break
+
+            if not downloaded and not skipped_exist:
+                log.debug(f"[sarathi] deep-queue: no on-genre result for '{query}'")
+            elif not downloaded:
+                log.debug(
+                    f"[sarathi] deep-queue: top {skipped_exist} on-genre results "
+                    f"for '{query}' already on disk"
+                )
         except Exception as exc:
             log.debug(f"[sarathi] proactive download error: {exc}")
         finally:
