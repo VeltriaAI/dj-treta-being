@@ -521,12 +521,11 @@ class PlannerMixin:
         # Parse + validate LLM output. On any failure, keep the previous
         # playlist as authoritative and stash the error for TUI/debugging.
         try:
-            raw = (result or "").strip()
-            if "```" in raw:
-                raw = raw.split("```", 2)[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
-                raw = raw.split("```")[0].strip()
+            # Robust extraction: local models prepend a "Thinking Process:"
+            # preamble and/or ```json fences; pull the JSON block out cleanly.
+            # No-op for gateway models that already return clean JSON.
+            from .json_extract import extract_json
+            raw = extract_json(result or "")
             data = _json.loads(raw)
             validated = validate_playlist(data)
             # BUG-12 fix (Phase A2 dry run #2 2026-04-19): Flash
