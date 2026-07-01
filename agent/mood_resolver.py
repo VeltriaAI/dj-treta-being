@@ -216,13 +216,8 @@ Return JSON for the input above."""
         )
         from .billing_rates import bill_from_response
         bill_from_response(resp, "dj_treta")
-        text = resp.choices[0].message.content.strip()
-        if "```" in text:
-            text = text.split("```", 2)[1]
-            if text.startswith("json"):
-                text = text[4:]
-            text = text.split("```")[0].strip()
-        data = json.loads(text)
+        from .json_extract import extract_json
+        data = json.loads(extract_json(resp.choices[0].message.content or ""))
     except Exception as exc:
         log.warning(
             f"Mood resolver LLM failed for {raw!r} "

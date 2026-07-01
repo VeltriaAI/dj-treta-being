@@ -115,13 +115,8 @@ Now return JSON for the input above."""
         )
         from .billing_rates import bill_from_response
         bill_from_response(resp, "library")
-        raw = resp.choices[0].message.content.strip()
-        if "```" in raw:
-            raw = raw.split("```", 2)[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-            raw = raw.split("```")[0].strip()
-        data = json.loads(raw)
+        from .json_extract import extract_json
+        data = json.loads(extract_json(resp.choices[0].message.content or ""))
     except Exception as e:
         log.warning(f"Canonicalize LLM failed ({type(e).__name__}): {e} — falling back to heuristic")
         return _fallback_parse(title, uploader)
@@ -215,13 +210,8 @@ def genre_matches(artist: str, title: str, genre: str,
         )
         from .billing_rates import bill_from_response
         bill_from_response(resp, "library")
-        raw = resp.choices[0].message.content.strip()
-        if "```" in raw:
-            raw = raw.split("```", 2)[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-            raw = raw.split("```")[0].strip()
-        data = json.loads(raw)
+        from .json_extract import extract_json
+        data = json.loads(extract_json(resp.choices[0].message.content or ""))
         match = bool(data.get("match"))
         log.info(f"[genre-gate] {label!r} vs {genre!r} → {match} ({data.get('reason','')})")
         return match
