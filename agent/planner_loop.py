@@ -527,6 +527,15 @@ class PlannerMixin:
             from .json_extract import extract_json
             raw = extract_json(result or "")
             data = _json.loads(raw)
+            # Local models sometimes return the bare tracks list instead of
+            # the {tracks: [...]} envelope — coerce rather than reject.
+            if isinstance(data, list):
+                data = {"tracks": data}
+            # planned_at is OUR wall-clock stamp, not the model's to invent —
+            # local models emit ISO strings/placeholders here and fail
+            # validation. Always stamp it server-side.
+            if isinstance(data, dict):
+                data["planned_at"] = time.time()
             validated = validate_playlist(data)
             # BUG-12 fix (Phase A2 dry run #2 2026-04-19): Flash
             # occasionally returns a valid-looking but non-existent path
