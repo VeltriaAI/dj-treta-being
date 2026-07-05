@@ -36,6 +36,65 @@ class LLMConfig:
     api_key: str = ""
     temperature: float = 0.7
     timeout: int = 30
+    # NS-003: OPTIONAL per-agent model map (agent name → model id).
+    # Absent/None → exactly today's behavior: `model` for the subagent
+    # loops, `being_model` for the Being. Keys accept either the actual
+    # agent names (mixer, library, dj_treta, producer, planner, treta,
+    # library_manager) or the friendly aliases dj / being / library_peer.
+    # Example (yaml):
+    #   models:
+    #     planner: openai/gemini-flash
+    #     being: openai/gemini-pro
+    models: dict | None = None
+    # NS-003: OPTIONAL per-agent endpoint overrides
+    # (agent name → {api_base, api_key}). Same key rules as `models`.
+    # Missing fields fall back to the top-level api_base/api_key.
+    model_overrides: dict | None = None
+
+
+# NS-003: friendly config aliases → actual LlmAgent names in create_agents().
+_AGENT_NAME_ALIASES = {
+    "dj": "dj_treta",
+    "being": "treta",
+    "library_peer": "library_manager",
+}
+
+
+def canonical_agent_name(name: str) -> str:
+    """Map a friendly config alias (dj/being/library_peer) to the actual agent name."""
+    return _AGENT_NAME_ALIASES.get(name, name)
+
+
+def resolve_model_params(llm: "LLMConfig", agent_name: str) -> tuple[str, str, str]:
+    """Resolve (model_id, api_key, api_base) for a named agent.
+
+    Precedence:
+      1. `llm.models[agent_name]` (aliases accepted on both sides)
+      2. `llm.being_model` if the agent is the Being (treta) and it's set
+      3. `llm.model` (everyone else / all fallbacks)
+
+    api_key/api_base come from `llm.model_overrides[agent_name]` when
+    present, else the top-level `llm.api_key`/`llm.api_base`.
+    """
+    canonical = canonical_agent_name(agent_name)
+
+    models = {
+        canonical_agent_name(k): v for k, v in (llm.models or {}).items()
+    }
+    model_id = models.get(canonical)
+    if not model_id:
+        if canonical == "treta":
+            model_id = llm.being_model or llm.model
+        else:
+            model_id = llm.model
+
+    overrides = {
+        canonical_agent_name(k): v for k, v in (llm.model_overrides or {}).items()
+    }
+    ov = overrides.get(canonical) or {}
+    api_key = ov.get("api_key") or llm.api_key
+    api_base = ov.get("api_base") or llm.api_base
+    return model_id, api_key, api_base
 
 
 @dataclass

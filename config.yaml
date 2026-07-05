@@ -21,6 +21,21 @@ llm:
   # far more below 1.0 (and Gemini 3 expects 1.0). Was 0.7 (2026-05-24).
   temperature: 1.0
   timeout: 30
+  # NS-003: OPTIONAL per-agent model map. Absent → today's behavior
+  # (`model` for all agent loops, `being_model` for the Being). Keys are
+  # actual agent names (mixer, library, dj_treta, producer, planner, treta,
+  # library_manager) or the aliases dj / being / library_peer. Unnamed
+  # agents fall back to model/being_model. Per-agent endpoint overrides go
+  # in model_overrides (same keys, {api_base, api_key}).
+  # models:
+  #   planner: openai/gemini-flash
+  #   dj: openai/gemini-flash
+  #   being: openai/gemini-pro
+  #   library_peer: openai/gemini-flash
+  # model_overrides:
+  #   being:
+  #     api_base: "http://localhost:4001"
+  #     api_key: ""  # prefer env vars for real keys
 
 library:
   music_dir: "~/Music/DJTreta"

@@ -15,7 +15,7 @@ from google.adk.agents import LlmAgent
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.tools import FunctionTool, LongRunningFunctionTool
 
-from .config import Config
+from .config import Config, resolve_model_params
 
 # ── Cost capture ────────────────────────────────────────────────────────────
 # The gateway (LiteLLM) computes the exact per-call USD and returns it on the
@@ -759,22 +759,27 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
     # (Treta) where judgment, identity, reflection, and listener
     # conversation deserve the stronger model. Override via
     # config.llm.being_model; if empty, falls back to the Flash model.
-    model = LiteLlm(
-        model=config.llm.model,
-        api_key=config.llm.api_key,
-        api_base=config.llm.api_base,
-    )
-    _being_model_name = (
-        getattr(config.llm, "being_model", "") or config.llm.model
-    )
-    being_model = LiteLlm(
-        model=_being_model_name,
-        api_key=config.llm.api_key,
-        api_base=config.llm.api_base,
-    )
+    # NS-003: per-agent model resolution via config.llm.models (optional
+    # map). With no map, model_for() collapses to exactly the old two-tier
+    # split: one shared LiteLlm for the loops, one for the Being.
+    # Instances are cached per (model, key, base) so agents resolving to
+    # the same params keep SHARING one LiteLlm instance, as before.
+    _model_cache: dict[tuple[str, str, str], LiteLlm] = {}
+
+    def model_for(agent_name: str) -> LiteLlm:
+        params = resolve_model_params(config.llm, agent_name)
+        if params not in _model_cache:
+            model_id, api_key, api_base = params
+            _model_cache[params] = LiteLlm(
+                model=model_id, api_key=api_key, api_base=api_base,
+            )
+        return _model_cache[params]
+
+    being_model = model_for("treta")
     # NS-001: DEDICATED planner model with JSON-mode response_format.
-    # Must be a separate LiteLlm instance — the shared `model` above serves
-    # mixer/dj/being/library/producer and must never see response_format.
+    # Must be a separate LiteLlm instance — the shared/cached instances from
+    # model_for() serve mixer/dj/being/library/producer and must never see
+    # response_format.
     #
     # Live-gate finding (2026-07-05): full json_schema response_format combined
     # with the planner's tools produced EMPTY planner responses through ADK
@@ -782,17 +787,23 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
     # mitigation — still kills fences/preambles; validate_playlist remains the
     # enforcement layer. PLAYLIST_V1_RESPONSE_FORMAT (playlist_schema.py) stays
     # for a future retry once the ADK tools+schema conflict is resolved.
+    # (NS-003: model id/key/base now resolve via model_for's rules, but the
+    # planner ALWAYS gets its own instance — never the shared/cached one —
+    # so response_format stays planner-only.)
+    _planner_id, _planner_key, _planner_base = resolve_model_params(
+        config.llm, "planner"
+    )
     planner_model = LiteLlm(
-        model=config.llm.model,
-        api_key=config.llm.api_key,
-        api_base=config.llm.api_base,
+        model=_planner_id,
+        api_key=_planner_key,
+        api_base=_planner_base,
         response_format={"type": "json_object"},
     )
 
     # --- Mixer agent ---
     mixer = LlmAgent(
         name="mixer",
-        model=model,
+        model=model_for("mixer"),
         before_tool_callback=_loop_guard,
         instruction=(
             "You control the Mixxx DJ decks. Execute the requested mixing operation.\n\n"
@@ -835,7 +846,7 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
 
     library = LlmAgent(
         name="library",
-        model=model,
+        model=model_for("library"),
         before_tool_callback=_loop_guard,
         instruction="You manage the DJ music library. Find, search, and download tracks as requested.",
         tools=library_tools,
@@ -849,7 +860,7 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
     # v8 Phase 6: producer is NOT a DJ sub-agent either — it's a root peer.
     dj_agent = LlmAgent(
         name="dj_treta",
-        model=model,
+        model=model_for("dj_treta"),
         before_tool_callback=_loop_guard,
         instruction=_dj_prompt_v8(),  # v8: tight 50-line focused prompt
         tools=[
@@ -873,7 +884,7 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
     # proactive cycles sensing library gaps.
     producer_peer = LlmAgent(
         name="producer",
-        model=model,
+        model=model_for("producer"),
         before_tool_callback=_loop_guard,
         instruction=(
             "You are DJ Treta's AI music producer. You run as a peer thread "
@@ -1134,7 +1145,7 @@ the planner + DJ's job."""
 
     library_peer = LlmAgent(
         name="library_manager",
-        model=model,
+        model=model_for("library_manager"),
         before_tool_callback=_loop_guard,
         instruction=library_peer_prompt,
         tools=library_peer_tools,
