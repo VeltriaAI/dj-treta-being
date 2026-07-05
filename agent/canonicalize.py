@@ -11,6 +11,42 @@ import re
 
 log = logging.getLogger("dj-treta")
 
+# NS-001: JSON-schema response_formats. Non-strict (no additionalProperties:
+# false) so unsupported gateways degrade gracefully; extract_json fallback
+# stays in place.
+CANONICAL_TRACK_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "canonical_track",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "artist": {"type": "string"},
+                "song": {"type": "string"},
+                "version": {"type": ["string", "null"]},
+                "remixer": {"type": ["string", "null"]},
+                "confidence": {"type": "number"},
+            },
+            "required": ["artist", "song", "version", "remixer", "confidence"],
+        },
+    },
+}
+
+GENRE_MATCH_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "genre_match",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "match": {"type": "boolean"},
+                "reason": {"type": "string"},
+            },
+            "required": ["match", "reason"],
+        },
+    },
+}
+
 
 def _strip_topic(uploader: str) -> str:
     """YouTube auto-channels append ' - Topic' to artist name. Strip it."""
@@ -112,11 +148,12 @@ Now return JSON for the input above."""
             messages=[{"role": "user", "content": prompt}],
             api_base=cfg.llm.api_base, api_key=cfg.llm.api_key,
             temperature=0.1, timeout=15,
+            response_format=CANONICAL_TRACK_RESPONSE_FORMAT,
         )
         from .billing_rates import bill_from_response
         bill_from_response(resp, "library")
-        from .json_extract import extract_json
-        data = json.loads(extract_json(resp.choices[0].message.content or ""))
+        from .json_extract import parse_llm_json
+        data = parse_llm_json(resp.choices[0].message.content or "", site="canonicalize")
     except Exception as e:
         log.warning(f"Canonicalize LLM failed ({type(e).__name__}): {e} — falling back to heuristic")
         return _fallback_parse(title, uploader)
@@ -207,11 +244,12 @@ def genre_matches(artist: str, title: str, genre: str,
             messages=[{"role": "user", "content": prompt}],
             api_base=cfg.llm.api_base, api_key=cfg.llm.api_key,
             temperature=0.0, timeout=12,
+            response_format=GENRE_MATCH_RESPONSE_FORMAT,
         )
         from .billing_rates import bill_from_response
         bill_from_response(resp, "library")
-        from .json_extract import extract_json
-        data = json.loads(extract_json(resp.choices[0].message.content or ""))
+        from .json_extract import parse_llm_json
+        data = parse_llm_json(resp.choices[0].message.content or "", site="genre_gate")
         match = bool(data.get("match"))
         log.info(f"[genre-gate] {label!r} vs {genre!r} → {match} ({data.get('reason','')})")
         return match

@@ -772,6 +772,16 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
         api_key=config.llm.api_key,
         api_base=config.llm.api_base,
     )
+    # NS-001: DEDICATED planner model with JSON-schema response_format.
+    # Must be a separate LiteLlm instance — the shared `model` above serves
+    # mixer/dj/being/library/producer and must never see response_format.
+    from .playlist_schema import PLAYLIST_V1_RESPONSE_FORMAT
+    planner_model = LiteLlm(
+        model=config.llm.model,
+        api_key=config.llm.api_key,
+        api_base=config.llm.api_base,
+        response_format=PLAYLIST_V1_RESPONSE_FORMAT,
+    )
 
     # --- Mixer agent ---
     mixer = LlmAgent(
@@ -918,7 +928,7 @@ say so in reasoning_summary so the Being can signal the library manager."""
 
     planner = LlmAgent(
         name="planner",
-        model=model,
+        model=planner_model,
         before_tool_callback=_loop_guard,
         instruction=planner_prompt,
         tools=planner_tools,

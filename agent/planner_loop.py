@@ -521,12 +521,11 @@ class PlannerMixin:
         # Parse + validate LLM output. On any failure, keep the previous
         # playlist as authoritative and stash the error for TUI/debugging.
         try:
-            # Robust extraction: local models prepend a "Thinking Process:"
-            # preamble and/or ```json fences; pull the JSON block out cleanly.
-            # No-op for gateway models that already return clean JSON.
-            from .json_extract import extract_json
-            raw = extract_json(result or "")
-            data = _json.loads(raw)
+            # Robust parse (NS-001): direct json.loads first (json-mode
+            # gateway path), extract_json fallback for local models that
+            # prepend a "Thinking Process:" preamble and/or ```json fences.
+            from .json_extract import parse_llm_json
+            data = parse_llm_json(result or "", "planner")
             # Local models sometimes return the bare tracks list instead of
             # the {tracks: [...]} envelope — coerce rather than reject.
             if isinstance(data, list):

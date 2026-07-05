@@ -7,7 +7,36 @@ actual JSON. Naive ``json.loads(raw)`` then fails at char 0. Gateway models
 BOTH the local and gateway paths working from one code path.
 """
 import json
+import logging
 import re
+
+log = logging.getLogger("dj-treta")
+
+# Per-site counters distinguishing direct json.loads success vs extract_json
+# fallback. Shape: {site: {"direct": int, "fallback": int}}. Used to verify
+# NS-001 AC1 (json-mode call sites parse without invoking the fallback).
+PARSE_STATS: dict = {}
+
+
+def parse_llm_json(text: str, site: str):
+    """Parse LLM output as JSON, preferring a direct ``json.loads``.
+
+    Falls back to ``extract_json()`` when the raw text doesn't parse (fenced
+    blocks, reasoning preambles from local models). Increments ``PARSE_STATS``
+    per site so direct-vs-fallback rates are observable.
+    """
+    stats = PARSE_STATS.setdefault(site, {"direct": 0, "fallback": 0})
+    try:
+        data = json.loads((text or "").strip())
+        stats["direct"] += 1
+        log.debug("[json-mode] site=%s parsed=direct", site)
+        return data
+    except Exception:
+        pass
+    data = json.loads(extract_json(text or ""))
+    stats["fallback"] += 1
+    log.info("[json-mode] site=%s parsed=fallback", site)
+    return data
 
 
 def _balanced_spans(s: str):

@@ -4,7 +4,7 @@
      cadence change. Read on every beat before acting. -->
 
 ## Active Projects
-- **dj-treta** — Vision Home: `docs/VISION.md` — Current: NS-001 (DEFINED) — Branch: bdl/adopt-lifecycle
+- **dj-treta** — Vision Home: `docs/VISION.md` — Current: NS-001 (RUNNING) — Branch: bdl/adopt-lifecycle
 
 ## Cadence
 - Declared: **build** (15–30 min) — host-honored: emulated (session /loop + wake-ups; poll interval not Being-controlled)

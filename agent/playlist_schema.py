@@ -40,6 +40,53 @@ log = logging.getLogger("dj-treta")
 
 _VALID_TECHNIQUES = {"crossfade", "bass_swap", "filter_sweep", "echo_out", "hard_cut"}
 
+# NS-001: JSON-schema response_format for the planner call. DELIBERATELY
+# LOOSER than validate_playlist: planned_at is NOT required (server-stamped
+# in planner_loop), transition_hint / bpm / energy / v9 fields optional.
+# Non-strict (no additionalProperties:false) so unsupported gateways degrade
+# gracefully; extract_json fallback + coercion stay in place.
+PLAYLIST_V1_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "playlist_v1",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "mood_snapshot": {"type": "string"},
+                "reasoning_summary": {"type": "string"},
+                "tracks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "rank": {"type": "integer"},
+                            "path": {"type": "string"},
+                            "title": {"type": "string"},
+                            "bpm": {"type": ["number", "null"]},
+                            "key_camelot": {"type": "string"},
+                            "energy": {"type": ["integer", "null"]},
+                            "reason": {"type": "string"},
+                            "transition_hint": {
+                                "type": ["object", "null"],
+                                "properties": {
+                                    "technique": {"type": "string"},
+                                    "duration": {"type": "integer"},
+                                    "at_section": {"type": "string"},
+                                },
+                            },
+                            "downloaded": {"type": "boolean"},
+                            "video_id": {"type": "string"},
+                            "mbid": {"type": "string"},
+                        },
+                        "required": ["rank", "path", "title", "reason"],
+                    },
+                },
+            },
+            "required": ["mood_snapshot", "reasoning_summary", "tracks"],
+        },
+    },
+}
+
 
 class PlaylistValidationError(ValueError):
     """Raised when a playlist dict fails schema validation."""

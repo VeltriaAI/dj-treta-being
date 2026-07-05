@@ -35,7 +35,34 @@ log = logging.getLogger("dj-treta")
 # Bump on any breaking change to prompt, schema, or defaults. Older cached
 # profiles with a different version are ignored (forces re-resolve).
 # v2: added discogs_primary_genre + discogs_subgenres (Phase 3.6).
-RESOLVER_VERSION = "v2"
+# v3: NS-001 — response_format (JSON-mode) on the resolver LLM call.
+RESOLVER_VERSION = "v3"
+
+# NS-001: JSON-schema response_format for the mood-resolver call. Non-strict
+# (no additionalProperties:false) so gateway models that don't support strict
+# schemas degrade gracefully; extract_json fallback stays in place.
+MOOD_PROFILE_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "mood_profile",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "canonical_slug": {"type": "string"},
+                "bpm_range": {"type": "array", "items": {"type": "integer"}},
+                "energy_range": {"type": "array", "items": {"type": "integer"}},
+                "vibe_keywords": {"type": "array", "items": {"type": "string"}},
+                "discogs_primary_genre": {"type": ["string", "null"]},
+                "discogs_subgenres": {"type": "array", "items": {"type": "string"}},
+                "confidence": {"type": "number"},
+            },
+            "required": [
+                "canonical_slug", "bpm_range", "energy_range",
+                "vibe_keywords", "confidence",
+            ],
+        },
+    },
+}
 
 _DISCOGS_REFERENCE_PATH = (
     Path(__file__).parent / "knowledge" / "reference" / "discogs_genres.json"
@@ -213,11 +240,12 @@ Return JSON for the input above."""
             messages=[{"role": "user", "content": prompt}],
             api_base=cfg.llm.api_base, api_key=cfg.llm.api_key,
             temperature=0.1, timeout=15,
+            response_format=MOOD_PROFILE_RESPONSE_FORMAT,
         )
         from .billing_rates import bill_from_response
         bill_from_response(resp, "dj_treta")
-        from .json_extract import extract_json
-        data = json.loads(extract_json(resp.choices[0].message.content or ""))
+        from .json_extract import parse_llm_json
+        data = parse_llm_json(resp.choices[0].message.content or "", site="mood_resolver")
     except Exception as exc:
         log.warning(
             f"Mood resolver LLM failed for {raw!r} "
