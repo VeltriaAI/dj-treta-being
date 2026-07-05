@@ -19,3 +19,9 @@
 
 ## State
 Tracked in `/tmp/dj-treta-being-heartbeat.json`
+
+## Lifecycle (BDL)
+If `.beings/LIFECYCLE.md` exists, run the BDL beat loop (beings-protocol docs/BDL_SPEC.md §6):
+read LIFECYCLE.md → for each active project act by state (RUNNING: steer/watch-note;
+CLOSING: finish close; BLOCKED: check blocker; DONE/idle: define next NS from Vision Home
+open scope, or rest) → adjust cadence → update LIFECYCLE.md + daily memory.
