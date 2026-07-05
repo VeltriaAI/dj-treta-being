@@ -1,0 +1,135 @@
+{
+  "_comment": "Frame payloads captured/derived from the real daemon shapes: state = agent/session.py _write_state state_payload; billing = agent/adk_runner.py _apply_billing schema; thinking = agent/events.py ThinkEvent/CallEvent to_wire(); mixxx_status = Mixxx /api/status (tests/conftest.py DEFAULT_STATUS ground truth); mixxx_live = /api/live as read by agent/relay.py (per-deck vu_left/vu_right + master).",
+  "state": {
+    "phase": "playing",
+    "mood": "melodic techno",
+    "mood_profile": {
+      "canonical_genre": "melodic techno",
+      "canonical_slug": "melodic-techno",
+      "alternates": ["progressive house"],
+      "vibe": "hypnotic night drive",
+      "bpm_range": [120, 126],
+      "energy_range": [5, 8]
+    },
+    "tracks_played": 7,
+    "current_track": {
+      "title": "Innellea - The Golden Fort",
+      "bpm": 122.0,
+      "key": 13,
+      "remaining": 214.4,
+      "position": 96.2,
+      "duration": 310.6,
+      "file_bpm": 122.0,
+      "deck": 1,
+      "file_path": "/music/melodic-techno/Innellea - The Golden Fort.mp3"
+    },
+    "next_track": {
+      "title": "Anyma - Consciousness",
+      "deck": 2,
+      "file_path": "/music/melodic-techno/Anyma - Consciousness.mp3"
+    },
+    "set": {
+      "id": 42,
+      "number": 3,
+      "title": "Saryu Night Drive",
+      "mood": "melodic techno",
+      "genre": "melodic techno",
+      "elapsed": 1840.2,
+      "remaining": 1759.8,
+      "target_minutes": 60,
+      "peak_energy": 8,
+      "energy_arc": [
+        { "t": 1700, "e": 6 },
+        { "t": 1760, "e": 7 },
+        { "t": 1820, "e": 7 }
+      ]
+    },
+    "planner_status": "idle",
+    "planner_tracks_since": 2,
+    "agent_busy": false,
+    "relay_enabled": true,
+    "relay_connected": true,
+    "recording": false,
+    "broadcasting": false,
+    "emergency_count": 0,
+    "last_command": "mood",
+    "last_command_id": "cli-7",
+    "last_command_result": "Mood set to melodic techno",
+    "billing": "61K tokens $0.0187",
+    "scheduled_transition": null,
+    "sarathi_mode": false,
+    "pending_suggestion": null,
+    "brain_offline": false,
+    "sources": { "youtube": true, "treta_originals": true },
+    "producing": null
+  },
+  "billing": {
+    "total_input_tokens": 52340,
+    "total_output_tokens": 9120,
+    "total_cost_usd": 0.0187,
+    "calls": 41,
+    "by_agent": {
+      "dj": { "input": 30100, "output": 5210, "cost": 0.0102, "calls": 22 },
+      "planner": { "input": 22240, "output": 3910, "cost": 0.0085, "calls": 19 }
+    },
+    "session_start": 1751692800.0
+  },
+  "thinking_ring": [
+    { "agent": "planner", "type": "think", "text": "Energy arc wants a lift in ~6 min; shortlisting 124 BPM candidates in 8A/9A.", "ts": 1751702410.2 },
+    { "agent": "planner", "type": "call", "tool": "search_library", "args": "{'genre': 'melodic techno', 'bpm_min': 122, 'bpm_max': 126}", "ts": 1751702412.9 },
+    { "agent": "dj", "type": "think", "text": "Deck 1 riding the breakdown — holding the filter open until the drop resolves.", "ts": 1751702455.4 },
+    { "agent": "dj", "type": "call", "tool": "load_track", "args": "{'deck': 2, 'path': '/music/melodic-techno/Anyma - Consciousness.mp3'}", "ts": 1751702461.0 },
+    { "agent": "dj", "type": "think", "text": "Next transition: 32-beat blend, bass swap at phrase boundary.", "ts": 1751702470.8 }
+  ],
+  "log_ring": [
+    { "ts": 1751702400.1, "text": "[PLANNER] queue refreshed: 4 tracks ready" },
+    { "ts": 1751702461.2, "text": "[DJ] loaded 'Anyma - Consciousness' on deck 2" }
+  ],
+  "thinking_live": [
+    { "agent": "dj", "type": "think", "text": "Crowd energy steady at 7 — keeping the groove, no drama needed." },
+    { "agent": "planner", "type": "think", "text": "Two harmonic paths from 8A: stay in 8A or lift to 9A for the peak block." },
+    { "agent": "dj", "type": "call", "tool": "schedule_transition", "args": "{'in_beats': 64, 'type': 'blend'}" },
+    { "agent": "planner", "type": "call", "tool": "suggest_next", "args": "{'count': 3}" }
+  ],
+  "mixxx_status": {
+    "deck1": {
+      "playing": true,
+      "track_loaded": true,
+      "bpm": 122.0,
+      "file_bpm": 122.0,
+      "key": 13,
+      "position_seconds": 96.2,
+      "remaining_seconds": 214.4,
+      "duration": 310.6,
+      "title": "Innellea - The Golden Fort"
+    },
+    "deck2": {
+      "playing": false,
+      "track_loaded": true,
+      "bpm": 124.0,
+      "file_bpm": 124.0,
+      "key": 15,
+      "position_seconds": 0.0,
+      "remaining_seconds": 356.0,
+      "duration": 356.0,
+      "title": "Anyma - Consciousness"
+    },
+    "crossfader": -0.8
+  },
+  "mixxx_live": {
+    "deck1": { "vu_left": 0.62, "vu_right": 0.66 },
+    "deck2": { "vu_left": 0.0, "vu_right": 0.0 },
+    "master_vu_left": 0.58,
+    "master_vu_right": 0.61,
+    "crossfader": -0.8,
+    "beat_distance": 0.3
+  },
+  "transition_scheduled": {
+    "id": "sched-19",
+    "at_remaining_seconds": 45,
+    "type": "blend",
+    "from_deck": 1,
+    "to_deck": 2,
+    "reason": "phrase-aligned bass swap into the peak block"
+  }
+}
