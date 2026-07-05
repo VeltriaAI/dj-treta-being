@@ -772,15 +772,21 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
         api_key=config.llm.api_key,
         api_base=config.llm.api_base,
     )
-    # NS-001: DEDICATED planner model with JSON-schema response_format.
+    # NS-001: DEDICATED planner model with JSON-mode response_format.
     # Must be a separate LiteLlm instance — the shared `model` above serves
     # mixer/dj/being/library/producer and must never see response_format.
-    from .playlist_schema import PLAYLIST_V1_RESPONSE_FORMAT
+    #
+    # Live-gate finding (2026-07-05): full json_schema response_format combined
+    # with the planner's tools produced EMPTY planner responses through ADK
+    # (plan risk #4). Degraded to plain json_object mode per the plan's
+    # mitigation — still kills fences/preambles; validate_playlist remains the
+    # enforcement layer. PLAYLIST_V1_RESPONSE_FORMAT (playlist_schema.py) stays
+    # for a future retry once the ADK tools+schema conflict is resolved.
     planner_model = LiteLlm(
         model=config.llm.model,
         api_key=config.llm.api_key,
         api_base=config.llm.api_base,
-        response_format=PLAYLIST_V1_RESPONSE_FORMAT,
+        response_format={"type": "json_object"},
     )
 
     # --- Mixer agent ---
