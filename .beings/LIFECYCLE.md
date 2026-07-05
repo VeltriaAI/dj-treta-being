@@ -4,7 +4,7 @@
      cadence change. Read on every beat before acting. -->
 
 ## Active Projects
-- **dj-treta** — Vision Home: `docs/VISION.md` — Current: NS-004 (web UI scaffold — next) · NS-002 AC3 batched to switch-readiness — Branch: bdl/adopt-lifecycle
+- **dj-treta** — Vision Home: `docs/VISION.md` — Current: NS-005 (operator panels — next) · batched-live: NS-002 AC3 + NS-004 daemon checks — Branch: bdl/adopt-lifecycle
 
 ## Cadence
 - Declared: **build** (15–30 min) — host-honored: emulated (session /loop + wake-ups; poll interval not Being-controlled)
