@@ -27,10 +27,10 @@ Sequenced from the 2026-07-05 assessment. One RUNNING at a time.
 - [ ] NS-002 — Typed internal event seam (AgentInvoker protocol + ThinkEvent/CallEvent/BillingEvent), wire-stable
 - [ ] NS-003 — Per-agent model map in LLMConfig (default = today's values, opt-in)
 
-### Phase 1 — Web UI (read-only observer)
-- [ ] NS-004 — SPA scaffold (Vite+Svelte+TS, self-contained) consuming /ws/state
-- [ ] NS-005 — Live panels: decks/BPM/drift, planner queue, thinking stream, room-sense
-- [ ] NS-006 — Reconnect/degrade behavior + hosting decision (static route vs nginx)
+### Phase 1 — Web UI (operator cockpit inside dj-treta-live)
+- [ ] NS-004 — Cockpit pivot: /cockpit route in dj-treta-live web (Next.js), DJStateProvider dual-source (relay + local ws://7779), reuse NowPlaying/BrainThoughts/etc.
+- [ ] NS-005 — Operator-only panels: planner queue, drift, billing, raw thinking, room-sense
+- [ ] NS-006 — Local-run story (cockpit against local daemon, auth bypass for localhost) + TUI-parity checklist
 
 ### Phase 2 — Web UI control socket (gated writes)
 - [ ] NS-007 — /ws/command socket + token gate; mixxx_proxy passthrough
@@ -55,4 +55,5 @@ Sequenced from the 2026-07-05 assessment. One RUNNING at a time.
 - 2026-07-05 — Ultracode assessment verdict DO_IT_SCOPED: web UI decoupled from Pydantic migration; migration gated on Phase-3 beachhead; TUI sunsets last. Full plan: workflow wf_cc4d72a6 output.
 - 2026-07-05 — Reordered sequence: seam first, UI second, migration gated — a UI gated behind a migration repeats the smolagents→ADK scar for zero UI benefit.
 - 2026-07-05 — NS-001 CLOSED DONE. Learning: json_schema+tools via ADK = empty responses; json_object is the safe mode for tool-bearing ADK agents (input for NS-008 gate). All 4 call sites parse direct on gateway; fallback layer retained.
+- 2026-07-05 — WEB UI PIVOT (Manish + Treta): reuse dj-treta-live (~/workspace/dj-treta-live, production dj.treta.life) instead of a parallel Svelte SPA. Operator cockpit = /cockpit route/mode of the same Next.js app; DJStateProvider gains a local source. Rationale: ~70% component reuse (NowPlaying/BrainThoughts/EnergyArc/SpectrumCanvas/Crossfader/SetTimeline), one brand, no permanent dual-UI maintenance; relay camelCase frame confirmed as canonical shape (matches assessment). Svelte scaffold harvested for frame fixtures + mock replay harness, rest dropped.
 - 2026-07-05 — Claude brain (Haiku 4.5 loops / Sonnet 5 Being) desired but blocked: Vertex has zero Anthropic quota + no Sonnet-5/Haiku-4.5 model IDs; Anthropic-direct needs an API key (Manish). Parked, not abandoned.
