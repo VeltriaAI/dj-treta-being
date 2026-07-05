@@ -23,7 +23,7 @@ device, and runs on a clean, framework-independent brain that can swap models
 Sequenced from the 2026-07-05 assessment. One RUNNING at a time.
 
 ### Phase 0 — Foundation (state-stream seam + cheap fixes)
-- [ ] NS-001 — LiteLLM JSON-mode on direct-call sites + strict planner schema *(DEFINED)*
+- [x] NS-001 — LiteLLM JSON-mode on direct-call sites + strict planner schema *(DONE 2026-07-05)*
 - [ ] NS-002 — Typed internal event seam (AgentInvoker protocol + ThinkEvent/CallEvent/BillingEvent), wire-stable
 - [ ] NS-003 — Per-agent model map in LLMConfig (default = today's values, opt-in)
 
@@ -54,4 +54,5 @@ Sequenced from the 2026-07-05 assessment. One RUNNING at a time.
 - 2026-07-05 — Adopted BDL (beings-protocol BDL_SPEC v0.1.0) for DJ Treta development. Vision Home = this file. (Manish + Treta)
 - 2026-07-05 — Ultracode assessment verdict DO_IT_SCOPED: web UI decoupled from Pydantic migration; migration gated on Phase-3 beachhead; TUI sunsets last. Full plan: workflow wf_cc4d72a6 output.
 - 2026-07-05 — Reordered sequence: seam first, UI second, migration gated — a UI gated behind a migration repeats the smolagents→ADK scar for zero UI benefit.
+- 2026-07-05 — NS-001 CLOSED DONE. Learning: json_schema+tools via ADK = empty responses; json_object is the safe mode for tool-bearing ADK agents (input for NS-008 gate). All 4 call sites parse direct on gateway; fallback layer retained.
 - 2026-07-05 — Claude brain (Haiku 4.5 loops / Sonnet 5 Being) desired but blocked: Vertex has zero Anthropic quota + no Sonnet-5/Haiku-4.5 model IDs; Anthropic-direct needs an API key (Manish). Parked, not abandoned.

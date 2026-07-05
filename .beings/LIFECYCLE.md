@@ -4,11 +4,11 @@
      cadence change. Read on every beat before acting. -->
 
 ## Active Projects
-- **dj-treta** — Vision Home: `docs/VISION.md` — Current: NS-001 (RUNNING) — Branch: bdl/adopt-lifecycle
+- **dj-treta** — Vision Home: `docs/VISION.md` — Current: NS-002 (PROPOSED — next: typed event seam) — Branch: bdl/adopt-lifecycle
 
 ## Cadence
 - Declared: **build** (15–30 min) — host-honored: emulated (session /loop + wake-ups; poll interval not Being-controlled)
-- Reason: adopting BDL + first nanosprint cycle starting, set 2026-07-05
+- Reason: NS-001 closed DONE same-session; staying `build` to define NS-002, set 2026-07-05
 - Next review: NS-001 CLOSE → stay `build` if NS-002 starts same session, else drop to `watch`
 
 ## Standing Rules
