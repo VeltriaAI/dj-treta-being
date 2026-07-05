@@ -85,19 +85,17 @@ class PlannerMixin:
         if not hasattr(self, "_ws_broadcast"):
             return
         body = msg if level == "INFO" else f"[{level}] {msg}"
+        from .events import ThinkEvent
+        ev = ThinkEvent(agent="planner", text=body)
         try:
-            self._ws_broadcast("thinking", {
-                "agent": "planner",
-                "type": "think",
-                "text": body,
-            })
+            self._ws_broadcast("thinking", ev.to_wire())
         except Exception:
             pass
         # Also write to thinking.log so the file replay shows it.
         try:
             from .runtime_paths import runtime_path
             with open(runtime_path("thinking.log"), "a") as f:
-                f.write(f"[THINK:planner] {body}\n")
+                f.write(ev.log_line() + "\n")
         except Exception:
             pass
 

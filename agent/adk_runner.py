@@ -6,6 +6,7 @@ import logging
 import threading
 import time
 from pathlib import Path
+from .events import BillingEvent, CallEvent, ThinkEvent
 from .runtime_paths import runtime_path
 
 log = logging.getLogger("dj-treta")
@@ -297,15 +298,12 @@ class ADKRunnerMixin:
                     if part.text and len(part.text.strip()) > 5:
                         text = part.text.strip()
                         if not text.startswith('{') and not text.startswith('['):
+                            ev = ThinkEvent(agent=agent_name, text=text[:500])
                             with open(THINKING_FILE, "a") as f:
-                                f.write(f"[THINK:{agent_name}] {text[:500]}\n")
+                                f.write(ev.log_line() + "\n")
                             # Broadcast thinking via WebSocket
                             if hasattr(self, '_ws_broadcast'):
-                                self._ws_broadcast("thinking", {
-                                    "agent": agent_name,
-                                    "type": "think",
-                                    "text": text[:500],
-                                })
+                                self._ws_broadcast("thinking", ev.to_wire())
                             # Auto-tap into the shared notebook (percept).
                             # A notebook fault must NEVER break thinking/billing/_ws_broadcast.
                             try:
@@ -315,7 +313,7 @@ class ADKRunnerMixin:
                                     nb.append(
                                         author=agent_name,
                                         kind="percept",
-                                        payload={"text": text[:300]},
+                                        payload=ThinkEvent(agent=agent_name, text=text[:300]).notebook_payload(),
                                         dedup_key=f"think:{agent_name}",
                                     )
                             except Exception:
@@ -326,16 +324,12 @@ class ADKRunnerMixin:
             if func_calls:
                 for fc in func_calls:
                     args_str = str(fc.args)[:200] if fc.args else ""
+                    ev = CallEvent(agent=agent_name, tool=fc.name, args=args_str)
                     with open(THINKING_FILE, "a") as f:
-                        f.write(f"[CALL:{agent_name}] {fc.name}({args_str})\n")
+                        f.write(ev.log_line() + "\n")
                     # Broadcast tool call via WebSocket
                     if hasattr(self, '_ws_broadcast'):
-                        self._ws_broadcast("thinking", {
-                            "agent": agent_name,
-                            "type": "call",
-                            "tool": fc.name,
-                            "args": args_str,
-                        })
+                        self._ws_broadcast("thinking", ev.to_wire())
                     # Auto-tap into the shared notebook (decision/transition).
                     # A notebook fault must NEVER break thinking/billing/_ws_broadcast.
                     try:
@@ -351,14 +345,14 @@ class ADKRunnerMixin:
                                 nb.append(
                                     author=agent_name,
                                     kind="transition",
-                                    payload={"tool": fc.name, "args": args_str},
+                                    payload=ev.notebook_payload(),
                                     salience=0.9,
                                 )
                             else:
                                 nb.append(
                                     author=agent_name,
                                     kind="decision",
-                                    payload={"tool": fc.name, "args": args_str},
+                                    payload=ev.notebook_payload(),
                                 )
                     except Exception:
                         pass
@@ -414,7 +408,7 @@ class ADKRunnerMixin:
             billing = _apply_billing(agent_name, inp, out, cost, key_spend)
             # Broadcast updated billing snapshot to TUI clients.
             if hasattr(self, '_ws_broadcast'):
-                self._ws_broadcast("billing", billing)
+                self._ws_broadcast("billing", BillingEvent(snapshot=billing).to_wire())
             return cost
         except Exception:
             return 0.0
