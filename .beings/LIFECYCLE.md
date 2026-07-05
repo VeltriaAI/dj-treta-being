@@ -4,11 +4,11 @@
      cadence change. Read on every beat before acting. -->
 
 ## Active Projects
-- **dj-treta** — Vision Home: `docs/VISION.md` — Current: NS-002 (PROPOSED — next: typed event seam) — Branch: bdl/adopt-lifecycle
+- **dj-treta** — Vision Home: `docs/VISION.md` — Current: NS-004 (web UI scaffold — next) · NS-002 AC3 batched to switch-readiness — Branch: bdl/adopt-lifecycle
 
 ## Cadence
 - Declared: **build** (15–30 min) — host-honored: emulated (session /loop + wake-ups; poll interval not Being-controlled)
-- Reason: NS-001 closed DONE same-session; staying `build` to define NS-002, set 2026-07-05
+- Reason: continuous build toward djay→djtreta switch-readiness (Manish directive 2026-07-05); live checks batched at end
 - Next review: NS-001 CLOSE → stay `build` if NS-002 starts same session, else drop to `watch`
 
 ## Standing Rules
