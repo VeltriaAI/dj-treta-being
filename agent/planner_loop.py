@@ -556,6 +556,15 @@ class PlannerMixin:
             if isinstance(data, dict):
                 data["planned_at"] = time.time()
             validated = validate_playlist(data)
+            # SIZE ENFORCEMENT (07-28): the prompt asks for exactly 5 ranked
+            # candidates; small local models return 8+ anyway. Over-long
+            # playlists dilute rank quality and widen the off-menu surface —
+            # trim to the top 5 by rank before any other guard runs.
+            if len(validated.get("tracks", [])) > 5:
+                extra = len(validated["tracks"]) - 5
+                validated["tracks"] = sorted(
+                    validated["tracks"], key=lambda t: t.get("rank", 999))[:5]
+                log.info(f"Planner size-enforce: trimmed {extra} extra candidate(s) to 5")
             # MENU ENFORCEMENT (2026-07-15): when the candidate menu is active
             # (cap>0), the playlist MUST be a subset of the menu. Small local
             # models parrot track names from other prompt context (deck

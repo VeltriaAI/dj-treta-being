@@ -88,6 +88,24 @@ def _on_failure(kwargs, completion_response, start_time, end_time):
         pass
 
 
+def _make_async_logger():
+    """CustomLogger covering the ADK/async litellm path, which never fires the
+    sync success/failure callbacks (the 07-15 known gap: recorder saw ~1 line
+    from an 8.5h set because every planner/DJ call went through acompletion)."""
+    from litellm.integrations.custom_logger import CustomLogger
+
+    class _FlightRecorder(CustomLogger):
+        async def async_log_success_event(self, kwargs, response_obj,
+                                          start_time, end_time):
+            _on_success(kwargs, response_obj, start_time, end_time)
+
+        async def async_log_failure_event(self, kwargs, response_obj,
+                                          start_time, end_time):
+            _on_failure(kwargs, response_obj, start_time, end_time)
+
+    return _FlightRecorder()
+
+
 def install() -> bool:
     """Idempotently register the callbacks. Returns True when recording."""
     if not _ENABLED:
@@ -98,6 +116,13 @@ def install() -> bool:
             litellm.success_callback = (litellm.success_callback or []) + [_on_success]
         if _on_failure not in (litellm.failure_callback or []):
             litellm.failure_callback = (litellm.failure_callback or []) + [_on_failure]
+        # Async (ADK) path — the sync callbacks above never see acompletion.
+        try:
+            if not any(type(cb).__name__ == "_FlightRecorder"
+                       for cb in (litellm.callbacks or [])):
+                litellm.callbacks = (litellm.callbacks or []) + [_make_async_logger()]
+        except Exception:
+            pass  # async coverage is best-effort; sync path still records
         return True
     except Exception:
         return False

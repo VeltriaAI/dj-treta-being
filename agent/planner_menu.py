@@ -103,4 +103,13 @@ def select_planner_candidates(
         scored.append((mood_rank, score, row.get("path") or "", row))
 
     scored.sort(key=lambda t: (t[0], t[1], t[2]))
+
+    # STRICT-GENRE (07-28): when the mood pool alone can fill the menu, the
+    # menu is mood-only — off-genre tracks may NOT ride in on BPM proximity.
+    # BPM backfill (mood_rank 1) is a scarcity fallback, not a default: it
+    # only engages when true matches can't fill the cap.
+    mood_pool = sum(1 for t in scored if t[0] == 0)
+    if mood_pool >= cap:
+        return [row for rank, _, _, row in scored[:cap] if rank == 0]
+
     return [row for _, _, _, row in scored[:cap]]

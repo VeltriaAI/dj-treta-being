@@ -21,6 +21,30 @@ from .runtime_paths import runtime_path
 log = logging.getLogger("dj-treta")
 
 
+import re as _re
+
+# ACTION-PROTOCOL (07-28): openers/phrases that mark a DJ-agent reply as
+# assistant-filler rather than a decision. Conservative on purpose — a real
+# status line ("holding — deck 2 mid-track") matches none of these.
+_DJ_FILLER_RE = _re.compile(
+    r"(?i)^\s*(what (would|track|is|do)|how can i (help|assist)|i am ready to"
+    r" (help|assist)|i can (help|assist|perform)|please (provide|let me know)"
+    r"|would you like|let me know what|you can ask me)"
+)
+_DJ_FILLER_ANY_RE = _re.compile(
+    r"(?i)(what would you like|how can i help|please provide (a |the )?"
+    r"(file )?(path|track|command)|your next command)"
+)
+
+
+def _is_dj_filler(text: str) -> bool:
+    """True when the DJ agent's text turn is chat-assistant filler."""
+    t = (text or "").strip()
+    if not t:
+        return False
+    return bool(_DJ_FILLER_RE.search(t) or _DJ_FILLER_ANY_RE.search(t))
+
+
 def _idle_was_played(idle_path: str, tracks_played: list) -> bool:
     """True iff `idle_path` matches any entry in `tracks_played`.
 
@@ -865,6 +889,13 @@ class HeartbeatMixin:
                     # FIX-C: result=="" is AMBIGUOUS. A tool-call-with-no-text
                     # is a SUCCESS (DJ scheduled/loaded silently), not a drop.
                     if (result or "").strip() or made_tool_call:
+                        # ACTION-PROTOCOL enforcement (07-28): small local
+                        # models emit assistant-filler ("What would you
+                        # like...") after tool calls. Discard it — the tool
+                        # call is the decision; the filler is noise.
+                        if (result or "").strip() and _is_dj_filler(result):
+                            log.debug(f"DJ filler suppressed: {result[:120]}")
+                            result = ""
                         # Real decision. Keep the existing (text) log; tool-only
                         # decisions already log via _process_event([CALL:...]).
                         if (result or "").strip():
