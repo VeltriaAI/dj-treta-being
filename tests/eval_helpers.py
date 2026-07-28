@@ -18,8 +18,14 @@ from litellm import completion
 # ── Config ───────────────────────────────────────────────────────────────
 
 MODELS = {
-    "flash": "openai/gemini-3-flash",
-    "pro": "openai/gemini-3.1-pro",
+    # gateway.infrax.ai serves gemini-flash (3.5-flash) — her ACTUAL cloud brain.
+    # (The old "gemini-3-flash" alias lived on the retired localhost:4000 proxy.)
+    "flash": "openai/gemini-flash",
+    "flash-gw": "openai/gemini-flash",
+    "pro": "openai/gemini-pro",
+    # Local model via Ollama. Run with:
+    #   EVAL_MODEL=gemma4 LITELLM_API_BASE=http://localhost:11434 pytest ...
+    "gemma4": "ollama_chat/gemma4:e2b-it-qat",
 }
 
 DEFAULT_MODEL = MODELS.get(
@@ -43,6 +49,13 @@ def eval_agent(
 ) -> dict:
     """Call LLM with prompt and tools, return structured result."""
     t0 = time.time()
+    # Ollama-hosted models (e.g. gemma4 QAT) default to slow "thinking" mode;
+    # think=False cuts latency ~3x. API_BASE must point at ollama for these
+    # (set LITELLM_API_BASE=http://localhost:11434 at run time). flash/pro
+    # paths are unchanged (still hit the LiteLLM proxy on :4000).
+    extra_kwargs = {}
+    if "ollama" in model:
+        extra_kwargs["think"] = False
     response = completion(
         model=model,
         messages=[
@@ -53,6 +66,7 @@ def eval_agent(
         temperature=0,
         api_base=API_BASE,
         api_key=API_KEY,
+        **extra_kwargs,
     )
     elapsed = time.time() - t0
     msg = response.choices[0].message
@@ -150,13 +164,33 @@ def eval_agent_nonempty(*args, **kwargs):
     return result
 
 
-def assert_technique_acceptable(args: dict, *acceptable: str) -> None:
-    """Assert the schedule_transition `technique` arg is one of the acceptable values."""
-    technique = (args or {}).get("technique", "").lower()
-    acceptable_lower = {t.lower() for t in acceptable}
-    assert technique in acceptable_lower, (
-        f"Technique {technique!r} not in acceptable set {sorted(acceptable_lower)}"
+def assert_technique_acceptable(picked, expected=None, alternatives=None, rejected=None) -> None:
+    """Assert the DJ's chosen transition technique is acceptable for a scenario.
+
+    picked:       the technique string the DJ actually scheduled.
+    expected:     the ideal Technique (enum) — or None if a wait was expected.
+    alternatives: also-acceptable Techniques (enum list).
+    rejected:     Techniques that must NOT be used.
+
+    Rejected is always enforced; the acceptable set (expected + alternatives)
+    is enforced only when defined.
+    """
+    def _v(t):
+        return (t.value if hasattr(t, "value") else str(t)).lower()
+
+    picked_l = _v(picked)
+    rejected_l = {_v(t) for t in (rejected or [])}
+    assert picked_l not in rejected_l, (
+        f"Technique {picked!r} is explicitly rejected for this scenario {sorted(rejected_l)}"
     )
+    acceptable = set()
+    if expected is not None:
+        acceptable.add(_v(expected))
+    acceptable |= {_v(t) for t in (alternatives or [])}
+    if acceptable:
+        assert picked_l in acceptable, (
+            f"Technique {picked!r} not in acceptable set {sorted(acceptable)}"
+        )
 
 
 def assert_in_range(value, low, high, label: str = "value") -> None:

@@ -34,6 +34,10 @@ import google.adk.models.lite_llm as _adk_litellm
 
 _orig_convert = _adk_litellm._model_response_to_generate_content_response
 
+# Flight recorder (2026-07-15): 100% LLM transcript to runtime llm-transcript.jsonl.
+from .flight_recorder import install as _fr_install
+_fr_install()
+
 
 def _convert_with_cost(response, *args, **kwargs):
     llm_resp = _orig_convert(response, *args, **kwargs)
@@ -770,8 +774,14 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
         params = resolve_model_params(config.llm, agent_name)
         if params not in _model_cache:
             model_id, api_key, api_base = params
+            # Local-brain fix (2026-07-14): Ollama models (gemma4 QAT) default
+            # to a slow chain-of-thought "thinking" dump on tool-calling agents
+            # — 260-490 wasted tokens + 6-12s per call. json_object paths
+            # suppress it naturally, but the tool-calling agents (dj/mixer/being)
+            # don't, so force think=False here. No-op for cloud models.
+            _extra = {"think": False} if "ollama" in model_id.lower() else {}
             _model_cache[params] = LiteLlm(
-                model=model_id, api_key=api_key, api_base=api_base,
+                model=model_id, api_key=api_key, api_base=api_base, **_extra,
             )
         return _model_cache[params]
 
@@ -793,10 +803,12 @@ def create_agents(config: Config) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
     _planner_id, _planner_key, _planner_base = resolve_model_params(
         config.llm, "planner"
     )
+    _planner_extra = {"think": False} if "ollama" in _planner_id.lower() else {}
     planner_model = LiteLlm(
         model=_planner_id,
         api_key=_planner_key,
         api_base=_planner_base,
+        **_planner_extra,
         response_format={"type": "json_object"},
     )
 

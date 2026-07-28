@@ -208,8 +208,9 @@ def send_brain_command(command: str, args: dict = {}) -> str:
     payload = {"command": command, "args": args}
     COMMAND_FILE.write_text(json.dumps(payload, indent=2))
 
-    # Poll for response
-    for _ in range(120):  # 60 seconds
+    # Poll for response. 130s — gemini-3.1-pro-preview (thinking Being) can take
+    # >60s for a full agent loop; matches llm.timeout headroom (2026-06-03).
+    for _ in range(260):  # 130 seconds
         time.sleep(0.5)
         state = read_daemon_state()
         if state:

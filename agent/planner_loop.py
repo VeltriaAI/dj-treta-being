@@ -498,6 +498,28 @@ class PlannerMixin:
                 workspace_line=workspace_line,
             )
         else:
+            # NS-009: code pre-filter ("the menu"). When llm.planner_candidate_cap
+            # is set (> 0), shrink the full-library dump to the N best candidates
+            # (mood match → BPM proximity → Camelot bonus, played excluded)
+            # before prompt build. Cap 0/absent = today's behavior, untouched.
+            cap = int(getattr(self.config.llm, "planner_candidate_cap", 0) or 0)
+            if cap > 0 and len(library) > cap:
+                from .planner_menu import select_planner_candidates
+                _mp = getattr(self.session, "mood_profile", None)
+                full_size = len(library)
+                library = select_planner_candidates(
+                    library,
+                    cap=cap,
+                    mood=(_mp or {}).get("canonical_slug") or self.mood or "",
+                    current_bpm=(current_meta or {}).get("bpm"),
+                    current_key_camelot=(current_meta or {}).get("key_camelot"),
+                    played_titles=played_list,
+                    mood_profile=_mp,
+                )
+                log.info(
+                    f"Planner menu: {full_size} → {len(library)} candidates "
+                    f"(cap={cap})"
+                )
             log.info(
                 f"Planner running (v8) — current: {current_track or 'nothing'}, "
                 f"{len(library)} analyzed library tracks"
@@ -534,6 +556,36 @@ class PlannerMixin:
             if isinstance(data, dict):
                 data["planned_at"] = time.time()
             validated = validate_playlist(data)
+            # MENU ENFORCEMENT (2026-07-15): when the candidate menu is active
+            # (cap>0), the playlist MUST be a subset of the menu. Small local
+            # models parrot track names from other prompt context (deck
+            # history, previous playlist) instead of choosing from the menu —
+            # real files, wrong mood. Drop off-menu tracks, backfill from the
+            # menu top, re-rank. Mood-honoring becomes a code guarantee.
+            if not v9_mode and cap > 0:
+                menu_paths = {c.get("path", "") for c in library} - {""}
+                kept = [t for t in validated["tracks"]
+                        if t.get("path", "") in menu_paths]
+                dropped_n = len(validated["tracks"]) - len(kept)
+                if dropped_n:
+                    have = {t.get("path") for t in kept}
+                    for c in library:
+                        if len(kept) >= max(5, len(validated["tracks"])):
+                            break
+                        if c.get("path") and c["path"] not in have:
+                            kept.append({
+                                "rank": 0, "path": c["path"],
+                                "title": c.get("title") or c["path"],
+                                "reason": "menu backfill (off-menu pick dropped)",
+                            })
+                            have.add(c["path"])
+                    for i, t in enumerate(kept):
+                        t["rank"] = i + 1
+                    validated["tracks"] = kept
+                    log.warning(
+                        f"Planner menu-enforce: dropped {dropped_n} off-menu "
+                        f"track(s), backfilled from menu ({len(kept)} total)"
+                    )
             # BUG-12 fix (Phase A2 dry run #2 2026-04-19): Flash
             # occasionally returns a valid-looking but non-existent path
             # (e.g. strips the genre subdirectory). DJ then fails to
@@ -846,8 +898,52 @@ class PlannerMixin:
                     log.info(f"Planner emitted library_need signal for {mood_slug}: {reason}")
         except (ValueError, PlaylistValidationError) as exc:
             msg = f"{type(exc).__name__}: {exc}"
-            log.warning(f"Planner output invalid — keeping last good playlist. {msg}")
             self.session.last_planner_error = msg
+            # Failure transcript (2026-07-15): keep the RAW model output so
+            # bad cycles are debuggable — the error alone told us nothing
+            # about WHY the local model returned empty/garbage.
+            try:
+                import json as _fjson
+                from .runtime_paths import runtime_dir
+                with open(runtime_dir() / "planner-failures.jsonl", "a") as _f:
+                    _f.write(_fjson.dumps({
+                        "ts": time.time(), "error": msg,
+                        "raw_output": (result or "")[:4000],
+                        "menu_size": len(library),
+                    }) + "\n")
+            except Exception:
+                pass
+            # SMART FALLBACK (2026-07-15): a stale playlist can be full of
+            # ghost tracks; the menu is fresh, real, harmonic and sorted
+            # best-first. Deterministic tier: synthesize from menu top-8 so
+            # one flaky brain call never poisons the queue. LLM taste →
+            # menu determinism → emergency randomness (never silence).
+            fb_tracks = [
+                {"rank": i + 1, "path": c.get("path", ""),
+                 "title": c.get("title") or c.get("path", ""),
+                 "reason": f"deterministic menu fallback (rank {i + 1})"}
+                for i, c in enumerate(library[:8]) if c.get("path")
+            ]
+            if fb_tracks:
+                try:
+                    _fb_mood = (getattr(self.session, "mood", "") or "").lower().replace(" ", "-")
+                    fb = validate_playlist(
+                        {"tracks": fb_tracks, "planned_at": time.time(),
+                         "mood_snapshot": _fb_mood or "unknown",
+                         "reasoning_summary": "menu fallback — planner output invalid"}
+                    )
+                    self.session.playlist = fb
+                    log.warning(
+                        f"Planner output invalid ({msg}) — adopted deterministic "
+                        f"menu fallback: {len(fb_tracks)} real tracks"
+                    )
+                except Exception as fb_exc:
+                    log.warning(
+                        f"Planner output invalid — menu fallback also failed "
+                        f"({fb_exc}); keeping last good playlist. {msg}"
+                    )
+            else:
+                log.warning(f"Planner output invalid — keeping last good playlist. {msg}")
 
     def _build_workspace_line(self) -> str:
         """Render a terse (<=2-line) workspace slice for the planner prompt.

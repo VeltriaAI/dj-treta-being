@@ -50,6 +50,14 @@ class LLMConfig:
     # (agent name → {api_base, api_key}). Same key rules as `models`.
     # Missing fields fall back to the top-level api_base/api_key.
     model_overrides: dict | None = None
+    # NS-009: OPTIONAL planner candidate cap. The v8 planner path dumps the
+    # full analyzed library into the prompt; with 2,000+ tracks that's a
+    # ~50K-token prompt (minutes of prompt-eval on a local model). When > 0,
+    # a deterministic code pre-filter ("the menu" — see planner_menu.py)
+    # shrinks the library to the N best candidates (mood match, BPM
+    # proximity, Camelot compatibility) before prompt build.
+    # 0 (default) = unlimited/off — preserves today's cloud behavior exactly.
+    planner_candidate_cap: int = 0
 
 
 # NS-003: friendly config aliases → actual LlmAgent names in create_agents().
