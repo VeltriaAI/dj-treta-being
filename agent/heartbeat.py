@@ -917,6 +917,10 @@ class HeartbeatMixin:
                         result2 = self._invoke_agent(retry_prompt, fresh_session=True)
                         made_tool_call2 = bool(getattr(self, "_last_dj_made_tool_call", False))
                         if (result2 or "").strip() or made_tool_call2:
+                            # ACTION-PROTOCOL: same filler discard as primary path.
+                            if (result2 or "").strip() and _is_dj_filler(result2):
+                                log.debug(f"DJ filler suppressed (retry): {result2[:120]}")
+                                result2 = ""
                             if (result2 or "").strip():
                                 log.info(f"DJ decision (retry): {result2[:500]}")
                                 if hasattr(self, '_ws_broadcast'):
