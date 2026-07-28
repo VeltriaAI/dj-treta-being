@@ -42,6 +42,75 @@ def _wait_phrase_boundary(deck: int, timeout_s: float = 2.0, threshold: float = 
     return False
 
 
+_PHRASE_BEATS = 32  # 8 bars of 4/4 — the musical phrase drops/builds live on
+
+
+def phrase_clock(deck: int) -> dict | None:
+    """Read the PHRASE position of `deck` from live position + tempo.
+
+    beats_elapsed = position_seconds * bpm / 60, phrase = 32 beats from track
+    start. Extended club mixes are cut on the phrase grid, so track-start is a
+    sound phrase origin until per-track downbeat data exists (v5 knowledge).
+
+    Returns {bpm, beats_elapsed, phrase_beat, seconds_to_next_phrase} or None
+    if Mixxx is unreachable / deck has no tempo.
+    """
+    st = _mixxx_get("/api/status")
+    if _mixxx_failed(st) or not isinstance(st, dict):
+        return None
+    d = st.get(f"deck{deck}", {})
+    try:
+        bpm = float(d.get("bpm") or 0)
+        pos = float(d.get("position_seconds") or -1)
+        rem = float(d.get("remaining_seconds") or 0)
+    except (TypeError, ValueError):
+        return None
+    if bpm <= 0 or pos < 0:
+        return None
+    beats_elapsed = pos * bpm / 60.0
+    phrase_beat = beats_elapsed % _PHRASE_BEATS
+    beats_to_next = _PHRASE_BEATS - phrase_beat
+    return {
+        "bpm": bpm,
+        "beats_elapsed": beats_elapsed,
+        "phrase_beat": phrase_beat,
+        "seconds_to_next_phrase": beats_to_next * 60.0 / bpm,
+        "remaining_seconds": rem,
+    }
+
+
+def _wait_true_phrase_boundary(deck: int, max_wait_s: float = 20.0,
+                               reserve_s: float = 0.0,
+                               threshold: float = 0.05) -> bool:
+    """Block until `deck`'s next 32-beat PHRASE boundary, then micro-snap to
+    the beat via beat_distance. This is the phrase-lock: blends start where
+    the music breathes, not at an arbitrary bar.
+
+    Degrades to a bar wait when: phrase data unavailable, the boundary is
+    further than `max_wait_s` away, or waiting would eat into `reserve_s`
+    (seconds the caller still needs on the outgoing deck, e.g. blend length).
+    """
+    pc = phrase_clock(deck)
+    if pc is None:
+        return _wait_bar_boundary(deck, timeout_s=4.0, threshold=threshold)
+    wait = pc["seconds_to_next_phrase"]
+    rem = pc.get("remaining_seconds", 0.0)
+    if wait > max_wait_s or (reserve_s and rem and rem < wait + reserve_s + 2.0):
+        log.info(
+            f"[phrase-lock] deck {deck}: boundary {wait:.1f}s away "
+            f"(rem {rem:.1f}s, reserve {reserve_s:.0f}s) — degrading to bar snap"
+        )
+        return _wait_bar_boundary(deck, timeout_s=4.0, threshold=threshold)
+    log.info(
+        f"[phrase-lock] deck {deck}: phrase beat {pc['phrase_beat']:.1f}/32, "
+        f"holding {wait:.1f}s for the boundary"
+    )
+    if wait > 0.6:
+        _time_mod.sleep(wait - 0.5)
+    # Land exactly on the beat (micro-poll window ~1.5s covers the residue).
+    return _wait_phrase_boundary(deck, timeout_s=1.5, threshold=threshold)
+
+
 def _bars_to_seconds(bars: int, bpm: float) -> float:
     """Convert N bars (assumes 4/4) at given BPM to seconds."""
     if not bpm or bpm <= 0:
@@ -570,11 +639,12 @@ def do_transition(to_deck: int, duration: int = 60, bpm_after: str = "anchor", g
         if not deck_state2.get("playing", False):
             return f"ABORTED: Deck {to_deck} failed to start playing."
 
-    # E1: bar-quantized start — block until the next DOWNBEAT (bar boundary)
-    # on the outgoing deck (the master clock) so the crossfade begins on a
-    # musical bar, not a raw beat. Falls back to single-beat align if the
-    # build lacks beat_active; fires anyway on timeout (better to mix than stall).
-    _wait_bar_boundary(out_deck, timeout_s=4.0, threshold=0.05)
+    # E1+PHRASE-LOCK: block until the outgoing deck's next 32-beat PHRASE
+    # boundary (the master clock) so the crossfade begins where the music
+    # breathes. Degrades to bar → beat → timeout-fire; reserve the blend
+    # duration so we never phrase-wait ourselves off the end of the track.
+    _wait_true_phrase_boundary(out_deck, max_wait_s=20.0,
+                               reserve_s=float(duration), threshold=0.05)
 
     # Crossfader parked center; blend on the channel faders (club-DJ style).
     _center_crossfader()
@@ -612,7 +682,9 @@ def do_transition(to_deck: int, duration: int = 60, bpm_after: str = "anchor", g
         # Bass swap on the beat, once the incoming fader is up.
         if not bass_swapped and i >= half:
             _mixxx_post("/api/volume", {"deck": to_deck, "level": 1.0})
-            _wait_phrase_boundary(out_deck, timeout_s=2.0, threshold=0.05)
+            # Bass swap on the next BAR downbeat (a phrase wait mid-blend
+            # would stall the fader ride; a bar is musically safe and near).
+            _wait_bar_boundary(out_deck, timeout_s=2.5, threshold=0.05)
             _mixxx_post("/api/eq", {"deck": to_deck, "lo": 1.0})   # restore incoming bass ON BEAT
             _mixxx_post("/api/eq", {"deck": out_deck, "lo": 0.0})  # drop outgoing bass
             bass_swapped = True

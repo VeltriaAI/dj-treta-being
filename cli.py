@@ -296,6 +296,26 @@ def cmd_mode(mode: str = ""):
     response = send_brain_command("set_mode", {"mode": mode})
     console.print(f"[green]{response}[/green]")
 
+def cmd_arc(args: list):
+    """Set/clear/inspect the set arc deterministically (bypasses the LLM).
+
+    djtreta arc <curve> [minutes] [ending]   e.g. arc build 100 fade-out
+    djtreta arc clear | progress
+    """
+    if not args:
+        console.print("[yellow]Usage: arc <build|peak-then-settle|flat-warm|rollercoaster> [min] [ending] | clear | progress[/yellow]")
+        return
+    if args[0] in ("clear", "progress"):
+        response = send_brain_command("set_arc", {"action": args[0]})
+    else:
+        payload = {"action": "plan", "energy_curve": args[0]}
+        if len(args) > 1:
+            payload["target_minutes"] = int(args[1])
+        if len(args) > 2:
+            payload["ending_style"] = args[2]
+        response = send_brain_command("set_arc", payload)
+    console.print(f"[green]{response}[/green]")
+
 def cmd_accept():
     """Sarathi: 'do it' — Treta fires the latest pending transition suggestion."""
     response = send_brain_command("confirm_transition", {})
@@ -712,6 +732,9 @@ def main():
         elif cmd == "mode":
             cmd_mode(sys.argv[2] if len(sys.argv) > 2 else "")
             return
+        elif cmd == "arc":
+            cmd_arc(sys.argv[2:])
+            return
         elif cmd in ("accept", "doit", "confirm"):
             cmd_accept()
             return
@@ -791,6 +814,8 @@ def main():
                 cmd_transition(technique=tech, duration=dur)
             elif cmd == "mode":
                 cmd_mode(args[0] if args else "")
+            elif cmd == "arc":
+                cmd_arc(args)
             elif cmd in ("accept", "doit", "confirm"):
                 cmd_accept()
             elif cmd == "reject":

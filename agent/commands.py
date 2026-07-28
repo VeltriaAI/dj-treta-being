@@ -182,6 +182,23 @@ class CommandsMixin:
                    else "Treta executes transitions autonomously.")
             )
 
+        elif cmd == "set_arc":
+            # Deterministic arc control — infrastructure ops bypass the LLM
+            # (small local models can't reliably emit tool calls; see 07-28).
+            from .tools.arc import plan_set_arc, clear_set_arc, progress_set_arc
+            action = (args.get("action", "plan") or "plan").lower().strip()
+            if action == "clear":
+                return clear_set_arc()
+            if action == "progress":
+                res = progress_set_arc()
+                return res.get("message", str(res))
+            res = plan_set_arc(
+                target_minutes=args.get("target_minutes", 60),
+                energy_curve=args.get("energy_curve", "build"),
+                ending_style=args.get("ending_style", "fade-out"),
+            )
+            return res.get("message", str(res))
+
         elif cmd in ("confirm_transition", "reject_transition"):
             from .tools.sarathi import confirm_suggestion, reject_suggestion
             sid = args.get("suggestion_id", "")
