@@ -58,6 +58,15 @@ class LLMConfig:
     # proximity, Camelot compatibility) before prompt build.
     # 0 (default) = unlimited/off — preserves today's cloud behavior exactly.
     planner_candidate_cap: int = 0
+    # 2026-07-29: OPTIONAL slow-loop brain providers (role → provider spec).
+    # Runs a brain ROLE on an agentic CLI instead of the LiteLLM/ADK loop.
+    # Absent/None → exactly today's behavior for every role. See
+    # brain_providers.py. Example (yaml):
+    #   brains:
+    #     library_manager: {provider: claude-cli, model: sonnet, timeout: 300}
+    #     planner:         {provider: codex-cli}
+    # provider ∈ {litellm (default path), claude-cli, codex-cli}.
+    brains: dict | None = None
 
 
 # NS-003: friendly config aliases → actual LlmAgent names in create_agents().

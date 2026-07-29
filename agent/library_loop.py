@@ -514,6 +514,37 @@ class LibraryMixin:
             f"5. Report a one-line summary of what you added.\n"
         )
 
+        # 2026-07-29: pluggable slow-loop brain. When config.llm.brains maps
+        # library_manager to a CLI provider (claude-cli / codex-cli), the CLI
+        # CURATES (web-informed picks as JSON) and CODE executes search +
+        # download deterministically — the multi-step agency a small local
+        # model can't hold (07-29: gemma looped list_library_tracks() into
+        # the 500-call limit). Any failure falls through to the ADK path.
+        try:
+            from .brain_providers import brain_for
+            _brain = brain_for(self.config.llm, "library_manager")
+        except Exception:
+            _brain = None
+        if _brain is not None:
+            try:
+                added = self._fulfil_via_cli_brain(
+                    _brain, mood=mood, count=count, vibe=vibe,
+                    bpm_hint=bpm_hint)
+                if added:
+                    log.info(f"Library done (brain:{_brain['provider']}): "
+                             f"added {added} track(s)")
+                    if hasattr(self, '_ws_broadcast'):
+                        self._ws_broadcast("log", {
+                            "text": f"Library filled {mood} via "
+                                    f"{_brain['provider']}: {added} track(s)"})
+                    self.session.library_need = None
+                    return
+                log.warning(f"brain:{_brain['provider']} curated 0 downloadable "
+                            f"tracks — falling back to agent path")
+            except Exception as exc:
+                log.warning(f"brain:{_brain['provider']} fulfil failed "
+                            f"({exc}) — falling back to agent path")
+
         try:
             result = self._invoke_library(instruction)
             log.info(f"Library done: {str(result)[:200]}")
@@ -525,3 +556,74 @@ class LibraryMixin:
             # Clear the need signal (consumed). Planner can set it again
             # next tick if library is still thin.
             self.session.library_need = None
+
+    def _fulfil_via_cli_brain(self, brain: dict, *, mood: str, count: int,
+                              vibe: str, bpm_hint: str) -> int:
+        """CLI brain curates picks (JSON); this code searches + downloads.
+
+        Returns the number of tracks actually downloaded. Raises on brain
+        failure (caller falls back to the ADK agent path).
+        """
+        from .brain_providers import run_cli_brain
+        from .json_extract import extract_json
+        from .tools.discovery import search_music, download_track
+
+        existing = []
+        try:
+            import sqlite3
+            from .db import DB_PATH
+            with sqlite3.connect(DB_PATH) as _con:
+                existing = [r[0] or "" for r in _con.execute(
+                    "SELECT title FROM tracks ORDER BY id DESC LIMIT 60")]
+        except Exception:
+            pass
+
+        prompt = (
+            f"You are the music curator for DJ Treta, an AI DJ. The set mood "
+            f"is '{mood}'{bpm_hint}. Vibe keywords: {vibe or 'none'}.\n"
+            f"Already in the crate (avoid duplicates): "
+            f"{'; '.join(existing) or 'nothing — empty library'}.\n\n"
+            f"Curate {count} REAL, currently-relevant tracks for this mood — "
+            f"use web search to check what top artists of the genre released "
+            f"recently. Genuine electronic/club tracks only: no Bollywood or "
+            f"film-pop unless a clear electronic remix, no full DJ mixes or "
+            f"compilations, single tracks 2-10 minutes.\n\n"
+            f"Reply with ONLY this JSON (no prose, no fences):\n"
+            f'{{"picks": [{{"artist": "...", "title": "...", '
+            f'"search_query": "artist title extended mix"}}]}}'
+        )
+        raw = run_cli_brain(brain, prompt, allow_web=True)
+        import json as _json
+        data = _json.loads(extract_json(raw))
+        picks = (data or {}).get("picks") or []
+        if not picks:
+            raise RuntimeError("no picks in brain reply")
+
+        added = 0
+        for p in picks:
+            if added >= count:
+                break
+            query = (p.get("search_query")
+                     or f"{p.get('artist', '')} {p.get('title', '')}").strip()
+            if not query:
+                continue
+            try:
+                results = search_music(query=query)
+            except Exception as exc:
+                log.warning(f"[brain-fulfil] search failed for '{query}': {exc}")
+                continue
+            for r in (results or [])[:3]:
+                url = r.get("url")
+                if not url:
+                    continue
+                try:
+                    res = download_track(url=url, genre=mood)
+                except Exception as exc:
+                    log.warning(f"[brain-fulfil] download failed: {exc}")
+                    continue
+                if res.get("ok") or res.get("success") or res.get("path"):
+                    log.info(f"[brain-fulfil] added: {r.get('artist')} - "
+                             f"{r.get('title')}")
+                    added += 1
+                    break
+        return added
