@@ -620,8 +620,16 @@ def do_transition(to_deck: int, duration: int = 60, bpm_after: str = "anchor", g
             )
             duration = new_duration
 
-    # Sync + play + phase align (let Mixxx handle BPM matching naturally)
+    # Sync + play + phase align (let Mixxx handle BPM matching naturally).
+    # SILENCE-THE-INCOMING-FIRST (07-29): zero the incoming fader + cut its
+    # bass BEFORE /api/play. The phrase-lock hold below can now block for up
+    # to ~20s (it was ≤4s when this was a bar wait), and on paths where the
+    # deck sits at unity (load_track, or after _finish_channel_fader restores
+    # both decks to 1.0) that would be 20s of two tracks at full volume with
+    # both bass bands open. do_bass_swap already orders it this way.
     _mixxx_post("/api/sync", {"deck": to_deck})
+    _mixxx_post("/api/volume", {"deck": to_deck, "level": 0.0})
+    _mixxx_post("/api/eq", {"deck": to_deck, "lo": 0.0})
     _mixxx_post("/api/play", {"deck": to_deck})
     _time.sleep(0.3)
     _mixxx_post("/api/control", {"group": f"[Channel{to_deck}]", "key": "beatsync_phase", "value": 1})
@@ -648,6 +656,8 @@ def do_transition(to_deck: int, duration: int = 60, bpm_after: str = "anchor", g
 
     # Crossfader parked center; blend on the channel faders (club-DJ style).
     _center_crossfader()
+    # Re-assert (cheap, idempotent) — guards against anything that touched the
+    # incoming deck during the phrase hold.
     _mixxx_post("/api/volume", {"deck": to_deck, "level": 0.0})
     _mixxx_post("/api/eq", {"deck": to_deck, "lo": 0.0})  # cut incoming bass first
 

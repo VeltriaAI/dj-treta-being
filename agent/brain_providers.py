@@ -64,23 +64,35 @@ def run_cli_brain(brain: dict, prompt: str, *, allow_web: bool = True) -> str:
     """Run one prompt through a CLI brain and return its final text.
 
     Raises on non-zero exit, timeout, or empty output — callers catch and
-    fall back. Providers run without repo write access: claude gets only
-    read/web tools; codex runs in its read-only sandbox.
+    fall back.
+
+    Write access is denied two ways, because --allowedTools alone is an
+    allow-list and restricts nothing: claude runs with --permission-mode plan
+    plus an explicit --disallowedTools deny of Bash/Write/Edit/NotebookEdit/
+    Task, and codex runs --sandbox read-only. Both run with cwd set to a temp
+    dir (never the repo) and stdin closed so a child can never block on input.
     """
     provider = brain["provider"]
     model = (brain.get("model") or "").strip()
     timeout = int(brain.get("timeout") or 300)
 
     if provider == "claude-cli":
-        cmd = ["claude", "-p", prompt, "--output-format", "text"]
+        # --allowedTools is an ALLOW list; on its own it restricts NOTHING.
+        # Without these flags the child inherits the daemon's cwd (the live
+        # repo) and the user's settings (defaultMode: auto) — a 07-29 review
+        # empirically wrote a file into the repo through this exact call.
+        # Deny the write/exec tools explicitly, and run from a temp cwd so
+        # even a permitted write lands nowhere important.
+        cmd = ["claude", "-p", prompt, "--output-format", "text",
+               "--permission-mode", "plan", "--strict-mcp-config",
+               "--disallowedTools", "Bash,Write,Edit,NotebookEdit,Task"]
         if model:
             cmd += ["--model", model]
         if allow_web:
             cmd += ["--allowedTools", "WebSearch,WebFetch"]
-        else:
-            cmd += ["--allowedTools", ""]
         out = subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout,
+            cwd=tempfile.gettempdir(), stdin=subprocess.DEVNULL,
         )
         if out.returncode != 0:
             raise RuntimeError(
@@ -99,6 +111,7 @@ def run_cli_brain(brain: dict, prompt: str, *, allow_web: bool = True) -> str:
             cmd += [prompt]
             out = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=timeout,
+                cwd=tempfile.gettempdir(), stdin=subprocess.DEVNULL,
             )
             if out.returncode != 0:
                 raise RuntimeError(

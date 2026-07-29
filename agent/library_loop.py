@@ -572,9 +572,21 @@ class LibraryMixin:
         try:
             import sqlite3
             from .db import DB_PATH
-            with sqlite3.connect(DB_PATH) as _con:
+            # Filter by the mood being refilled — an unfiltered "last 60 rows"
+            # rarely covers this genre, which is exactly what makes the brain
+            # re-pick tracks we already own.
+            _con = sqlite3.connect(DB_PATH)
+            try:
                 existing = [r[0] or "" for r in _con.execute(
-                    "SELECT title FROM tracks ORDER BY id DESC LIMIT 60")]
+                    "SELECT title FROM tracks WHERE lower(coalesce(genre,'')) LIKE ?"
+                    "   OR lower(coalesce(mood,'')) LIKE ?"
+                    " ORDER BY id DESC LIMIT 80",
+                    (f"%{mood.lower()}%", f"%{mood.lower()}%"))]
+                if not existing:  # unknown mood → fall back to recent
+                    existing = [r[0] or "" for r in _con.execute(
+                        "SELECT title FROM tracks ORDER BY id DESC LIMIT 60")]
+            finally:
+                _con.close()
         except Exception:
             pass
 
@@ -620,6 +632,16 @@ class LibraryMixin:
                     res = download_track(url=url, genre=mood)
                 except Exception as exc:
                     log.warning(f"[brain-fulfil] download failed: {exc}")
+                    continue
+                # download_track returns ok=True with "ALREADY EXISTS" on
+                # dedup. Counting that as new made a fill report success while
+                # adding nothing — the need got cleared, the planner re-emitted
+                # it, and we'd pay for a CLI call every 30s forever without the
+                # ADK fallback ever running. _sarathi_proactive_download has
+                # guarded this for months; mirror it.
+                if res.get("ok") and "ALREADY EXISTS" in (res.get("message") or "").upper():
+                    log.info(f"[brain-fulfil] already owned, trying next: "
+                             f"{r.get('title')}")
                     continue
                 if res.get("ok") or res.get("success") or res.get("path"):
                     log.info(f"[brain-fulfil] added: {r.get('artist')} - "

@@ -205,7 +205,14 @@ def make_status_display() -> Panel:
 
 def send_brain_command(command: str, args: dict = {}) -> str:
     """Send command to brain daemon and wait for response."""
-    payload = {"command": command, "args": args}
+    # Match the reply by command ID, not by command NAME (07-29): the daemon
+    # keeps rewriting last_command_result, so two calls of the same command
+    # (e.g. `arc build` then `arc progress`) could print the PREVIOUS result.
+    # Observed live twice. The daemon has always published last_command_id
+    # (session.py:176) and ws_server/mcp already use it — only the CLI didn't.
+    from uuid import uuid4
+    cmd_id = uuid4().hex
+    payload = {"command": command, "args": args, "id": cmd_id}
     COMMAND_FILE.write_text(json.dumps(payload, indent=2))
 
     # Poll for response. 130s — gemini-3.1-pro-preview (thinking Being) can take
@@ -215,7 +222,12 @@ def send_brain_command(command: str, args: dict = {}) -> str:
         state = read_daemon_state()
         if state:
             result = state.get("last_command_result", "")
-            if state.get("last_command") == command and result and result != "processing...":
+            if state.get("last_command_id") == cmd_id and result and result != "processing...":
+                return result
+            # Back-compat: an older daemon that doesn't echo the id.
+            if ("last_command_id" not in state
+                    and state.get("last_command") == command
+                    and result and result != "processing..."):
                 return result
     return "No response from brain (timeout)"
 

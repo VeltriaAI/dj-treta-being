@@ -8,9 +8,13 @@ out, tool calls, tokens and latency. This is the audit trail the truncated
 thinking.log can't provide: when a cycle goes wrong, read the exact wire
 traffic instead of guessing.
 
-Local-first design: the file grows fast (full prompts), which is fine on a
-dev box. ``DJTRETA_FLIGHT_RECORDER=0`` disables. Never raises — recording
-must not be able to break the music.
+Bounded by default (07-29): the transcript rotates at 64MB (one ``.1.jsonl``
+backup kept) and each message body is capped at 4000 chars. Before that it
+was the only unbounded writer in the repo and reached 174MB in 19h — enough
+to ENOSPC the runtime dir, which also holds deck state and the DB.
+``DJTRETA_FLIGHT_RECORDER=0`` disables; ``*_MAX_BYTES`` / ``*_MAX_MSG_CHARS``
+raise the caps for a deep-debug session. Never raises — recording must not
+be able to break the music.
 """
 
 from __future__ import annotations
@@ -23,14 +27,49 @@ from .runtime_paths import runtime_dir
 
 _ENABLED = os.environ.get("DJTRETA_FLIGHT_RECORDER", "1") != "0"
 
+# DISK SAFETY (07-29 review): this was the only unbounded writer in the repo.
+# Measured 174MB / 1,729 records in 19h (~223MB/day) on a box with <4GB free,
+# and runtime_dir() also holds state.json, command.json, the sqlite DB and
+# downloaded audio — ENOSPC here takes the whole daemon's state with it, while
+# _write's own `except: pass` hides the failure. Every other log in this repo
+# is capped (agent.log rotates, thinking.log truncates on boot); this one now
+# is too. Overridable for a deep-debug session.
+_MAX_BYTES = int(os.environ.get("DJTRETA_FLIGHT_RECORDER_MAX_BYTES", 64 * 1024 * 1024))
+_MAX_MSG_CHARS = int(os.environ.get("DJTRETA_FLIGHT_RECORDER_MAX_MSG_CHARS", 4000))
+
 
 def _path():
-    return runtime_dir() / "llm-transcript.jsonl"
+    # runtime_path() so it carries the dj-treta- prefix and is caught by any
+    # dj-treta-* cleanup glob (it previously escaped them).
+    from .runtime_paths import runtime_path
+    return runtime_path("llm-transcript.jsonl")
+
+
+def _truncate_messages(messages):
+    """Cap each message's content; the library_manager prompt alone is ~93KB."""
+    out = []
+    for m in messages or []:
+        if not isinstance(m, dict):
+            out.append(m)
+            continue
+        c = m.get("content")
+        if isinstance(c, str) and len(c) > _MAX_MSG_CHARS:
+            out.append({**m, "content": c[:_MAX_MSG_CHARS] + "…[truncated]",
+                        "content_len": len(c)})
+        else:
+            out.append(m)
+    return out
 
 
 def _write(rec: dict) -> None:
     try:
-        with open(_path(), "a") as f:
+        p = _path()
+        try:
+            if p.stat().st_size > _MAX_BYTES:
+                p.replace(p.with_suffix(".1.jsonl"))  # keep exactly one backup
+        except FileNotFoundError:
+            pass
+        with open(p, "a") as f:
             f.write(json.dumps(rec, default=str) + "\n")
     except Exception:
         pass
@@ -40,7 +79,7 @@ def _extract(kwargs, response) -> dict:
     rec = {
         "ts": time.time(),
         "model": kwargs.get("model", ""),
-        "messages": kwargs.get("messages", []),
+        "messages": _truncate_messages(kwargs.get("messages", [])),
         "tools": [
             (t.get("function", {}) or {}).get("name", "?")
             for t in (kwargs.get("tools") or [])
@@ -81,7 +120,7 @@ def _on_failure(kwargs, completion_response, start_time, end_time):
         _write({
             "ts": time.time(),
             "model": kwargs.get("model", ""),
-            "messages": kwargs.get("messages", []),
+            "messages": _truncate_messages(kwargs.get("messages", [])),
             "FAILED": str(completion_response)[:2000],
         })
     except Exception:

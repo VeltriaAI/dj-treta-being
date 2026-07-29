@@ -927,11 +927,27 @@ class PlannerMixin:
             # best-first. Deterministic tier: synthesize from menu top-8 so
             # one flaky brain call never poisons the queue. LLM taste →
             # menu determinism → emergency randomness (never silence).
+            # `library` is only the sorted menu when cap > 0 (planner_loop
+            # applies select_planner_candidates under that gate, and never in
+            # v9 mode). With the default cap=0 it's an unordered DB dump, so
+            # library[:8] would be 8 arbitrary rows — wrong genre, wrong BPM,
+            # possibly already played. Always run the menu filter here.
+            _fb_pool = library
+            try:
+                from .planner_menu import select_planner_candidates as _sel
+                _fb_pool = _sel(
+                    library, cap=8,
+                    mood=(getattr(self.session, "mood", "") or ""),
+                    played_titles=[t.get("title", "") for t in
+                                   (getattr(self, "tracks_played", None) or [])],
+                ) or library
+            except Exception as _fb_exc:
+                log.warning(f"menu fallback filter failed ({_fb_exc}) — using raw library")
             fb_tracks = [
                 {"rank": i + 1, "path": c.get("path", ""),
                  "title": c.get("title") or c.get("path", ""),
                  "reason": f"deterministic menu fallback (rank {i + 1})"}
-                for i, c in enumerate(library[:8]) if c.get("path")
+                for i, c in enumerate(_fb_pool[:8]) if c.get("path")
             ]
             if fb_tracks:
                 try:
