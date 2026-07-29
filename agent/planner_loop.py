@@ -165,6 +165,40 @@ class PlannerMixin:
                     _age = time.time() - getattr(self, "_last_plan_ts", 0.0)
                     if _n < 5 or _age > 30:
                         needs_plan = True
+                # SETLIST MODE (07-29): a prepared set overrides selection
+                # entirely — synthesise the queue from it and never call the
+                # planner LLM. She still mixes it (phrase-lock, blends, cues);
+                # only "what's next" is fixed. When the set finishes (and
+                # isn't looping) setlist_to_playlist returns None and we fall
+                # through to normal planning rather than leaving decks dry.
+                _setlist = getattr(self.session, "setlist", None)
+                if _setlist:
+                    try:
+                        from .setlist import setlist_to_playlist, setlist_position
+                        _played = {(t.get("path") or t.get("file_path") or "")
+                                   for t in self.tracks_played}
+                        _played.discard("")
+                        _sl_playlist = setlist_to_playlist(_setlist, _played)
+                        if _sl_playlist is not None:
+                            _cur = (self.session.playlist or {}).get("tracks") or []
+                            _new = _sl_playlist["tracks"]
+                            if [t["path"] for t in _cur] != [t["path"] for t in _new]:
+                                self.session.playlist = _sl_playlist
+                                _pos = setlist_position(_setlist, _played)
+                                log.info(
+                                    f"[setlist] '{_setlist.get('name')}' "
+                                    f"{_pos}/{len(_setlist.get('tracks') or [])} — "
+                                    f"next: {_new[0]['title'][:60]}")
+                                if self._idle_needs_fresh_load(status):
+                                    self.session.idle_needs_load = True
+                            time.sleep(15)
+                            continue
+                        log.info(f"[setlist] '{_setlist.get('name')}' finished — "
+                                 f"handing selection back to the planner")
+                        self.session.setlist = None
+                    except Exception as exc:
+                        log.warning(f"[setlist] failed ({exc}) — falling back to planner")
+
                 if needs_plan and getattr(self.session, "replan_requested", False):
                     self.session.replan_requested = False
 

@@ -308,6 +308,29 @@ def cmd_mode(mode: str = ""):
     response = send_brain_command("set_mode", {"mode": mode})
     console.print(f"[green]{response}[/green]")
 
+def cmd_setlist(args: list):
+    """Hand Treta a prepared set — she plays it in order and mixes it.
+
+    djtreta setlist <path-to.m3u8|cues.json|folder> [--loop] [name...]
+    djtreta setlist status | clear
+    """
+    if not args:
+        console.print("[yellow]Usage: setlist <path.m3u8|folder> [--loop] | status | clear[/yellow]")
+        return
+    if args[0] in ("clear", "off", "stop"):
+        response = send_brain_command("setlist", {"action": "clear"})
+    elif args[0] in ("status", "info"):
+        response = send_brain_command("setlist", {"action": "status"})
+    else:
+        loop = "--loop" in args
+        rest = [a for a in args if a != "--loop"]
+        source = rest[0]
+        name = " ".join(rest[1:]) if len(rest) > 1 else ""
+        response = send_brain_command(
+            "setlist", {"action": "load", "source": source,
+                        "name": name, "loop": loop})
+    console.print(f"[green]{response}[/green]")
+
 def cmd_arc(args: list):
     """Set/clear/inspect the set arc deterministically (bypasses the LLM).
 
@@ -747,6 +770,9 @@ def main():
         elif cmd == "arc":
             cmd_arc(sys.argv[2:])
             return
+        elif cmd in ("setlist", "set"):
+            cmd_setlist(sys.argv[2:])
+            return
         elif cmd in ("accept", "doit", "confirm"):
             cmd_accept()
             return
@@ -828,6 +854,8 @@ def main():
                 cmd_mode(args[0] if args else "")
             elif cmd == "arc":
                 cmd_arc(args)
+            elif cmd in ("setlist", "set"):
+                cmd_setlist(args)
             elif cmd in ("accept", "doit", "confirm"):
                 cmd_accept()
             elif cmd == "reject":

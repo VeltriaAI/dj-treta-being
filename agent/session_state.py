@@ -51,6 +51,10 @@ CRITICAL_FIELDS = frozenset({
     # Set-arc plan — pre-committed energy curve for the set. Persisted so
     # progress checks survive restarts.
     "set_arc",
+    # Setlist — a prepared, fixed running order that overrides the planner.
+    # Durable: a daemon restart mid-set must resume the same set, not fall
+    # back to free selection.
+    "setlist",
     # Meta-control flags — pause/resume of subagents. Read at top of
     # each loop; durable so an in-progress pause survives a restart.
     "planner_paused", "dj_paused", "library_paused",
@@ -158,6 +162,7 @@ _FIELD_DEFAULTS: dict[str, Any] = {
     #    checkpoints: [{at_pct, expected_energy, hit_at, observed_energy}]}
     # None when no arc is in flight.
     "set_arc": None,
+    "setlist": None,
 
     # Reflection log — synthesized output from the 15-min reflection
     # loop. Capped at 20 entries (FIFO). Each entry:

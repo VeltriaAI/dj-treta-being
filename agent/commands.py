@@ -182,6 +182,42 @@ class CommandsMixin:
                    else "Treta executes transitions autonomously.")
             )
 
+        elif cmd == "setlist":
+            # Prepared-set control. Deterministic (no LLM) — selection is
+            # exactly what Manish handed us.
+            from .setlist import load_setlist, setlist_status
+            action = (args.get("action", "status") or "status").lower().strip()
+            played = {(t.get("path") or t.get("file_path") or "")
+                      for t in getattr(self, "tracks_played", [])}
+            played.discard("")
+            if action == "clear":
+                had = (self.session.setlist or {}).get("name")
+                self.session.setlist = None
+                self.session.replan_requested = True
+                log.info(f"[setlist] cleared ({had}) — Treta picks again")
+                return f"Setlist cleared{f' ({had})' if had else ''}. Treta picks her own tracks now."
+            if action == "status":
+                return setlist_status(self.session.setlist, played)
+            if action == "load":
+                source = args.get("source", "")
+                if not source:
+                    return "setlist load needs a source (m3u8, cues.json or folder)"
+                try:
+                    sl = load_setlist(source, name=args.get("name", ""),
+                                      loop=bool(args.get("loop", False)))
+                except ValueError as exc:
+                    return f"Could not load setlist: {exc}"
+                self.session.setlist = sl
+                self.session.replan_requested = True
+                self.session.idle_needs_load = True
+                n = len(sl["tracks"])
+                log.info(f"[setlist] loaded '{sl['name']}' — {n} tracks from {sl['source']}")
+                warn = (f" ({sl['missing_count']} missing on disk, skipped)"
+                        if sl.get("missing_count") else "")
+                return (f"Setlist '{sl['name']}' loaded — {n} tracks{warn}. "
+                        f"Order is fixed; Treta mixes it. First: {sl['tracks'][0]['title'][:60]}")
+            return f"Unknown setlist action '{action}' — use load | status | clear"
+
         elif cmd == "set_arc":
             # Deterministic arc control — infrastructure ops bypass the LLM
             # (small local models can't reliably emit tool calls; see 07-28).
