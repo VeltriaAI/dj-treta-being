@@ -17,3 +17,11 @@ scripts/knowledge/.job_id_v2
 scripts/knowledge/__pycache__/
 scripts/knowledge/logs/
 .env.deploy
+
+# EOD 15-Sep: local secrets/backups and media libraries never go to the public repo
+.env.bak
+.env.pre-cloud-*
+config.local.yaml.*
+config.yaml.bak
+vdj/library/
+vdj/_archive/

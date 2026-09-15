@@ -1,5 +1,6 @@
 """Shared helpers used by multiple tool modules."""
 
+import os
 import unicodedata
 from pathlib import Path
 
@@ -12,6 +13,31 @@ _SELF_DIR = Path(__file__).parent.parent.parent
 
 def _music_dir() -> Path:
     return load_config().library.music_path
+
+
+def music_dir_ready() -> tuple[bool, str]:
+    """True when the library dir is writable AND its volume is really mounted.
+
+    The trap this closes (08-08): when music_dir lives on a USB stick and the
+    stick is unplugged, macOS happily lets anything mkdir `/Volumes/<NAME>/...`
+    on the INTERNAL disk. Downloads then land somewhere invisible, the crate
+    silently forks in two, and the internal disk (already at 97%) fills up.
+    Callers that WRITE must check this first; readers don't care.
+    """
+    d = _music_dir()
+    parts = d.parts
+    if len(parts) > 2 and parts[1] == "Volumes":
+        vol = Path("/Volumes") / parts[2]
+        if not os.path.ismount(vol):
+            return False, (
+                f"{vol} is not mounted — refusing to write to {d} "
+                f"(it would silently land on the internal disk)"
+            )
+    if not d.exists():
+        return False, f"library dir does not exist: {d}"
+    if not os.access(d, os.W_OK):
+        return False, f"library dir not writable: {d}"
+    return True, ""
 
 
 def _roots(cfg: Config) -> list[Path]:

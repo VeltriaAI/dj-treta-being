@@ -353,6 +353,16 @@ def download_track(url: str, genre: str = "deep") -> dict:
         }
 
     # Layer 3: download with canonical filename
+    # Volume guard (08-08): never write when the library's volume is absent —
+    # macOS would create /Volumes/<NAME>/... on the internal disk and the
+    # crate would silently fork in two.
+    from .helpers import music_dir_ready
+    _ok, _why = music_dir_ready()
+    if not _ok:
+        log.warning(f"download_track refused: {_why}")
+        return {"ok": False, "error": f"library unavailable: {_why}",
+                "message": "LIBRARY OFFLINE — plug the drive back in"}
+
     genre_norm = (genre or "").strip().lower() or "unsorted"
     genre_dir = _music_dir() / genre_norm
     genre_dir.mkdir(parents=True, exist_ok=True)
