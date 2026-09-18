@@ -1524,7 +1524,15 @@ class PlannerMixin:
 
         # Skip if idle already has a fresh track (>60s remaining).
         if d_idle.get("track_loaded") and float(d_idle.get("remaining_seconds", 0) or 0) > 60:
-            return
+            # 2026-09-19: an already-played track parked on the idle deck (e.g. a
+            # boot-time emergency play that was crossfaded out mid-track) must NOT
+            # block the reload — otherwise the REPLAY-GUARD forces a reload every
+            # tick, we return here without loading, and the next transition drags
+            # the set back into the played track. Only keep a fresh, unplayed cue.
+            _dp = get_deck_paths(self.config.mixxx.url)
+            if not _idle_was_played(_dp.get(idle_deck, "") or "", self.tracks_played):
+                return
+            log.info(f"[REPLAY-GUARD] idle deck {idle_deck} holds a played track — replacing it")
 
         deck_paths = get_deck_paths(self.config.mixxx.url)
         exclude_paths = {p for p in deck_paths.values() if p}
